@@ -4,29 +4,18 @@
 
 """
 ========================================================================================
-PRESENTATION 2: MULTI-COLUMN CSV LOAD PROFILE UPLOADER & VISUALIZER (presentation2.py)
+PRESENTATION 2: INTERACTIVE CSV INSPECTOR & LOAD PROFILE VISUALIZER (presentation2.py)
 ========================================================================================
 
 Purpose & Scope:
 ----------------
-A flexible and robust CSV reader allowing the user to map arbitrary columns manually
-or with smart heuristics.
-
-Key Features:
--------------
-1. Multi-Column Timestamp Mapping:
-   - Allows selecting one OR multiple timestamp columns (e.g. ['#', 'CODE'] or ['Date', 'Time']).
-   - Automatically merges multiple selected columns into a unified datetime series.
-2. Custom Power/Meter Column Assignment:
-   - Full manual control to select one or multiple measurement/sub-meter columns.
-3. Unit & Interval Conversion:
-   - 'kWh (15-min interval) → kW' (multiplies by 4).
-   - 'kW (Active Power - Direct)'.
-   - 'W (Watt) → kW' (divides by 1,000).
-   - 'kWh (Hourly) → kW'.
-4. European Date Format:
-   - Parses DD.MM.YYYY and DD/MM/YYYY reliably (`dayfirst=True`).
-5. Interactive Dark Theme Plotly Charts with Range Zoom and KPI Metrics.
+A visual, interactive CSV reader with an embedded File Inspector / Preview Window
+allowing you to:
+1. Inspect the raw uploaded CSV file in a live data table preview.
+2. Select header rows, skip metadata lines, or filter row ranges.
+3. Flexibly assign multiple timestamp columns (e.g. Date + Time) and measurement columns.
+4. Preview the cleaned & converted values side-by-side in real time.
+5. Render dark-theme interactive Plotly load profile charts and core KPIs.
 ========================================================================================
 """
 
@@ -40,7 +29,7 @@ import plotly.graph_objects as go
 # Page Setup & Dark Theme Styling
 # --------------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="CSV Load Profile Visualizer",
+    page_title="CSV Load Profile Visualizer & Inspector",
     page_icon="📊",
     layout="wide"
 )
@@ -72,13 +61,20 @@ st.markdown(
         font-size: 0.75rem;
         color: #64748b;
     }
+    .preview-container {
+        background-color: #0f172a;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 20px;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-st.title("📊 Multi-Column CSV Load Profile Visualizer")
-st.caption("Upload any CSV load profile and flexibly assign Date, Time, and Power measurement columns.")
+st.title("📊 Interactive CSV Inspector & Load Profile Visualizer")
+st.caption("Inspect raw uploaded CSV files in a visual preview window, map columns & rows, and visualize electrical power curves.")
 
 
 # --------------------------------------------------------------------------------------
@@ -89,11 +85,10 @@ TIME_SYNONYMS = ['code', 'uhrzeit', 'time', 'time_of_day', 'tod', 'intervall', '
 UNIT_SYNONYMS = ['eenheid', 'unit', 'einheit', 'status', 'valid', 'type']
 
 
-def parse_csv_file(file) -> pd.DataFrame:
-    """Reads CSV with automatic encoding fallback and delimiter sniffing."""
+def read_raw_content(file) -> str:
+    """Reads raw string content handling multiple common encodings."""
     file.seek(0)
     raw_bytes = file.read()
-    
     content = None
     for enc in ['utf-8', 'latin1', 'cp1252', 'iso-8859-1']:
         try:
@@ -103,32 +98,22 @@ def parse_csv_file(file) -> pd.DataFrame:
             continue
     if content is None:
         content = raw_bytes.decode('utf-8', errors='ignore')
+    return content
 
-    lines = content.splitlines()
-    skip = 0
-    for idx, l in enumerate(lines[:10]):
-        stripped = l.strip()
-        if not stripped or stripped.startswith(';;') or (stripped.startswith('#') and ';' in stripped and len(stripped.split(';')) < 2):
-            skip = idx + 1
-        else:
-            break
 
-    return pd.read_csv(StringIO(content), sep=None, engine='python', skiprows=skip)
+def parse_csv_content(content: str, skiprows: int = 0) -> pd.DataFrame:
+    """Parses raw text content into a pandas DataFrame with specified skiprows."""
+    return pd.read_csv(StringIO(content), sep=None, engine='python', skiprows=skiprows)
 
 
 def detect_suggested_columns(df: pd.DataFrame):
-    """
-    Returns initial intelligent guesses for:
-      - suggested_time_cols: List of 1 or 2 columns (e.g. ['#', 'CODE'] or ['timestamp'])
-      - suggested_power_cols: List of numeric measurement columns (excluding text/units)
-      - suggested_unit: 'kWh (15-min interval) → kW' or 'kW'
-    """
+    """Detects initial recommendations for date, time, and measurement columns."""
     cols = list(df.columns)
     time_cols = []
     power_cols = []
     suggested_unit = "kW (Active Power - Direct)"
 
-    # 1. Look for Date Column
+    # 1. Date Column
     date_col = None
     for c in cols:
         c_clean = str(c).strip().lower()
@@ -137,7 +122,7 @@ def detect_suggested_columns(df: pd.DataFrame):
             time_cols.append(c)
             break
 
-    # 2. Look for separate Time-of-Day Column (e.g. 'CODE', 'Uhrzeit')
+    # 2. Time-of-Day Column (e.g. 'CODE', 'Uhrzeit')
     for c in cols:
         if c == date_col:
             continue
@@ -159,19 +144,16 @@ def detect_suggested_columns(df: pd.DataFrame):
             elif "w" == sample_val:
                 suggested_unit = "W (Watt) → kW"
 
-    # 4. Filter power columns: find columns with numeric content
+    # 4. Measurement Columns
     for c in cols:
         if c in time_cols:
             continue
         c_clean = str(c).strip().lower()
-        # Skip unit/status columns
         if any(u in c_clean for u in UNIT_SYNONYMS):
             continue
-        
-        # Test if column has numeric values
         col_clean_str = df[c].astype(str).str.replace(' ', '').str.replace(',', '.')
         valid_numeric = pd.to_numeric(col_clean_str, errors='coerce').notnull().sum()
-        if valid_numeric > (0.5 * len(df)):
+        if valid_numeric > (0.4 * len(df)):
             power_cols.append(c)
 
     return time_cols, power_cols, suggested_unit
@@ -180,16 +162,16 @@ def detect_suggested_columns(df: pd.DataFrame):
 # --------------------------------------------------------------------------------------
 # Sidebar: File Upload & Demo Loader
 # --------------------------------------------------------------------------------------
-# Sidebar file upload controls
+st.sidebar.header("📁 CSV File Upload")
+
 uploaded_files = st.sidebar.file_uploader(
     "Upload Load Profile CSV(s):",
     type=["csv", "txt"],
     accept_multiple_files=True,
-    help="Upload one or multiple CSV files. Single or split Date/Time columns are supported."
+    help="Upload your CSV files to inspect and visualize."
 )
 
 if uploaded_files:
-    # If user uploads real files, clear demo state
     st.session_state['demo_loaded'] = False
 
 use_demo = st.sidebar.button("✨ Load Sample Demo CSV", use_container_width=True)
@@ -204,8 +186,8 @@ files_to_process = []
 if uploaded_files:
     for f in uploaded_files:
         try:
-            parsed = parse_csv_file(f)
-            files_to_process.append((f.name, parsed))
+            content = read_raw_content(f)
+            files_to_process.append((f.name, content))
         except Exception as e:
             st.sidebar.error(f"Error reading {f.name}: {e}")
 
@@ -224,35 +206,90 @@ elif use_demo or ('demo_loaded' in st.session_state and st.session_state['demo_l
         "Eenheid": "kWh",
         "871687400008864731MV": energy_kwh
     })
-    files_to_process = [("Sample_Synthetic_Demo_Data.csv", demo_df)]
+    buf = StringIO()
+    demo_df.to_csv(buf, index=False, sep=";")
+    files_to_process = [("Sample_Synthetic_Demo_Data.csv", buf.getvalue())]
 
 
 # --------------------------------------------------------------------------------------
 # Empty State Notice
 # --------------------------------------------------------------------------------------
 if not files_to_process:
-    st.info("👋 Upload your CSV file(s) in the sidebar or click **'✨ Load Sample Demo CSV'** to begin.")
-    with st.expander("💡 How Column Mapping Works", expanded=True):
+    st.info("👋 Upload a CSV file in the sidebar to open the **Interactive CSV Preview & Inspector Window**.")
+    with st.expander("💡 Features of the Preview Window", expanded=True):
         st.markdown(
             """
-            - **Split Date & Time:** You can select **multiple columns** in the Timestamp selector (e.g. `['#', 'CODE']` or `['Date', 'Time']`). The system merges them automatically!
-            - **Measurement Column(s):** Choose one or multiple meter columns to display.
-            - **15-Min Energy Conversion:** If your meter records `kWh` in 15-minute intervals, select `kWh (15-min interval) → kW` to convert energy ($2\\text{ kWh}$) into average electrical power ($8\\text{ kW}$).
+            - **Raw Table Inspector:** Look directly into the uploaded CSV data and inspect all column headers and sample rows.
+            - **Header Row Selection:** Skip top metadata lines or choose the exact header row.
+            - **Multi-Column Timestamp:** Select one or multiple columns (e.g. `#` for Date and `CODE` for Time) to merge them.
+            - **Row Range Filter:** Limit the analysis to specific row indices or date ranges.
+            - **Unit Multipliers:** Convert 15-minute interval energy ($2\\text{ kWh}$) to active power ($8\\text{ kW}$) with one click.
             """
         )
     st.stop()
 
 
 # --------------------------------------------------------------------------------------
-# Process Each Uploaded File with Flexible User Column Mapping
+# Process Each Uploaded File with Interactive Preview Window
 # --------------------------------------------------------------------------------------
-for file_name, df_raw in files_to_process:
-    st.subheader(f"📄 File: `{file_name}`")
+for file_name, raw_csv_text in files_to_process:
+    st.markdown(f"## 📄 File: `{file_name}`")
 
+    # ----------------------------------------------------------------------------------
+    # Step 1: Interactive CSV Preview Window (Vorschaufenster)
+    # ----------------------------------------------------------------------------------
+    with st.expander("🔍 **1. CSV Preview & Table Inspector**", expanded=True):
+        st.markdown("Inspect raw file content and configure header / row limits before processing:")
+        
+        col_opt1, col_opt2, col_opt3 = st.columns([2, 2, 2])
+        
+        with col_opt1:
+            skip_header_rows = st.number_input(
+                "Skip Metadata Rows (Top):",
+                min_value=0,
+                max_value=50,
+                value=0,
+                step=1,
+                key=f"skip_{file_name}",
+                help="Number of metadata comment rows to skip before column headers."
+            )
+        
+        # Parse preview with current skip rows
+        try:
+            df_raw = parse_csv_content(raw_csv_text, skiprows=int(skip_header_rows))
+        except Exception as e:
+            st.error(f"Error parsing CSV preview: {e}")
+            st.divider()
+            continue
+
+        total_file_rows = len(df_raw)
+        
+        with col_opt2:
+            max_row_limit = st.number_input(
+                f"Row Limit (Total: {total_file_rows:,} rows):",
+                min_value=10,
+                max_value=max(1000, total_file_rows),
+                value=total_file_rows,
+                step=500,
+                key=f"limit_{file_name}",
+                help="Optional limit to load only the first N rows for quick inspection."
+            )
+
+        with col_opt3:
+            st.markdown(f"**Total Columns:** `{len(df_raw.columns)}`  \n**Total Rows:** `{total_file_rows:,}`")
+
+        # Display Raw Data Table Preview
+        st.markdown("**Raw CSV Preview (First 20 Rows):**")
+        st.dataframe(df_raw.head(20), use_container_width=True, height=220)
+
+    # ----------------------------------------------------------------------------------
+    # Step 2: Column Assignment & Unit Configuration
+    # ----------------------------------------------------------------------------------
+    st.markdown("### ⚙️ **2. Column Mapping & Unit Assignment**")
+    
     cols = list(df_raw.columns)
     suggested_time, suggested_power, suggested_unit = detect_suggested_columns(df_raw)
 
-    # Interactive Column Mapping Controls
     map_col1, map_col2, map_col3 = st.columns([4, 4, 3])
 
     with map_col1:
@@ -261,16 +298,16 @@ for file_name, df_raw in files_to_process:
             options=cols,
             default=[c for c in suggested_time if c in cols],
             key=f"time_cols_{file_name}",
-            help="Select one column (if Date+Time are combined) OR select multiple columns (e.g. Date '#' and Time 'CODE') to merge them."
+            help="Select Date and/or Time columns. Multiple columns (e.g. '#' + 'CODE') will be merged automatically."
         )
 
     with map_col2:
         selected_power_cols = st.multiselect(
-            "⚡ Power / Meter Measurement Column(s):",
+            "⚡ Power / Meter Column(s):",
             options=cols,
             default=[c for c in suggested_power if c in cols],
             key=f"pwr_cols_{file_name}",
-            help="Select one or multiple numeric meter columns (exclude text/unit columns like 'Eenheid')."
+            help="Select one or multiple measurement columns (exclude text columns like 'Eenheid')."
         )
 
     with map_col3:
@@ -286,55 +323,49 @@ for file_name, df_raw in files_to_process:
             options=unit_options,
             index=unit_idx,
             key=f"unit_sel_{file_name}",
-            help="Example: 2 kWh in a 15-minute interval = 8 kW active power."
+            help="15-min kWh * 4 = kW active power."
         )
 
-    # Validation Checks
     if not selected_time_cols:
-        st.warning("⚠️ Please select at least one column for Timestamp/Date.")
+        st.warning("⚠️ Please select at least one column for Timestamp/Date above.")
         st.divider()
         continue
 
     if not selected_power_cols:
-        st.warning("⚠️ Please select at least one numeric meter / power column.")
+        st.warning("⚠️ Please select at least one numeric meter / power column above.")
         st.divider()
         continue
 
+    # Apply row slice limit if set
+    df_sliced = df_raw.iloc[:int(max_row_limit)].copy()
+
     # ----------------------------------------------------------------------------------
-    # Step 1: Merge Selected Timestamp Column(s) & Parse Datetime
+    # Step 3: Combine Timestamp & Clean Numeric Power Series
     # ----------------------------------------------------------------------------------
     df_clean = pd.DataFrame()
 
     if len(selected_time_cols) == 1:
-        raw_ts_series = df_raw[selected_time_cols[0]].astype(str).str.strip()
+        raw_ts_series = df_sliced[selected_time_cols[0]].astype(str).str.strip()
     else:
-        # Concatenate multiple columns (e.g. Date + Time) with space
-        raw_ts_series = df_raw[selected_time_cols].astype(str).agg(' '.join, axis=1)
+        raw_ts_series = df_sliced[selected_time_cols].astype(str).agg(' '.join, axis=1)
 
     df_clean["timestamp"] = pd.to_datetime(raw_ts_series, dayfirst=True, errors="coerce")
-    
-    # Check for invalid timestamp rows
     valid_mask = df_clean["timestamp"].notnull()
-    invalid_count = int((~valid_mask).sum())
     df_clean = df_clean[valid_mask].copy()
 
     if df_clean.empty:
-        st.error("❌ Could not parse any valid timestamps with the selected column(s). Please verify your selection.")
+        st.error("❌ Could not parse valid timestamps with the selected column(s). Check date format or column selection.")
         st.divider()
         continue
 
-    # ----------------------------------------------------------------------------------
-    # Step 2: Clean and Convert Power Measurement Columns
-    # ----------------------------------------------------------------------------------
     for p_col in selected_power_cols:
-        series = df_raw.loc[valid_mask, p_col]
+        series = df_sliced.loc[valid_mask, p_col]
         if series.dtype == object:
             series = series.astype(str).str.replace(" ", "").str.replace(",", ".")
         numeric_series = pd.to_numeric(series, errors="coerce").fillna(0.0)
 
-        # Apply Unit Conversion
+        # Unit Conversion
         if "15-min" in selected_unit:
-            # 15-min kWh * 4 = kW
             numeric_series = numeric_series * 4.0
         elif "Hourly" in selected_unit:
             numeric_series = numeric_series * 1.0
@@ -343,12 +374,11 @@ for file_name, df_raw in files_to_process:
 
         df_clean[p_col] = numeric_series
 
-    # Sum total demand across all selected meter columns
     df_clean["Total_Demand_kW"] = df_clean[selected_power_cols].sum(axis=1)
     df_clean = df_clean.sort_values("timestamp").reset_index(drop=True)
 
     # ----------------------------------------------------------------------------------
-    # Step 3: Compute Key Performance Indicators (KPIs)
+    # Step 4: Key Metrics (KPIs)
     # ----------------------------------------------------------------------------------
     total_series = df_clean["Total_Demand_kW"]
     peak_kw = float(total_series.max())
@@ -360,7 +390,6 @@ for file_name, df_raw in files_to_process:
     t_end = df_clean["timestamp"].max()
     duration_days = max(1.0, (t_end - t_start).total_seconds() / 86400.0)
 
-    # Interval resolution in hours
     if count > 1:
         dt_seconds = (df_clean["timestamp"].iloc[1] - df_clean["timestamp"].iloc[0]).total_seconds()
         hours_per_step = (dt_seconds / 3600.0) if dt_seconds > 0 else 0.25
@@ -370,14 +399,14 @@ for file_name, df_raw in files_to_process:
     total_kwh = float(total_series.sum() * hours_per_step)
     total_mwh = total_kwh / 1000.0
 
-    # Display KPI Cards
+    st.markdown("### 📈 **3. Energy Metrics & Key Performance Indicators (KPIs)**")
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         st.markdown(
             f"""<div class="metric-box">
                 <div class="metric-label">⚡ Peak Demand (P_max)</div>
                 <div class="metric-val">{peak_kw:,.1f} kW</div>
-                <div class="metric-sub">Min: {min_kw:,.1f} kW</div>
+                <div class="metric-sub">Min Baseload: {min_kw:,.1f} kW</div>
             </div>""",
             unsafe_allow_html=True
         )
@@ -402,7 +431,7 @@ for file_name, df_raw in files_to_process:
     with k4:
         st.markdown(
             f"""<div class="metric-box">
-                <div class="metric-label">📋 Data Points</div>
+                <div class="metric-label">📋 Parsed Data Points</div>
                 <div class="metric-val">{count:,}</div>
                 <div class="metric-sub">{t_start.strftime('%d.%m.%Y %H:%M')} – {t_end.strftime('%d.%m.%Y %H:%M')}</div>
             </div>""",
@@ -410,12 +439,12 @@ for file_name, df_raw in files_to_process:
         )
 
     # ----------------------------------------------------------------------------------
-    # Step 4: Interactive Plotly Diagram
+    # Step 5: Interactive Dark Plotly Diagram
     # ----------------------------------------------------------------------------------
+    st.markdown("### 📊 **4. Interactive Load Profile Curve**")
     fig = go.Figure()
     palette = ["#38BDF8", "#10B981", "#F59E0B", "#EC4899", "#8B5CF6", "#14B8A6"]
 
-    # Sub-meter traces if multiple selected
     if len(selected_power_cols) > 1:
         for idx, col_name in enumerate(selected_power_cols):
             fig.add_trace(
@@ -429,7 +458,6 @@ for file_name, df_raw in files_to_process:
                 )
             )
 
-    # Total Grid Demand Trace
     fig.add_trace(
         go.Scatter(
             x=df_clean["timestamp"],
@@ -443,7 +471,6 @@ for file_name, df_raw in files_to_process:
         )
     )
 
-    # Peak Annotation
     peak_idx = total_series.idxmax()
     peak_time = df_clean.loc[peak_idx, "timestamp"]
     fig.add_annotation(
@@ -484,8 +511,10 @@ for file_name, df_raw in files_to_process:
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Cleaned Data Preview Table
-    with st.expander("🔍 View Cleaned Data Preview (First 50 Rows)", expanded=False):
-        st.dataframe(df_clean.head(50), use_container_width=True, height=250)
+    # ----------------------------------------------------------------------------------
+    # Step 6: Processed Clean Data Table & CSV Download
+    # ----------------------------------------------------------------------------------
+    with st.expander("📋 **5. Processed & Cleaned Data Table (Export Ready)**", expanded=False):
+        st.dataframe(df_clean, use_container_width=True, height=250)
 
     st.divider()
