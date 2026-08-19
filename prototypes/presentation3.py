@@ -1,4 +1,11 @@
+# to run: python -m streamlit run presentation_2_2.py
+
+
+
+
 """
+
+
 ========================================================================================
 DRACBV Energy Simulator - Advanced Load Profile & Simulation Engine (app.py)
 ========================================================================================

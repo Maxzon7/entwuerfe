@@ -14,11 +14,12 @@ def process_load_profile_data(
     selected_time_cols: List[str],
     selected_power_cols: List[str],
     selected_unit: str,
-    max_rows: int = None
+    max_rows: int = None,
+    dayfirst: bool = None
 ) -> pd.DataFrame:
     """
     Transforms raw CSV data into a clean, chronologically sorted DataFrame with:
-      - 'timestamp': Unified pandas DatetimeIndex (parsed with dayfirst=True)
+      - 'timestamp': Unified pandas DatetimeIndex
       - Each selected power measurement column converted to kW
       - 'Total_Demand_kW': Sum of all selected active measurement columns in kW
     """
@@ -37,8 +38,19 @@ def process_load_profile_data(
         # Concatenate in selected order with space (e.g. Date + Time)
         raw_ts = df_sliced[selected_time_cols].astype(str).agg(' '.join, axis=1)
 
+    import re
+    if dayfirst is None:
+        # Check if raw timestamp starts with a 4-digit year (e.g. YYYY.MM.DD or YYYY-MM-DD)
+        first_valid = raw_ts.dropna().iloc[0] if not raw_ts.dropna().empty else ""
+        starts_with_year = bool(re.match(r"^\s*\d{4}", str(first_valid)))
+        dayfirst = not starts_with_year
+
     df_clean = pd.DataFrame()
-    df_clean["timestamp"] = pd.to_datetime(raw_ts, dayfirst=True, errors="coerce")
+    df_clean["timestamp"] = pd.to_datetime(
+        raw_ts,
+        dayfirst=dayfirst,
+        errors="coerce"
+    )
 
     # Filter out unparseable rows
     valid_mask = df_clean["timestamp"].notnull()
