@@ -13,18 +13,26 @@ in the `presentation2/` package.
 ========================================================================================
 """
 
+import sys
+import os
+
+# Ensure project root directory is at the front of sys.path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import streamlit as st
 import pandas as pd
 
-from presentation2 import (
+from presentation2.parser import (
     read_raw_content,
     parse_csv_content,
     detect_suggested_columns,
     generate_sample_demo_csv,
-    process_load_profile_data,
-    compute_load_profile_kpis,
-    create_dark_load_profile_figure,
 )
+from presentation2.processor import process_load_profile_data
+from presentation2.metrics import compute_load_profile_kpis
+from presentation2.visualizer import create_dark_load_profile_figure
 
 # --------------------------------------------------------------------------------------
 # Page Setup & Dark Theme Styling

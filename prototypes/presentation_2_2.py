@@ -152,26 +152,26 @@ def detect_csv_columns(df: pd.DataFrame) -> Tuple[List[str], List[str], str]:
 
 
 def generate_sample_demo_csv(days: int = 14) -> str:
-    """Generates synthetic 15-minute Kwartierdata (2 connection meters) for testing."""
+    """Generates synthetic 15-minute load profile data (2 meter channels) for testing."""
     periods = 96 * days
     timestamps = pd.date_range("2025-01-01 00:00", periods=periods, freq="15min")
     hours = timestamps.hour
     workdays = timestamps.dayofweek < 5
 
-    # Meter 1: Small wing (17 rooms / baseline)
+    # Meter 1: Auxiliary / Secondary feeder baseline
     m1_kwh = np.where(workdays & (hours >= 6) & (hours <= 22), 2.5, 1.2)
     m1_kwh = np.clip(m1_kwh + np.random.normal(0, 0.2, len(m1_kwh)), 0.5, None)
 
-    # Meter 2: Main wing (35 rooms / kitchen / HVAC)
+    # Meter 2: Main Facility feeder / HVAC
     m2_kwh = np.where(workdays & (hours >= 7) & (hours <= 21), 6.5, 2.0)
     m2_kwh = np.clip(m2_kwh + np.random.normal(0, 0.4, len(m2_kwh)), 0.8, None)
 
     demo_df = pd.DataFrame({
         "#": timestamps.strftime("%Y.%m.%d"),
         "CODE": timestamps.strftime("%H:%M"),
-        "Eenheid": "kWh",
-        "Meter_1_SmallWing_kWh": np.round(m1_kwh, 2),
-        "Meter_2_MainWing_kWh": np.round(m2_kwh, 2)
+        "Unit": "kWh",
+        "Meter_1_Active_kWh": np.round(m1_kwh, 2),
+        "Meter_2_Active_kWh": np.round(m2_kwh, 2)
     })
     buf = StringIO()
     demo_df.to_csv(buf, index=False, sep=";")

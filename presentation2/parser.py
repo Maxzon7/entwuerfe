@@ -103,24 +103,43 @@ def detect_suggested_columns(df: pd.DataFrame) -> Tuple[List[str], List[str], st
 
 def generate_sample_demo_csv(days: int = 7) -> Tuple[str, str]:
     """
-    Synthesizes a realistic 15-minute European load profile CSV formatted with
-    split date/time columns (#, CODE) and Dutch meter layout (Eenheid: kWh).
+    Synthesizes a multi-channel commercial load profile CSV with explicit meter names
+    (HVAC, Production, EV Charging, Lighting) measured directly in kW.
     Returns (filename, csv_text_content).
     """
     periods = 96 * days
-    dates = pd.date_range(start="2024-01-01 00:00", periods=periods, freq="15min")
+    dates = pd.date_range(start="2025-01-01 00:00", periods=periods, freq="15min")
     hours = dates.hour
     workdays = dates.dayofweek < 5
-    base = 2.0
-    energy_kwh = np.where(workdays & (hours >= 7) & (hours <= 17), base + 6.0, base)
-    energy_kwh = np.round(np.clip(energy_kwh + np.random.normal(0, 0.4, len(energy_kwh)), 0.5, None), 2)
+
+    # 1. HVAC & Ventilation (kW): Active during workday hours (06:00 to 20:00)
+    hvac_kw = np.where(workdays & (hours >= 6) & (hours <= 20), 25.0, 5.0)
+    hvac_kw = np.round(np.clip(hvac_kw + np.random.normal(0, 1.5, len(hvac_kw)), 2.0, None), 1)
+
+    # 2. Main Production Line (kW): High daytime operational load (07:30 to 17:00)
+    prod_kw = np.where(workdays & (hours >= 7) & (hours <= 17), 45.0, 0.0)
+    prod_kw = np.round(np.clip(prod_kw + np.random.normal(0, 3.0, len(prod_kw)), 0.0, None), 1)
+
+    # 3. EV Charging Hub (kW): Morning and late afternoon charging peaks
+    ev_peak = (hours >= 8) & (hours <= 10) | (hours >= 16) & (hours <= 18)
+    ev_kw = np.where(workdays & ev_peak, 35.0, 0.0)
+    ev_kw = np.round(np.clip(ev_kw + np.random.normal(0, 2.5, len(ev_kw)), 0.0, None), 1)
+
+    # 4. Lighting & Standby Baseload (kW): Continuous baseload
+    light_kw = np.where((hours >= 6) & (hours <= 22), 12.0, 4.0)
+    light_kw = np.round(np.clip(light_kw + np.random.normal(0, 0.5, len(light_kw)), 2.0, None), 1)
 
     demo_df = pd.DataFrame({
-        "#": dates.strftime("%d.%m.%Y"),
-        "CODE": dates.strftime("%H:%M"),
-        "Eenheid": "kWh",
-        "871687400008864731MV": energy_kwh
+        "Date": dates.strftime("%d.%m.%Y"),
+        "Time": dates.strftime("%H:%M"),
+        "Meter_HVAC_kW": hvac_kw,
+        "Meter_Production_kW": prod_kw,
+        "Meter_EV_Chargers_kW": ev_kw,
+        "Meter_Lighting_Baseload_kW": light_kw
     })
+
     buf = StringIO()
     demo_df.to_csv(buf, index=False, sep=";")
-    return "Sample_Synthetic_Demo_Data.csv", buf.getvalue()
+    return "Sample_Commercial_MultiMeter_kW.csv", buf.getvalue()
+
+

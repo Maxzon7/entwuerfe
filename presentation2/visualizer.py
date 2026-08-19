@@ -15,10 +15,12 @@ def create_dark_load_profile_figure(
     file_name: str,
     selected_power_cols: List[str],
     total_col: str = "Total_Demand_kW",
-    peak_kw: Optional[float] = None
+    peak_kw: Optional[float] = None,
+    grid_limit_kw: Optional[float] = None,
+    target_cap_kw: Optional[float] = None
 ) -> go.Figure:
     """
-    Constructs an interactive dark-theme Plotly line chart.
+    Constructs an interactive dark-theme Plotly line chart with optional grid limit & target cap lines.
     """
     fig = go.Figure()
 
@@ -62,7 +64,28 @@ def create_dark_load_profile_figure(
         )
     )
 
-    # 3. Peak Annotation Marker
+    # 3. Grid Limit & Shaving Target Lines
+    if grid_limit_kw and grid_limit_kw > 0:
+        fig.add_hline(
+            y=grid_limit_kw,
+            line_dash="dash",
+            line_color="#f43f5e",
+            line_width=2,
+            annotation_text=f"Max Grid Limit ({grid_limit_kw:.1f} kW)",
+            annotation_position="top right"
+        )
+
+    if target_cap_kw and target_cap_kw > 0 and (grid_limit_kw is None or target_cap_kw < grid_limit_kw):
+        fig.add_hline(
+            y=target_cap_kw,
+            line_dash="dot",
+            line_color="#38bdf8",
+            line_width=1.5,
+            annotation_text=f"Target Shaving Cap ({target_cap_kw:.1f} kW)",
+            annotation_position="bottom right"
+        )
+
+    # 4. Peak Annotation Marker
     if peak_kw is None:
         peak_kw = float(df_clean[total_col].max())
 
@@ -83,7 +106,7 @@ def create_dark_load_profile_figure(
         borderpad=4
     )
 
-    # 4. Dark Theme Layout
+    # 5. Dark Theme Layout
     fig.update_layout(
         template="plotly_dark",
         title=dict(text=f"<b>Load Profile: {file_name}</b>", font=dict(size=16, color="#F8FAFC")),
@@ -107,3 +130,4 @@ def create_dark_load_profile_figure(
     )
 
     return fig
+
