@@ -29,17 +29,24 @@ from current_model.ui.tab2_contract.charts import create_cost_donut_figure, crea
 def _find_active_load_data_in_session() -> Tuple[Optional[Any], str]:
     """
     Finds the active consumption load dataset created in Tab 1
-    (either CSV processed time series or Synthetic 24h consumers).
+    (either 365-Day Annual Synthetic, 24h Synthetic, or CSV real meter timeseries).
     Returns (data, source_type_description).
     """
-    # 1. Check for CSV calculated datasets
+    # 1. Check for explicitly cached active DataFrames (e.g. 365-day annual synthetic)
+    for key, val in st.session_state.items():
+        if "active_df" in key and isinstance(val, pd.DataFrame) and not val.empty:
+            if len(val) >= 35000:
+                return val, "365-Day Annual Synthetic Simulation"
+            return val, "24-Hour Synthetic Simulation"
+
+    # 2. Check for CSV calculated datasets
     for key, val in st.session_state.items():
         if "calc_data" in key and isinstance(val, dict) and "df_clean" in val:
             df_clean = val["df_clean"]
             if isinstance(df_clean, pd.DataFrame) and not df_clean.empty:
                 return df_clean, "CSV Real Meter Data"
 
-    # 2. Check for Synthetic consumer lists
+    # 3. Check for Synthetic consumer lists
     for key, val in st.session_state.items():
         if "consumers" in key and isinstance(val, list) and len(val) > 0:
             df_day, total_curve, _ = aggregate_synthetic_24h(val)

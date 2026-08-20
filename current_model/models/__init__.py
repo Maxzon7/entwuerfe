@@ -2,13 +2,15 @@
 Data Models Package (current_model/models)
 =========================================
 Exports all core data structures: LoadComponent, TimeWindow, SimpleConsumer, Contract,
-GridLimitConfig, OverloadAnalysisResult, CostLineItem, MonthlyPaymentRecord, FinancialCostBreakdown, and presets.
+GridLimitConfig, OverloadAnalysisResult, CostLineItem, MonthlyPaymentRecord, FinancialCostBreakdown,
+CalendarConfig, and presets.
 """
 
 from .load_component import TimeWindow, SimpleConsumer, LoadComponent, Consumer
 from .contract import Contract
 from .grid_limit import GridLimitConfig, OverloadAnalysisResult
 from .financial import CostLineItem, MonthlyPaymentRecord, FinancialCostBreakdown
+from .calendar_config import CalendarConfig
 from .presets import (
     PRESET_FACTORIES,
     get_industry_preset_consumers,
@@ -27,6 +29,7 @@ __all__ = [
     "CostLineItem",
     "MonthlyPaymentRecord",
     "FinancialCostBreakdown",
+    "CalendarConfig",
     "PRESET_FACTORIES",
     "get_industry_preset_consumers",
     "get_office_preset_consumers",

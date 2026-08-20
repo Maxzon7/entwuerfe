@@ -5,144 +5,234 @@ Synthetic Load Simulator View (current_model/ui/tab1_consumption/synthetic/view.
 
 Description:
 ------------
-Orchestrates the 24-hour synthetic bottom-up simulation interface:
-  - Metric summary cards
-  - Compact grid capacity limit setup
-  - Plotly stacked profile visualization
-  - Real-time overload limit calculations & alert cards
-  - Consumer add/edit forms and preset loading
+Main orchestrator for the Synthetic 24-Hour & 365-Day Annual Load Simulator:
+  - Presets loader (Industry, Office, EV Hub) and custom consumer forms.
+  - Horizon selector: 24-Hour Typical Day vs. Full Year (365 Days / 35,040 steps).
+  - System-wide custom public holiday calendar editor (treated as Sundays).
+  - Annual and daily KPI metric cards.
+  - Interactive 24h stacked profile, 365-day timeseries with rangeslider, and 2D load heatmap.
+  - Real-time grid capacity overload violation analysis.
 """
 
-import datetime
 from typing import List
 import streamlit as st
 import numpy as np
 import pandas as pd
 
-from current_model.models.load_component import SimpleConsumer, TimeWindow
-from current_model.models.grid_limit import OverloadAnalysisResult
+from current_model.models.load_component import SimpleConsumer
 from current_model.models.presets import PRESET_FACTORIES
-from current_model.core.synthetic_engine import aggregate_synthetic_24h
+from current_model.core.synthetic_engine import aggregate_synthetic_24h, aggregate_synthetic_year
 from current_model.ui.common.cards import render_kpi_card
-from current_model.ui.tab1_consumption.synthetic.charts import create_synthetic_profile_figure
+from current_model.ui.tab1_consumption.synthetic.charts import (
+    create_synthetic_profile_figure,
+    create_annual_synthetic_figure,
+    create_annual_heatmap_figure
+)
 from current_model.ui.tab1_consumption.synthetic.forms import render_add_consumer_form, render_consumer_editor
 
 
 def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     """
-    Renders the complete 24-Hour Synthetic Load Simulator UI.
+    Renders the bottom-up synthetic load simulator supporting 24h daily and 365d annual horizons.
     """
-    session_key = f"{key_prefix}_consumers"
-    if session_key not in st.session_state:
-        st.session_state[session_key] = []
+    state_consumers_key = f"{key_prefix}_consumers"
+    state_holidays_key = f"{key_prefix}_holidays_df"
 
-    consumers: List[SimpleConsumer] = st.session_state[session_key]
+    # Initialize default industry consumers if not yet set
+    if state_consumers_key not in st.session_state:
+        st.session_state[state_consumers_key] = PRESET_FACTORIES["manufacturing"]()
 
-    # Backward compatibility migration for older single-window objects
-    for c in consumers:
-        if not hasattr(c, "time_windows") or not c.time_windows:
-            s_time = getattr(c, "start_time", datetime.time(8, 0))
-            e_time = getattr(c, "end_time", datetime.time(16, 0))
-            h_peak = getattr(c, "has_peak", False)
-            p_power = getattr(c, "peak_power_kw", c.power_kw)
-            p_dur = getattr(c, "peak_duration_min", 30)
-            c.time_windows = [TimeWindow(s_time, e_time, h_peak, p_power, p_dur)]
+    consumers: List[SimpleConsumer] = st.session_state[state_consumers_key]
 
-    # Quick Preset Bar
-    with st.expander("⚡ Load Pre-Configured Industry Presets", expanded=False):
-        preset_cols = st.columns(len(PRESET_FACTORIES))
-        for p_idx, (preset_name, factory_func) in enumerate(PRESET_FACTORIES.items()):
-            with preset_cols[p_idx]:
-                if st.button(f"Load {preset_name}", key=f"{key_prefix}_load_preset_{p_idx}", use_container_width=True):
-                    st.session_state[session_key] = factory_func()
-                    st.rerun()
+    # Initialize system-wide holidays table (default: empty list as requested)
+    if state_holidays_key not in st.session_state:
+        st.session_state[state_holidays_key] = pd.DataFrame(columns=["date", "holiday_name"])
 
-    # 1. Aggregate Data for the 24-Hour Day (96 steps)
-    df_day, total_curve, metrics = aggregate_synthetic_24h(consumers)
+    # 1. Preset Loader Toolbar
+    col_pre, col_res = st.columns([5, 2])
+    with col_pre:
+        preset_names = list(PRESET_FACTORIES.keys())
+        selected_preset = st.selectbox(
+            "Load Predefined Template:",
+            options=["-- Select a Template --"] + preset_names,
+            index=0,
+            key=f"{key_prefix}_preset_select"
+        )
+        if selected_preset in PRESET_FACTORIES:
+            if st.button("Apply Template", key=f"{key_prefix}_apply_preset", use_container_width=True):
+                st.session_state[state_consumers_key] = PRESET_FACTORIES[selected_preset]()
+                st.rerun()
 
-    # 2. Metric KPI Cards
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        render_kpi_card("⚡ Daily Peak Load (P_max)", f"{metrics['peak_demand_kw']:.1f} kW", "Maximum 15-min demand")
-    with col2:
-        render_kpi_card("🔋 Daily Energy Consumption", f"{metrics['daily_energy_kwh']:.1f} kWh", "Integrated 24h consumption")
-    with col3:
-        render_kpi_card("📊 Average Daily Power", f"{metrics['avg_power_kw']:.1f} kW", "Daily average baseline")
-    with col4:
-        render_kpi_card("🧩 Total Consumers", str(metrics['consumer_count']), "Active machine entities")
+    with col_res:
+        st.write("")
+        st.write("")
+        if st.button("Reset / Clear All", key=f"{key_prefix}_clear_btn", use_container_width=True):
+            st.session_state[state_consumers_key] = []
+            st.rerun()
 
-    # 3. Compact Grid Limit Option (No standalone subheader)
+    # 2. System-wide Holiday Calendar Expander (Treated as Sundays)
+    with st.expander("System-wide Holiday Calendar (Treated as Sundays)", expanded=False):
+        st.caption("Add specific holiday dates (YYYY-MM-DD) which will automatically be simulated using the Sunday schedule.")
+        edited_holidays = st.data_editor(
+            st.session_state[state_holidays_key],
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "date": st.column_config.TextColumn("Date (YYYY-MM-DD or DD.MM.YYYY)", required=True),
+                "holiday_name": st.column_config.TextColumn("Holiday / Shutdown Name")
+            },
+            key=f"{key_prefix}_holiday_editor"
+        )
+        st.session_state[state_holidays_key] = edited_holidays
+
+    holiday_list = []
+    if not edited_holidays.empty and "date" in edited_holidays.columns:
+        holiday_list = edited_holidays["date"].dropna().astype(str).tolist()
+
+    # 3. Horizon Selector: 24h vs. 365 Days
+    h_col1, h_col2 = st.columns([4, 6])
+    with h_col1:
+        horizon_mode = st.radio(
+            "Simulation Horizon:",
+            options=["24-Hour Typical Day", "Full Year (365 Days / 35,040 Steps)"],
+            horizontal=True,
+            key=f"{key_prefix}_horizon"
+        )
+
+    # 4. Simulation Calculations
+    if not consumers:
+        st.info("No active consumers in profile. Add machines below or load a template above.")
+        c_col1, c_col2 = st.columns([1, 1])
+        with c_col1:
+            render_add_consumer_form(consumers)
+        with c_col2:
+            render_consumer_editor(consumers)
+        return
+
+    # Calculate 24h baseline
+    df_day, total_curve_24h, metrics_24h = aggregate_synthetic_24h(consumers)
+
+    # Calculate 365-day annual timeseries
+    df_year, total_curve_year, metrics_year = aggregate_synthetic_year(
+        consumers=consumers,
+        year=2025,
+        holidays=holiday_list
+    )
+
+    # Store active dataset in session state so Tab 2 can automatically read it
+    st.session_state[f"{key_prefix}_active_df"] = df_year if horizon_mode.startswith("Full Year") else df_day
+
+    # 5. KPI Cards
+    if horizon_mode.startswith("24-Hour"):
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            render_kpi_card("Peak Demand", f"{metrics_24h['peak_demand_kw']:.1f} kW", "Max instantaneous power")
+        with k2:
+            render_kpi_card("Daily Energy", f"{metrics_24h['daily_energy_kwh']:,.1f} kWh", "Sum across 24h cycle")
+        with k3:
+            render_kpi_card("Average Power", f"{metrics_24h['avg_power_kw']:.1f} kW", "Average continuous load")
+        with k4:
+            render_kpi_card("Active Assets", f"{metrics_24h['consumer_count']}", "Total machines in profile")
+    else:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            render_kpi_card("Annual Energy", f"{metrics_year['annual_energy_mwh']:,.2f} MWh", f"{metrics_year['annual_energy_kwh']:,.0f} kWh")
+        with k2:
+            render_kpi_card("Annual Peak Demand", f"{metrics_year['peak_demand_kw']:.1f} kW", "Max measured power")
+        with k3:
+            render_kpi_card("Full Load Hours", f"{metrics_year['full_load_hours']:,.0f} h/a", f"Load Factor: {metrics_year['load_factor_pct']:.1f}%")
+        with k4:
+            render_kpi_card("Average Power", f"{metrics_year['avg_demand_kw']:.1f} kW", f"Across {metrics_year['days_count']} days")
+
+    # 6. Compact Grid Limit Option
     g_col1, g_col2 = st.columns([1, 1])
     with g_col1:
         enable_grid_limit = st.toggle(
             "Enable Grid Capacity Limit",
             value=False,
             help="Define a maximum grid connection capacity limit and analyze overload violations.",
-            key=f"{key_prefix}_enable_grid_limit"
+            key=f"{key_prefix}_grid_limit_toggle"
         )
     with g_col2:
         if enable_grid_limit:
+            ref_peak = metrics_year['peak_demand_kw'] if horizon_mode.startswith("Full Year") else metrics_24h['peak_demand_kw']
             grid_limit_kw = st.number_input(
                 "Max Grid Capacity Limit (kW):",
                 min_value=5.0,
                 max_value=5000.0,
-                value=100.0,
+                value=float(np.round(ref_peak * 0.8, 0)) if ref_peak > 0 else 100.0,
                 step=5.0,
-                key=f"{key_prefix}_grid_limit_kw"
+                key=f"{key_prefix}_grid_limit_val"
             )
         else:
             grid_limit_kw = None
 
-    # 4. Interactive Plotly Chart
-    st.subheader("📈 24-Hour Simulated Load Profile (15-Minute Resolution)")
-    fig = create_synthetic_profile_figure(
-        df_day=df_day,
-        consumers=consumers,
-        grid_limit_kw=grid_limit_kw
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # 5. Grid Limit Overload Analysis
-    if enable_grid_limit and grid_limit_kw:
-        analysis = OverloadAnalysisResult.from_curve(
-            total_curve_kw=total_curve,
-            grid_limit_kw=grid_limit_kw,
-            step_hours=0.25
+    # 7. Visualizations
+    if horizon_mode.startswith("24-Hour"):
+        fig_24h = create_synthetic_profile_figure(
+            df_day=df_day,
+            consumers=consumers,
+            grid_limit_kw=grid_limit_kw
         )
+        st.plotly_chart(fig_24h, use_container_width=True)
 
-        st.markdown("#### 🚨 Grid Capacity Overload Analysis")
-        o_col1, o_col2, o_col3 = st.columns(3)
+        if enable_grid_limit and grid_limit_kw:
+            overload_diff = (total_curve_24h - grid_limit_kw).clip(min=0.0)
+            overload_peak = float(overload_diff.max())
+            overload_hours = float((total_curve_24h > grid_limit_kw).sum() * 0.25)
+            overload_kwh = float(overload_diff.sum() * 0.25)
+            has_violation = overload_peak > 0.0
 
-        with o_col1:
-            status_style = "alert" if analysis.has_violation else "ok"
-            status_title = "⚠️ Grid Overload Peak" if analysis.has_violation else "✅ Grid Status"
-            val_str = f"+{analysis.overload_peak_kw:.1f} kW" if analysis.has_violation else "Within Limit"
-            render_kpi_card(
-                status_title,
-                val_str,
-                f"Max Limit: {grid_limit_kw:.1f} kW",
-                status=status_style
-            )
+            st.markdown("#### Grid Capacity Overload Analysis")
+            o1, o2, o3 = st.columns(3)
+            with o1:
+                render_kpi_card(
+                    "Overload Peak" if has_violation else "Grid Status",
+                    f"+{overload_peak:.1f} kW" if has_violation else "Within Limit",
+                    f"Max Limit: {grid_limit_kw:.1f} kW",
+                    status="alert" if has_violation else "ok"
+                )
+            with o2:
+                render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", "Violation duration")
+            with o3:
+                render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess energy over limit")
 
-        with o_col2:
-            render_kpi_card(
-                "⏱️ Overload Duration",
-                f"{analysis.overload_duration_hours:.2f} hrs",
-                f"{analysis.overload_intervals_count} intervals (15-min)"
-            )
+    else:
+        # Annual Time Series and 2D Heatmap
+        fig_annual = create_annual_synthetic_figure(
+            df_year=df_year,
+            grid_limit_kw=grid_limit_kw
+        )
+        st.plotly_chart(fig_annual, use_container_width=True)
 
-        with o_col3:
-            render_kpi_card(
-                "⚡ Overload Energy",
-                f"{analysis.overload_energy_kwh:.1f} kWh",
-                "Excess Energy over Limit"
-            )
+        fig_heat = create_annual_heatmap_figure(df_year=df_year)
+        st.plotly_chart(fig_heat, use_container_width=True)
 
+        if enable_grid_limit and grid_limit_kw:
+            overload_diff = (total_curve_year - grid_limit_kw).clip(min=0.0)
+            overload_peak = float(overload_diff.max())
+            overload_hours = float((total_curve_year > grid_limit_kw).sum() * 0.25)
+            overload_kwh = float(overload_diff.sum() * 0.25)
+            has_violation = overload_peak > 0.0
+
+            st.markdown("#### Annual Grid Capacity Overload Analysis")
+            o1, o2, o3 = st.columns(3)
+            with o1:
+                render_kpi_card(
+                    "Annual Overload Peak" if has_violation else "Grid Status",
+                    f"+{overload_peak:.1f} kW" if has_violation else "Within Limit",
+                    f"Max Limit: {grid_limit_kw:.1f} kW",
+                    status="alert" if has_violation else "ok"
+                )
+            with o2:
+                render_kpi_card("Annual Overload Duration", f"{overload_hours:,.1f} hrs", f"{(overload_hours / 8760.0 * 100.0):.1f}% of year")
+            with o3:
+                render_kpi_card("Annual Overload Energy", f"{overload_kwh:,.0f} kWh", f"{(overload_kwh / 1000.0):.2f} MWh excess")
+
+    # 8. Consumer Management Forms (Left: Add, Right: Edit/Delete)
     st.divider()
-
-    # 6. Consumer Management & Add Form
-    col_left, col_right = st.columns([1, 1])
-    with col_left:
+    col_f1, col_f2 = st.columns([1, 1])
+    with col_f1:
         render_add_consumer_form(consumers)
-    with col_right:
+    with col_f2:
         render_consumer_editor(consumers)

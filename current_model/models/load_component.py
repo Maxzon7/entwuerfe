@@ -9,7 +9,8 @@ Defines the fundamental building blocks of electrical load simulation:
   - `TimeWindow`: Encapsulates an operating time interval, startup peak power, and duration.
   - `LoadComponent` / `SimpleConsumer`: Represents an individual physical asset (machine,
     HVAC system, EV charger, etc.), supporting multi-window operations, weekly schedule
-    filtering, scaling counts, startup peaks, and 15-minute discretization arrays (96 steps/day).
+    filtering (Monday to Sunday), seasonal variations, scaling counts, and 15-minute
+    discretization arrays (96 steps/day and 35,040 steps/year).
 
 Discretization Logic:
 ---------------------
@@ -78,8 +79,9 @@ class TimeWindow:
 
 class SimpleConsumer:
     """
-    Represents an electrical consumer load supporting multiple 24-hour time windows.
-    Fully compatible with Streamlit session state and 96-slot 15-minute daily arrays.
+    Represents an electrical consumer load supporting multiple 24-hour time windows,
+    individual weekday schedules (Monday..Sunday), and seasonal variation.
+    Fully compatible with Streamlit session state, 96-slot daily arrays, and 365-day annual arrays.
     """
 
     def __init__(
@@ -89,6 +91,9 @@ class SimpleConsumer:
         time_windows: Optional[List[TimeWindow]] = None,
         category: str = "General",
         count: int = 1,
+        active_days: Optional[List[int]] = None,
+        seasonal_pattern: str = "flat",
+        monthly_factors: Optional[List[float]] = None,
         id: Optional[str] = None
     ):
         self.id = id if id else str(uuid.uuid4())[:8]
@@ -99,6 +104,29 @@ class SimpleConsumer:
         self.count = max(1, int(count))
         self.time_windows = time_windows if time_windows is not None else []
         self.is_active = True
+
+        # Weekdays: 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday, 5=Saturday, 6=Sunday
+        # Default: Monday to Friday [0, 1, 2, 3, 4]
+        self.active_days = active_days if active_days is not None else [0, 1, 2, 3, 4]
+
+        # Seasonal variation: 'flat', 'winter_heavy', 'summer_heavy', 'custom'
+        self.seasonal_pattern = seasonal_pattern if seasonal_pattern in ["flat", "winter_heavy", "summer_heavy", "custom"] else "flat"
+        self.monthly_factors = monthly_factors if monthly_factors and len(monthly_factors) == 12 else [1.0] * 12
+
+    def get_seasonal_factor(self, month: int) -> float:
+        """Returns the monthly scaling factor (1=Jan .. 12=Dec)."""
+        m_idx = max(0, min(11, month - 1))
+        if self.seasonal_pattern == "winter_heavy":
+            # Higher in Nov, Dec, Jan, Feb (+25%), lower in Summer (-15%)
+            factors = [1.25, 1.20, 1.10, 1.00, 0.90, 0.85, 0.85, 0.85, 0.90, 1.05, 1.20, 1.25]
+            return factors[m_idx]
+        elif self.seasonal_pattern == "summer_heavy":
+            # Higher in Jun, Jul, Aug (+30%), lower in Winter (-20%)
+            factors = [0.80, 0.80, 0.85, 0.95, 1.15, 1.30, 1.30, 1.30, 1.10, 0.95, 0.80, 0.80]
+            return factors[m_idx]
+        elif self.seasonal_pattern == "custom":
+            return self.monthly_factors[m_idx]
+        return 1.0
 
     def get_24h_array(self) -> np.ndarray:
         """
@@ -143,9 +171,23 @@ class SimpleConsumer:
 
         return curve
 
+    def get_daily_array_for_weekday(self, day_of_week: int = 0, month: int = 1) -> np.ndarray:
+        """
+        Calculates the 96-slot array for a specific day of week (0=Mon .. 6=Sun) and month (1..12).
+        If the day of week is not in active_days, returns an all-zero array.
+        """
+        if not self.is_active or day_of_week not in self.active_days:
+            return np.zeros(96, dtype=float)
+
+        base_curve = self.get_24h_array()
+        season_factor = self.get_seasonal_factor(month)
+        if season_factor != 1.0:
+            return base_curve * season_factor
+        return base_curve
+
     def get_daily_array_15min(self, day_of_week: int = 0) -> np.ndarray:
-        """Alias for get_24h_array for compatibility with multi-day aggregators."""
-        return self.get_24h_array()
+        """Alias for compatibility with multi-day aggregators."""
+        return self.get_daily_array_for_weekday(day_of_week=day_of_week, month=1)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the Consumer to a dictionary."""
@@ -156,12 +198,15 @@ class SimpleConsumer:
             "category": self.category,
             "count": self.count,
             "time_windows": [w.to_dict() for w in self.time_windows],
+            "active_days": self.active_days,
+            "seasonal_pattern": self.seasonal_pattern,
+            "monthly_factors": self.monthly_factors,
             "is_active": self.is_active
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SimpleConsumer":
-        """Reconstructs a SimpleConsumer from a dictionary."""
+        """Reconstructs a SimpleConsumer from a dictionary with backward compatibility."""
         windows = [TimeWindow.from_dict(w) for w in data.get("time_windows", [])]
         return cls(
             id=data.get("id"),
@@ -169,6 +214,9 @@ class SimpleConsumer:
             power_kw=data.get("power_kw", data.get("nominal_power_kw", 10.0)),
             category=data.get("category", "General"),
             count=data.get("count", 1),
+            active_days=data.get("active_days", [0, 1, 2, 3, 4]),
+            seasonal_pattern=data.get("seasonal_pattern", "flat"),
+            monthly_factors=data.get("monthly_factors", [1.0] * 12),
             time_windows=windows
         )
 
