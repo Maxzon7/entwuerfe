@@ -1,18 +1,20 @@
 """
 ========================================================================================
-Tab 2: Contract Data & Financial Assessment (current_model/ui/tab2_contract/view.py)
+Contract & Financial Assessment View (current_model/ui/tab2_contract/view.py)
 ========================================================================================
 
 Description:
 ------------
-Orchestrates Tab 2:
-  - Electricity supply contract & dynamic tariff configuration form
-  - Automated financial assessment of the status quo (monthly fee, period total, itemized table, and KPIs)
-  - Full duration monthly payment schedule (Zahlungsreihe) table and stacked timeseries chart
-  - Visual cost distribution donut chart
+Main view component for Tab 2 (Contract Data & Billing Assessment):
+  - Electricity supply contract configuration form.
+  - Active load dataset finder synchronizing with Tab 1.
+  - Period filter allowing inspection of Full Duration or individual calendar months (e.g. Feb 2026).
+  - Financial KPI metric cards in the selected currency (ARS, EUR, USD, etc.).
+  - Itemized cost breakdown table and cost component Donut chart.
+  - Interactive full-duration payment schedule timeseries chart (Zahlungsreihe) and summary table.
 """
 
-from typing import Optional, Tuple, Any
+from typing import Tuple, Optional, Any, List
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -101,51 +103,106 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
 
     st.caption(f"Calculated based on active profile: **{source_desc}**")
 
-    # Compute complete financial breakdown
-    breakdown: FinancialCostBreakdown = compute_financial_bill(load_data=load_data, contract=contract)
-    curr = breakdown.currency
+    # Compute complete full duration financial breakdown
+    full_breakdown: FinancialCostBreakdown = compute_financial_bill(load_data=load_data, contract=contract)
+    curr = getattr(contract, "currency", "ARS")
 
-    # 4. Financial KPI Cards
+    # 4. Period Filter Selector (Full Duration vs. Single Month Inspection)
+    month_options = ["All Months (Full Duration Overview)"]
+    if full_breakdown.monthly_series:
+        month_options += [m.period_label for m in full_breakdown.monthly_series]
+
+    col_sel1, col_sel2 = st.columns([5, 3])
+    with col_sel1:
+        selected_period = st.selectbox(
+            "Select Billing Period / Month to Inspect:",
+            options=month_options,
+            index=0,
+            key=f"{key_prefix}_period_select"
+        )
+    with col_sel2:
+        st.write("")
+        st.write("")
+        is_single_month = (selected_period != "All Months (Full Duration Overview)")
+        if is_single_month:
+            st.info(f"Viewing single-month detail for **{selected_period}**")
+
+    # If single month selected, compute exact single month breakdown
+    if is_single_month:
+        breakdown = compute_financial_bill(load_data=load_data, contract=contract, target_month=selected_period)
+    else:
+        breakdown = full_breakdown
+
+    # 5. Financial KPI Cards
     kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
-    with kpi_col1:
-        render_kpi_card(
-            title="Estimated Monthly Cost",
-            value=f"{breakdown.total_gross_monthly:,.2f} {curr}",
-            subtext=f"Net: {breakdown.total_net_monthly:,.2f} | Taxes: {breakdown.total_taxes_monthly:,.2f}"
-        )
-    with kpi_col2:
-        render_kpi_card(
-            title="Total Cost over Period",
-            value=f"{breakdown.total_gross_period:,.2f} {curr}",
-            subtext=f"Analyzed period: {breakdown.duration_days:.0f} days ({breakdown.total_consumption_kwh:,.0f} kWh)"
-        )
-    with kpi_col3:
-        render_kpi_card(
-            title="Effective Electricity Price",
-            value=f"{breakdown.effective_kwh_price:.4f} {curr}/kWh",
-            subtext="All-inclusive average unit price"
-        )
-    with kpi_col4:
-        render_kpi_card(
-            title="Fixed Cost Share",
-            value=f"{breakdown.fixed_cost_share_pct:.1f} %",
-            subtext=f"Capacity & Base: {breakdown.capacity_cost_monthly + breakdown.base_fee_monthly:,.2f} {curr}/mo"
-        )
+    if is_single_month:
+        excess_p = max(0.0, breakdown.peak_demand_kw - breakdown.contracted_capacity_kw)
+        with kpi_col1:
+            render_kpi_card(
+                title=f"{selected_period} Gross Total",
+                value=f"{breakdown.total_gross_period:,.2f} {curr}",
+                subtext=f"Net: {breakdown.total_net_period:,.2f} | Taxes: {breakdown.total_taxes_period:,.2f}"
+            )
+        with kpi_col2:
+            render_kpi_card(
+                title=f"{selected_period} Peak Demand",
+                value=f"{breakdown.peak_demand_kw:,.1f} kW",
+                subtext=f"Overload: +{excess_p:,.1f} kW (Limit: {breakdown.contracted_capacity_kw:.0f} kW)",
+                status="alert" if excess_p > 0 else "ok"
+            )
+        with kpi_col3:
+            render_kpi_card(
+                title=f"{selected_period} Energy",
+                value=f"{breakdown.total_consumption_kwh:,.0f} kWh",
+                subtext=f"Duration: {breakdown.duration_days:.0f} days"
+            )
+        with kpi_col4:
+            render_kpi_card(
+                title="Effective Unit Rate",
+                value=f"{breakdown.effective_kwh_price:.4f} {curr}/kWh",
+                subtext="All-inclusive unit cost"
+            )
+    else:
+        with kpi_col1:
+            render_kpi_card(
+                title="Average Monthly Cost",
+                value=f"{breakdown.total_gross_monthly:,.2f} {curr}",
+                subtext=f"Net: {breakdown.total_net_monthly:,.2f} | Taxes: {breakdown.total_taxes_monthly:,.2f}"
+            )
+        with kpi_col2:
+            render_kpi_card(
+                title="Total Cost over Period",
+                value=f"{breakdown.total_gross_period:,.2f} {curr}",
+                subtext=f"Analyzed period: {breakdown.duration_days:.0f} days ({breakdown.total_consumption_kwh:,.0f} kWh)"
+            )
+        with kpi_col3:
+            render_kpi_card(
+                title="Effective Electricity Price",
+                value=f"{breakdown.effective_kwh_price:.4f} {curr}/kWh",
+                subtext="All-inclusive average unit price"
+            )
+        with kpi_col4:
+            render_kpi_card(
+                title="Fixed Cost Share",
+                value=f"{breakdown.fixed_cost_share_pct:.1f} %",
+                subtext=f"Capacity & Base: {breakdown.capacity_cost_monthly + breakdown.base_fee_monthly:,.2f} {curr}/mo"
+            )
 
-    # 5. Itemized Breakdown Table & Donut Chart
+    # 6. Itemized Breakdown Table & Donut Chart
     t_col, c_col = st.columns([7, 5])
 
     with t_col:
-        st.markdown("#### Itemized Cost Breakdown (Normalized Month vs. Period)")
+        header_title = f"Itemized Cost Breakdown ({selected_period})" if is_single_month else "Itemized Cost Breakdown (Normalized Month vs. Period)"
+        st.markdown(f"#### {header_title}")
         table_rows = []
         for item in breakdown.line_items:
             table_rows.append({
                 "Category": item.category,
                 "Description": item.description,
                 "Quantity": f"{item.basis_quantity:,.2f} {item.unit}",
-                "Unit Rate": f"{item.unit_rate:.3f} {curr}",
-                "Period Cost": f"{item.cost_period:,.2f} {curr}",
-                "Monthly Cost": f"{item.cost_monthly:,.2f} {curr}",
+                "Unit Rate": f"{item.unit_rate:.4f} {curr}",
+                f"Period Cost ({curr})": f"{item.cost_period:,.2f}",
+                f"Monthly Cost ({curr})": f"{item.cost_monthly:,.2f}",
                 "Share": f"{item.share_pct:.1f} %"
             })
 
@@ -164,22 +221,25 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
         fig_donut = create_cost_donut_figure(breakdown)
         st.plotly_chart(fig_donut, use_container_width=True)
 
-    # 6. Monthly Payment Schedule across Full Duration (Zahlungsreihe)
+    # 7. Monthly Payment Schedule across Full Duration (Zahlungsreihe)
     st.divider()
     st.subheader("Monthly Payment Schedule across Full Duration (Zahlungsreihe)")
     st.caption("Month-by-month billing series detailing individual cost components, taxes, and total invoice amounts over the complete analyzed period.")
 
-    fig_series = create_monthly_payment_series_figure(breakdown)
+    fig_series = create_monthly_payment_series_figure(
+        breakdown=full_breakdown,
+        highlight_month=selected_period if is_single_month else None
+    )
     st.plotly_chart(fig_series, use_container_width=True)
 
-    if breakdown.monthly_series:
+    if full_breakdown.monthly_series:
         series_rows = []
         total_kwh_sum = 0.0
         total_net_sum = 0.0
         total_tax_sum = 0.0
         total_gross_sum = 0.0
 
-        for m in breakdown.monthly_series:
+        for m in full_breakdown.monthly_series:
             total_kwh_sum += m.energy_kwh
             total_net_sum += m.total_net
             total_tax_sum += m.taxes_and_levies
@@ -202,11 +262,11 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
         overall_avg_rate = (total_gross_sum / total_kwh_sum) if total_kwh_sum > 0 else 0.0
         series_rows.append({
             "Month / Period": "TOTAL / FULL PERIOD",
-            "Days": int(sum(m.days_count for m in breakdown.monthly_series)),
-            f"Energy ({curr})": f"{sum(m.energy_cost_net for m in breakdown.monthly_series):,.2f}",
-            f"Capacity ({curr})": f"{sum(m.capacity_cost_net for m in breakdown.monthly_series):,.2f}",
-            f"Penalties ({curr})": f"{sum(m.penalty_cost_net for m in breakdown.monthly_series):,.2f}",
-            f"Base Fee ({curr})": f"{sum(m.base_fee_net for m in breakdown.monthly_series):,.2f}",
+            "Days": int(sum(m.days_count for m in full_breakdown.monthly_series)),
+            f"Energy ({curr})": f"{sum(m.energy_cost_net for m in full_breakdown.monthly_series):,.2f}",
+            f"Capacity ({curr})": f"{sum(m.capacity_cost_net for m in full_breakdown.monthly_series):,.2f}",
+            f"Penalties ({curr})": f"{sum(m.penalty_cost_net for m in full_breakdown.monthly_series):,.2f}",
+            f"Base Fee ({curr})": f"{sum(m.base_fee_net for m in full_breakdown.monthly_series):,.2f}",
             f"Taxes & Levies ({curr})": f"{total_tax_sum:,.2f}",
             f"Total Net ({curr})": f"{total_net_sum:,.2f}",
             f"Total Gross ({curr})": f"{total_gross_sum:,.2f}",

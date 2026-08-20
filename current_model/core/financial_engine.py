@@ -49,13 +49,33 @@ def compute_financial_bill(
     load_data: Union[pd.DataFrame, np.ndarray, List[float]],
     contract: Contract,
     duration_days: Optional[float] = None,
-    step_hours: float = 0.25
+    step_hours: float = 0.25,
+    target_month: Optional[str] = None
 ) -> FinancialCostBreakdown:
     """
     Evaluates a load curve against a Contract to generate a comprehensive, itemized financial assessment
-    including monthly payment timeseries schedule across the full duration.
+    including monthly payment timeseries schedule across the full duration, or focused on a specific target month.
     """
-    currency = getattr(contract, "currency", "EUR")
+    # If a specific target month is requested (e.g. 'Feb 2026'), compute full series first then isolate target month
+    if target_month and isinstance(load_data, pd.DataFrame) and "timestamp" in load_data.columns:
+        full_breakdown = compute_financial_bill(load_data, contract, duration_days=duration_days, step_hours=step_hours, target_month=None)
+        ts = pd.to_datetime(load_data["timestamp"], errors="coerce")
+        mask = (ts.dt.strftime("%b %Y") == target_month)
+        if mask.any():
+            month_df = load_data.loc[mask].copy()
+            month_days = len(month_df) * step_hours / 24.0
+            month_breakdown = compute_financial_bill(
+                load_data=month_df,
+                contract=contract,
+                duration_days=month_days,
+                step_hours=step_hours,
+                target_month=None
+            )
+            # Reattach full monthly series so charts can still display the full timeline
+            month_breakdown.monthly_series = full_breakdown.monthly_series
+            return month_breakdown
+
+    currency = getattr(contract, "currency", "ARS")
 
     # 1. Standardize input data and calculate duration & sampling
     if isinstance(load_data, pd.DataFrame):
@@ -171,14 +191,14 @@ def compute_financial_bill(
 
     total_energy_monthly = total_energy_period * monthly_multiplier
 
-    # 3. Capacity Charge
+    # 3. Contracted Capacity Charge (Uso de Red)
     capacity_cost_monthly = contracted_kw * cap_tariff
     capacity_cost_period = capacity_cost_monthly * months_in_period
 
     if contracted_kw > 0 and cap_tariff > 0:
         line_items.append(
             CostLineItem(
-                category="Capacity Charge",
+                category="Capacity (Contracted)",
                 description=f"Contracted Capacity ({contracted_kw:.1f} kW)",
                 basis_quantity=contracted_kw,
                 unit="kW",
@@ -188,7 +208,25 @@ def compute_financial_bill(
             )
         )
 
-    # 4. Peak Overload Penalty
+    # 3b. Measured Demand Capacity Charge (Consumo de Potencia)
+    demand_cap_tariff = float(getattr(contract, "demand_capacity_tariff", 0.0))
+    demand_cost_monthly = peak_demand_kw * demand_cap_tariff if demand_cap_tariff > 0 else 0.0
+    demand_cost_period = demand_cost_monthly * months_in_period
+
+    if peak_demand_kw > 0 and demand_cap_tariff > 0:
+        line_items.append(
+            CostLineItem(
+                category="Demand (Measured)",
+                description=f"Measured Peak Demand ({peak_demand_kw:.1f} kW)",
+                basis_quantity=peak_demand_kw,
+                unit="kW",
+                unit_rate=demand_cap_tariff,
+                cost_period=round(demand_cost_period, 2),
+                cost_monthly=round(demand_cost_monthly, 2)
+            )
+        )
+
+    # 4. Peak Overload Penalty (Exceso de Potencia)
     excess_kw = max(0.0, peak_demand_kw - contracted_kw)
     penalty_cost_monthly = excess_kw * penalty_rate if excess_kw > 0 else 0.0
     penalty_cost_period = penalty_cost_monthly * months_in_period
@@ -206,7 +244,7 @@ def compute_financial_bill(
             )
         )
 
-    # 5. Base Monthly Fee
+    # 5. Base Monthly Fee (Cargo Comercialización)
     base_fee_period = base_fee_monthly * months_in_period
     if base_fee_monthly > 0:
         line_items.append(
@@ -226,8 +264,8 @@ def compute_financial_bill(
     reactive_cost_period = 0.0
 
     # Net Subtotals
-    total_net_period = total_energy_period + capacity_cost_period + penalty_cost_period + base_fee_period + reactive_cost_period
-    total_net_monthly = total_energy_monthly + capacity_cost_monthly + penalty_cost_monthly + base_fee_monthly + reactive_cost_monthly
+    total_net_period = total_energy_period + capacity_cost_period + demand_cost_period + penalty_cost_period + base_fee_period + reactive_cost_period
+    total_net_monthly = total_energy_monthly + capacity_cost_monthly + demand_cost_monthly + penalty_cost_monthly + base_fee_monthly + reactive_cost_monthly
 
     # 7. Taxes & Dynamic Levies
     total_taxes_period = 0.0
@@ -306,8 +344,8 @@ def compute_financial_bill(
                         s_dt = sub_ts[s_idx]
                         sub_energy_cost += (s_kw * step_hours * contract.get_energy_rate(s_dt))
 
-                    # Capacity & Base fees for this month
-                    sub_cap_cost = contracted_kw * cap_tariff
+                    # Capacity & Demand & Base fees for this month
+                    sub_cap_cost = contracted_kw * cap_tariff + (sub_peak * demand_cap_tariff)
                     sub_excess = max(0.0, sub_peak - contracted_kw)
                     sub_penalty = sub_excess * penalty_rate
                     sub_base = base_fee_monthly

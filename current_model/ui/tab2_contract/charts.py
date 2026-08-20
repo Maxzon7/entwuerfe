@@ -6,55 +6,39 @@ Cost Structure & Financial Visualizer (current_model/ui/tab2_contract/charts.py)
 Description:
 ------------
 Generates minimalist, professional Plotly dark-themed charts:
-  1. Donut chart visualizing monthly cost distribution (Energy, Capacity, Base Fees, Taxes).
+  1. Donut chart visualizing monthly cost distribution across all line item categories.
   2. Stacked Bar chart visualizing monthly payment timeseries (Zahlungsreihe) across full duration.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict
 import plotly.graph_objects as go
 from current_model.models.financial import FinancialCostBreakdown, MonthlyPaymentRecord
 
-COST_PALETTE = {
-    "energy": "#38BDF8",     # Sky Blue
-    "capacity": "#F59E0B",   # Amber
-    "penalty": "#EF4444",    # Red
-    "base": "#8B5CF6",       # Violet
-    "taxes": "#10B981"       # Emerald
+COST_PALETTE: Dict[str, str] = {
+    "Energy (Active)": "#38BDF8",       # Sky Blue
+    "Capacity (Contracted)": "#F59E0B",  # Amber
+    "Demand (Measured)": "#FB923C",      # Orange
+    "Peak Penalty": "#EF4444",          # Red
+    "Base Fee": "#8B5CF6",              # Violet
+    "Taxes & Levies": "#10B981",        # Emerald
+    "Other": "#94A3B8"                  # Slate
 }
 
 
 def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
     """
-    Constructs a clean, modern Donut chart displaying monthly cost distribution.
+    Constructs a clean, modern Donut chart displaying monthly cost distribution across all line items.
     """
-    labels = []
-    values = []
-    colors = []
+    category_totals: Dict[str, float] = {}
+    for item in breakdown.line_items:
+        cat = item.category
+        val = item.cost_monthly if breakdown.duration_days > 35 else item.cost_period
+        if val > 0:
+            category_totals[cat] = category_totals.get(cat, 0.0) + val
 
-    if breakdown.energy_cost_monthly > 0:
-        labels.append("Active Energy")
-        values.append(breakdown.energy_cost_monthly)
-        colors.append(COST_PALETTE["energy"])
-
-    if breakdown.capacity_cost_monthly > 0:
-        labels.append("Capacity Charge")
-        values.append(breakdown.capacity_cost_monthly)
-        colors.append(COST_PALETTE["capacity"])
-
-    if breakdown.penalty_cost_monthly > 0:
-        labels.append("Peak Penalty")
-        values.append(breakdown.penalty_cost_monthly)
-        colors.append(COST_PALETTE["penalty"])
-
-    if breakdown.base_fee_monthly > 0:
-        labels.append("Base Fee")
-        values.append(breakdown.base_fee_monthly)
-        colors.append(COST_PALETTE["base"])
-
-    if breakdown.total_taxes_monthly > 0:
-        labels.append("Taxes & Levies")
-        values.append(breakdown.total_taxes_monthly)
-        colors.append(COST_PALETTE["taxes"])
+    labels = list(category_totals.keys())
+    values = list(category_totals.values())
+    colors = [COST_PALETTE.get(cat, COST_PALETTE["Other"]) for cat in labels]
 
     if not values:
         labels = ["No Cost Data"]
@@ -71,7 +55,7 @@ def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
                 hole=0.55,
                 textinfo="label+percent",
                 marker=dict(colors=colors),
-                hovertemplate=f"<b>%{{label}}</b><br>Monthly: %{{value:,.2f}} {currency}<br>Share: %{{percent}}<extra></extra>"
+                hovertemplate=f"<b>%{{label}}</b><br>Amount: %{{value:,.2f}} {currency}<br>Share: %{{percent}}<extra></extra>"
             )
         ]
     )
@@ -98,7 +82,10 @@ def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
     return fig
 
 
-def create_monthly_payment_series_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
+def create_monthly_payment_series_figure(
+    breakdown: FinancialCostBreakdown,
+    highlight_month: Optional[str] = None
+) -> go.Figure:
     """
     Constructs an interactive stacked bar chart visualizing monthly payment timeseries across full duration.
     """
@@ -128,7 +115,7 @@ def create_monthly_payment_series_figure(breakdown: FinancialCostBreakdown) -> g
             x=months,
             y=energy_costs,
             name="Active Energy",
-            marker_color=COST_PALETTE["energy"],
+            marker_color=COST_PALETTE["Energy (Active)"],
             hovertemplate=f"<b>Active Energy</b>: %{{y:,.2f}} {currency}<extra></extra>"
         )
     )
@@ -138,7 +125,7 @@ def create_monthly_payment_series_figure(breakdown: FinancialCostBreakdown) -> g
             x=months,
             y=capacity_costs,
             name="Capacity Charge",
-            marker_color=COST_PALETTE["capacity"],
+            marker_color=COST_PALETTE["Capacity (Contracted)"],
             hovertemplate=f"<b>Capacity</b>: %{{y:,.2f}} {currency}<extra></extra>"
         )
     )
@@ -149,7 +136,7 @@ def create_monthly_payment_series_figure(breakdown: FinancialCostBreakdown) -> g
                 x=months,
                 y=penalty_costs,
                 name="Peak Penalty",
-                marker_color=COST_PALETTE["penalty"],
+                marker_color=COST_PALETTE["Peak Penalty"],
                 hovertemplate=f"<b>Penalty</b>: %{{y:,.2f}} {currency}<extra></extra>"
             )
         )
@@ -159,7 +146,7 @@ def create_monthly_payment_series_figure(breakdown: FinancialCostBreakdown) -> g
             x=months,
             y=base_fees,
             name="Base Fee",
-            marker_color=COST_PALETTE["base"],
+            marker_color=COST_PALETTE["Base Fee"],
             hovertemplate=f"<b>Base Fee</b>: %{{y:,.2f}} {currency}<extra></extra>"
         )
     )
@@ -169,7 +156,7 @@ def create_monthly_payment_series_figure(breakdown: FinancialCostBreakdown) -> g
             x=months,
             y=taxes,
             name="Taxes & Levies",
-            marker_color=COST_PALETTE["taxes"],
+            marker_color=COST_PALETTE["Taxes & Levies"],
             hovertemplate=f"<b>Taxes</b>: %{{y:,.2f}} {currency}<extra></extra>"
         )
     )
@@ -215,5 +202,18 @@ def create_monthly_payment_series_figure(breakdown: FinancialCostBreakdown) -> g
         paper_bgcolor="#0B0F19",
         height=380
     )
+
+    if highlight_month and highlight_month in months:
+        fig.add_vrect(
+            x0=months.index(highlight_month) - 0.4,
+            x1=months.index(highlight_month) + 0.4,
+            fillcolor="#38BDF8",
+            opacity=0.15,
+            line_width=2,
+            line_color="#38BDF8",
+            annotation_text=f"Selected: {highlight_month}",
+            annotation_position="top left",
+            annotation_font_color="#38BDF8"
+        )
 
     return fig

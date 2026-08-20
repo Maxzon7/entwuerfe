@@ -25,7 +25,8 @@ class Contract:
 
     # Active Power & Capacity Parameters
     contracted_capacity_kw: float = 400.0          # Contracted active capacity limit (kW)
-    monthly_capacity_tariff: float = 0.15          # Capacity charge (€/kW/month)
+    monthly_capacity_tariff: float = 0.15          # Capacity charge (€/kW/month - Uso de Red)
+    demand_capacity_tariff: float = 0.0            # Measured Peak Demand Charge (€/kW/month - Consumo de Potencia)
     max_physical_limit_kw: float = 1000.0          # Absolute physical grid fuse limit (kW)
     peak_penalty_rate: float = 0.25                # Penalty rate for exceeding contracted capacity (€/kW)
 
