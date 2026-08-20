@@ -8,6 +8,7 @@ Description:
 Orchestrates Tab 2:
   - Electricity supply contract & dynamic tariff configuration form
   - Automated financial assessment of the status quo (monthly fee, period total, itemized table, and KPIs)
+  - Full duration monthly payment schedule (Zahlungsreihe) table and stacked timeseries chart
   - Visual cost distribution donut chart
 """
 
@@ -22,7 +23,7 @@ from current_model.core.financial_engine import compute_financial_bill
 from current_model.core.synthetic_engine import aggregate_synthetic_24h
 from current_model.ui.common.cards import render_kpi_card
 from current_model.ui.tab2_contract.form import render_contract_form
-from current_model.ui.tab2_contract.charts import create_cost_donut_figure
+from current_model.ui.tab2_contract.charts import create_cost_donut_figure, create_monthly_payment_series_figure
 
 
 def _find_active_load_data_in_session() -> Tuple[Optional[Any], str]:
@@ -52,7 +53,7 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
     """
     Renders Tab 2: Contract Configuration and Financial Assessment.
     """
-    # 1. Guidance Warning (Minimal, no emoji spam)
+    # 1. Guidance Warning
     st.warning("Should you wish to not use a contract, leave the fields empty.")
 
     # 2. Electricity Supply Contract & Tariff Configuration Form
@@ -102,11 +103,11 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
             subtext=f"Capacity & Base: {breakdown.capacity_cost_monthly + breakdown.base_fee_monthly:,.2f} {curr}/mo"
         )
 
-    # 5. Itemized Table and Donut Chart
+    # 5. Itemized Breakdown Table & Donut Chart
     t_col, c_col = st.columns([7, 5])
 
     with t_col:
-        st.markdown("#### Itemized Invoice Breakdown")
+        st.markdown("#### Itemized Cost Breakdown (Normalized Month vs. Period)")
         table_rows = []
         for item in breakdown.line_items:
             table_rows.append({
@@ -133,5 +134,57 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
     with c_col:
         fig_donut = create_cost_donut_figure(breakdown)
         st.plotly_chart(fig_donut, use_container_width=True)
+
+    # 6. Monthly Payment Schedule across Full Duration (Zahlungsreihe)
+    st.divider()
+    st.subheader("Monthly Payment Schedule across Full Duration (Zahlungsreihe)")
+    st.caption("Month-by-month billing series detailing individual cost components, taxes, and total invoice amounts over the complete analyzed period.")
+
+    fig_series = create_monthly_payment_series_figure(breakdown)
+    st.plotly_chart(fig_series, use_container_width=True)
+
+    if breakdown.monthly_series:
+        series_rows = []
+        total_kwh_sum = 0.0
+        total_net_sum = 0.0
+        total_tax_sum = 0.0
+        total_gross_sum = 0.0
+
+        for m in breakdown.monthly_series:
+            total_kwh_sum += m.energy_kwh
+            total_net_sum += m.total_net
+            total_tax_sum += m.taxes_and_levies
+            total_gross_sum += m.total_gross
+
+            series_rows.append({
+                "Month / Period": m.period_label,
+                "Days": m.days_count,
+                f"Energy ({curr})": f"{m.energy_cost_net:,.2f}",
+                f"Capacity ({curr})": f"{m.capacity_cost_net:,.2f}",
+                f"Penalties ({curr})": f"{m.penalty_cost_net:,.2f}",
+                f"Base Fee ({curr})": f"{m.base_fee_net:,.2f}",
+                f"Taxes & Levies ({curr})": f"{m.taxes_and_levies:,.2f}",
+                f"Total Net ({curr})": f"{m.total_net:,.2f}",
+                f"Total Gross ({curr})": f"{m.total_gross:,.2f}",
+                f"Rate ({curr}/kWh)": f"{m.effective_rate_kwh:.4f}"
+            })
+
+        # Append Total Summary Row
+        overall_avg_rate = (total_gross_sum / total_kwh_sum) if total_kwh_sum > 0 else 0.0
+        series_rows.append({
+            "Month / Period": "TOTAL / FULL PERIOD",
+            "Days": int(sum(m.days_count for m in breakdown.monthly_series)),
+            f"Energy ({curr})": f"{sum(m.energy_cost_net for m in breakdown.monthly_series):,.2f}",
+            f"Capacity ({curr})": f"{sum(m.capacity_cost_net for m in breakdown.monthly_series):,.2f}",
+            f"Penalties ({curr})": f"{sum(m.penalty_cost_net for m in breakdown.monthly_series):,.2f}",
+            f"Base Fee ({curr})": f"{sum(m.base_fee_net for m in breakdown.monthly_series):,.2f}",
+            f"Taxes & Levies ({curr})": f"{total_tax_sum:,.2f}",
+            f"Total Net ({curr})": f"{total_net_sum:,.2f}",
+            f"Total Gross ({curr})": f"{total_gross_sum:,.2f}",
+            f"Rate ({curr}/kWh)": f"{overall_avg_rate:.4f}"
+        })
+
+        df_series = pd.DataFrame(series_rows)
+        st.dataframe(df_series, use_container_width=True, hide_index=True)
 
     return contract
