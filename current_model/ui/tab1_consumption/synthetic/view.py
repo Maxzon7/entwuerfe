@@ -1,11 +1,11 @@
 """
 ========================================================================================
-Synthetic Load Simulator View (current_model/ui/synthetic/view.py)
+Synthetic Load Simulator View (current_model/ui/tab1_consumption/synthetic/view.py)
 ========================================================================================
 
 Description:
 ------------
-Orchestrates the 24-hour synthetic bottom-up simulation interface including:
+Orchestrates the 24-hour synthetic bottom-up simulation interface:
   - Metric summary cards
   - Compact grid capacity limit setup
   - Plotly stacked profile visualization
@@ -24,8 +24,8 @@ from current_model.models.grid_limit import OverloadAnalysisResult
 from current_model.models.presets import PRESET_FACTORIES
 from current_model.core.synthetic_engine import aggregate_synthetic_24h
 from current_model.ui.common.cards import render_kpi_card
-from current_model.ui.synthetic.charts import create_synthetic_profile_figure
-from current_model.ui.synthetic.forms import render_add_consumer_form, render_consumer_editor
+from current_model.ui.tab1_consumption.synthetic.charts import create_synthetic_profile_figure
+from current_model.ui.tab1_consumption.synthetic.forms import render_add_consumer_form, render_consumer_editor
 
 
 def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
@@ -48,12 +48,12 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
             p_dur = getattr(c, "peak_duration_min", 30)
             c.time_windows = [TimeWindow(s_time, e_time, h_peak, p_power, p_dur)]
 
-    # Quick Preset Bar (Optional helpful shortcut)
+    # Quick Preset Bar
     with st.expander("⚡ Load Pre-Configured Industry Presets", expanded=False):
         preset_cols = st.columns(len(PRESET_FACTORIES))
         for p_idx, (preset_name, factory_func) in enumerate(PRESET_FACTORIES.items()):
             with preset_cols[p_idx]:
-                if st.button(f"Load {preset_name}", key=f"load_preset_{p_idx}", use_container_width=True):
+                if st.button(f"Load {preset_name}", key=f"{key_prefix}_load_preset_{p_idx}", use_container_width=True):
                     st.session_state[session_key] = factory_func()
                     st.rerun()
 

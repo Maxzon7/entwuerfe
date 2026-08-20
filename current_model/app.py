@@ -21,9 +21,8 @@ if project_root not in sys.path:
 
 import streamlit as st
 from current_model.ui.common.styles import apply_custom_styles
-from current_model.ui.synthetic.view import render_synthetic_simulator
-from current_model.ui.csv_inspector.view import render_csv_inspector
-from current_model.ui.contract.form import render_contract_view
+from current_model.ui.tab1_consumption.view import render_tab1_consumption
+from current_model.ui.tab2_contract.view import render_tab2_contract
 
 # 1. Page Configuration & Styling
 st.set_page_config(
@@ -36,30 +35,13 @@ apply_custom_styles()
 st.title("Energy Simulator & Load Profile Analyzer")
 st.caption("Modular platform for 24-Hour synthetic bottom-up load modeling, real-world CSV meter analysis, and contract modeling.")
 
-# 2. Top-Level Tab Navigation
-tab_consumption, tab_contract = st.tabs(["⚡ Consumption", "📄 Contract Data"])
+# 2. Top-Level Tab Navigation (1:1 mapped to ui/tab1_... and ui/tab2_...)
+tab_consumption, tab_contract = st.tabs(["⚡ 1. Consumption", "📄 2. Contract Data"])
 
-# ======================================================================================
-# TAB 1: Consumption (Synthetic 24h Simulation vs CSV Real Meter Data)
-# ======================================================================================
+# TAB 1: Consumption
 with tab_consumption:
-    app_mode = st.radio(
-        "Select Consumption Source:",
-        options=[
-            "⚡ 24-Hour Synthetic Load Simulator",
-            "📁 CSV Real Meter Data Visualizer"
-        ],
-        horizontal=True
-    )
-    st.divider()
+    render_tab1_consumption(key_prefix="app_tab1")
 
-    if app_mode == "⚡ 24-Hour Synthetic Load Simulator":
-        render_synthetic_simulator(key_prefix="app_synthetic")
-    else:
-        render_csv_inspector(key_prefix="app_csv")
-
-# ======================================================================================
-# TAB 2: Contract Data (Electricity Supply Contract & Tariffs)
-# ======================================================================================
+# TAB 2: Contract Data
 with tab_contract:
-    render_contract_view(key_prefix="app_contract")
+    render_tab2_contract(key_prefix="app_tab2")

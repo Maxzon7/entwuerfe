@@ -1,6 +1,6 @@
 """
 ========================================================================================
-Synthetic Profile Visualizer (current_model/ui/synthetic/charts.py)
+Synthetic Profile Visualizer (current_model/ui/tab1_consumption/synthetic/charts.py)
 ========================================================================================
 
 Description:
