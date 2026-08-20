@@ -6,7 +6,8 @@ Contract & Tariff Configuration Form (current_model/ui/tab2_contract/form.py)
 Description:
 ------------
 Reusable Streamlit form for configuring and saving an electricity supply
-contract with Active & Reactive power, Time-of-Use (TOU) rates, and dynamic Taxes/Fees.
+contract with Active & Reactive power, dynamic Time-of-Use (TOU) rates table,
+and dynamic Taxes/Fees table.
 """
 
 from typing import Optional
@@ -17,16 +18,27 @@ from current_model.models.contract import Contract
 
 def render_contract_form(as_expander: bool = False, key_prefix: str = "main") -> Contract:
     """
-    Renders an electricity supply contract configuration form.
-    Can be embedded directly or wrapped inside an st.expander.
+    Renders an electricity supply contract configuration form with dynamic TOU rates and taxes.
     """
     state_contract_key = f"{key_prefix}_contract"
+    state_tou_key = f"{key_prefix}_contract_tou_df"
     state_taxes_key = f"{key_prefix}_contract_taxes_df"
 
-    if state_contract_key not in st.session_state:
+    if state_contract_key not in st.session_state or not isinstance(st.session_state[state_contract_key], Contract):
         st.session_state[state_contract_key] = Contract()
 
     current: Contract = st.session_state[state_contract_key]
+
+    # Backward compatibility migration for session state objects created before tou_rates update
+    if not hasattr(current, "tou_rates") or not current.tou_rates:
+        default_r = getattr(current, "default_energy_rate", 0.20)
+        current.tou_rates = [{"name": "Standard Rate", "rate": default_r, "start_time": "00:00", "end_time": "24:00"}]
+
+    if not hasattr(current, "taxes_and_fees") or not current.taxes_and_fees:
+        current.taxes_and_fees = [{"name": "VAT", "type": "percentage", "value": 20.0, "description": "Standard Value Added Tax"}]
+
+    if state_tou_key not in st.session_state or st.session_state[state_tou_key].empty:
+        st.session_state[state_tou_key] = pd.DataFrame(current.tou_rates)
 
     if state_taxes_key not in st.session_state or st.session_state[state_taxes_key].empty:
         st.session_state[state_taxes_key] = pd.DataFrame(current.taxes_and_fees)
@@ -34,7 +46,7 @@ def render_contract_form(as_expander: bool = False, key_prefix: str = "main") ->
     container = st.expander("Electricity Supply Contract & Tariff Configuration", expanded=False) if as_expander else st.container()
 
     with container:
-        st.caption("Configure contracted capacity, reactive power parameters, Time-of-Use (TOU) tariffs, and custom taxes/fees.")
+        st.caption("Configure contracted capacity, reactive power parameters, dynamic Time-of-Use (TOU) tariffs, and custom taxes/fees.")
 
         with st.form(key=f"{key_prefix}_contract_form"):
             st.subheader("1. Active Capacity & Base Fees")
@@ -58,17 +70,30 @@ def render_contract_form(as_expander: bool = False, key_prefix: str = "main") ->
             with q3:
                 reactive_allowance = st.number_input("Reactive Allowance (% of kWh):", min_value=0.0, max_value=100.0, value=float(current.reactive_power_allowance_pct), step=1.0, key=f"{key_prefix}_react_allow")
 
+            # 3. Dynamic Time-of-Use (TOU) Energy Rates (Modeled like the Taxes Table)
             st.subheader("3. Time-of-Use (TOU) Energy Rates")
-            r1, r2 = st.columns(2)
-            with r1:
-                peak_rate = st.number_input("Peak Energy Rate (/kWh):", min_value=0.0, value=float(current.peak_energy_rate), step=0.01, format="%.3f", key=f"{key_prefix}_peak_r")
-                peak_start = st.number_input("Peak Window Start Hour (0-23):", min_value=0, max_value=23, value=int(current.peak_hours[0]), step=1, key=f"{key_prefix}_peak_s")
-                weekend_off_peak = st.checkbox("Treat Weekends as Off-Peak", value=bool(current.weekend_is_off_peak), key=f"{key_prefix}_wknd")
+            st.caption("Standard: Default 24h rate. You can add multiple Time-of-Use tariff windows or delete rows:")
 
-            with r2:
-                off_peak_rate = st.number_input("Off-Peak Energy Rate (/kWh):", min_value=0.0, value=float(current.off_peak_energy_rate), step=0.01, format="%.3f", key=f"{key_prefix}_offpeak_r")
-                peak_end = st.number_input("Peak Window End Hour (0-23):", min_value=0, max_value=23, value=int(current.peak_hours[1]), step=1, key=f"{key_prefix}_peak_e")
+            edited_tou = st.data_editor(
+                st.session_state[state_tou_key],
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "name": st.column_config.TextColumn("Tariff Name", required=True),
+                    "rate": st.column_config.NumberColumn("Rate (/kWh)", format="%.3f", min_value=0.0, required=True),
+                    "start_time": st.column_config.TextColumn("Start Time (HH:MM)", required=True),
+                    "end_time": st.column_config.TextColumn("End Time (HH:MM)", required=True)
+                },
+                key=f"{key_prefix}_tou_editor"
+            )
 
+            weekend_off_peak = st.checkbox(
+                "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
+                value=bool(current.weekend_is_off_peak),
+                key=f"{key_prefix}_wknd"
+            )
+
+            # 4. Dynamic Taxes & Additional Fees Table
             st.subheader("4. Taxes & Additional Fees")
             st.caption("Standard: 20% VAT. You can add custom fees or delete rows:")
 
@@ -89,11 +114,20 @@ def render_contract_form(as_expander: bool = False, key_prefix: str = "main") ->
                 key=f"{key_prefix}_taxes_editor"
             )
 
-            submitted = st.form_submit_button("Save Contract Configuration", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("💾 Save Contract Configuration", type="primary", use_container_width=True)
 
         if submitted:
+            # Clean and validate TOU rates table
+            cleaned_tou = edited_tou.dropna(subset=["name", "rate"]).to_dict(orient="records")
+            if not cleaned_tou:
+                cleaned_tou = [{"name": "Standard Rate", "rate": 0.20, "start_time": "00:00", "end_time": "24:00"}]
+            st.session_state[state_tou_key] = pd.DataFrame(cleaned_tou)
+
+            # Clean and validate Taxes table
             cleaned_taxes = edited_taxes.dropna(subset=["name", "value"]).to_dict(orient="records")
             st.session_state[state_taxes_key] = pd.DataFrame(cleaned_taxes) if cleaned_taxes else pd.DataFrame(columns=["name", "type", "value", "description"])
+
+            default_rate = float(cleaned_tou[0].get("rate", 0.20))
 
             st.session_state[state_contract_key] = Contract(
                 currency=currency,
@@ -105,9 +139,8 @@ def render_contract_form(as_expander: bool = False, key_prefix: str = "main") ->
                 reactive_power_tariff=reactive_tariff,
                 min_power_factor=min_cos_phi,
                 reactive_power_allowance_pct=reactive_allowance,
-                peak_energy_rate=peak_rate,
-                off_peak_energy_rate=off_peak_rate,
-                peak_hours=(int(peak_start), int(peak_end)),
+                tou_rates=cleaned_tou,
+                default_energy_rate=default_rate,
                 weekend_is_off_peak=weekend_off_peak,
                 taxes_and_fees=cleaned_taxes
             )
