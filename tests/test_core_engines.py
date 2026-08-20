@@ -35,6 +35,36 @@ class TestCoreEngines(unittest.TestCase):
         self.assertTrue(len(time_cols) >= 1)
         self.assertTrue(len(power_cols) >= 2)
 
+    def test_european_semicolon_and_comma_decimal_parsing(self):
+        # Emulate the exact user CSV snippet with uneven decimal commas (0 vs 0,144)
+        raw_csv = """M3016666;01.01.2025;00:00:00;107,568;0;60,912
+M3016666;01.01.2025;00:15:00;108,432;0;60,336
+M3016666;01.01.2025;00:30:00;128,448;0;48,96
+M3016666;01.01.2025;00:45:00;112,32;0;57,456
+M3016666;01.01.2025;01:00:00;101,088;0;66,816
+M3016666;01.01.2025;01:15:00;88,128;0;81,648
+M3016666;01.01.2025;01:30:00;95,472;0;73,296
+M3016666;01.01.2025;01:45:00;118,944;0,144;51,552
+"""
+        df = parse_csv_content(raw_csv)
+        self.assertEqual(df.shape, (8, 6))
+        # Ensure values were parsed as floats with comma decimal handled
+        self.assertAlmostEqual(df.iloc[0, 3], 107.568)
+        self.assertAlmostEqual(df.iloc[7, 4], 0.144)
+
+    def test_spanish_headers_and_detection(self):
+        raw_csv_spanish = """COD_MED;FECHA_REG;HORA_REG;POTENCIA_A_KW;POTENCIA_B_KVAR(+);POTENCIA_C_KVAR(-)
+M1508422;01.01.2025;00:00:00;53,712;0,144;3,024
+M1508422;01.01.2025;00:15:00;53,136;0,144;3,168
+"""
+        df = parse_csv_content(raw_csv_spanish)
+        self.assertEqual(df.shape, (2, 6))
+        time_cols, power_cols, unit = detect_suggested_columns(df)
+        self.assertIn("FECHA_REG", time_cols)
+        self.assertIn("HORA_REG", time_cols)
+        self.assertIn("POTENCIA_A_KW", power_cols)
+        self.assertEqual(unit, "kW (Active Power - Direct)")
+
     def test_load_processor_with_units(self):
         # Create a sample DataFrame
         df_sample = pd.DataFrame({

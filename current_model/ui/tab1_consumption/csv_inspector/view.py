@@ -142,23 +142,33 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 st.warning("Please select at least one timestamp column and one power column.")
                 continue
 
-            df_clean = process_load_profile_data(
-                df_raw=df_raw,
-                selected_time_cols=selected_time_cols,
-                selected_power_cols=selected_power_cols,
-                selected_unit=selected_unit,
-                max_rows=len(df_raw),
-                dayfirst=dayfirst_choice
-            )
-            kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
-            st.session_state[calc_cache_key] = {
-                "df_clean": df_clean,
-                "kpis": kpis,
-                "selected_power_cols": selected_power_cols
-            }
+            try:
+                df_clean = process_load_profile_data(
+                    df_raw=df_raw,
+                    selected_time_cols=selected_time_cols,
+                    selected_power_cols=selected_power_cols,
+                    selected_unit=selected_unit,
+                    max_rows=len(df_raw),
+                    dayfirst=dayfirst_choice
+                )
+                kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
+                st.session_state[calc_cache_key] = {
+                    "df_clean": df_clean,
+                    "kpis": kpis,
+                    "selected_power_cols": selected_power_cols
+                }
+                # Explicitly register current active CSV dataset for Tab 2
+                st.session_state["active_csv_df"] = df_clean
+                st.session_state["active_csv_filename"] = file_name
+            except Exception as err:
+                st.error(f"Timestamp / Data Processing Error: {err}")
+                continue
 
         cached = st.session_state.get(calc_cache_key)
         if cached:
+            # Ensure active dataset pointer is always synced with currently rendered file
+            st.session_state["active_csv_df"] = cached["df_clean"]
+            st.session_state["active_csv_filename"] = file_name
             df_clean = cached["df_clean"]
             kpis = cached["kpis"]
             selected_power_cols = cached["selected_power_cols"]

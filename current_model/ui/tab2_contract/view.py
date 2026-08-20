@@ -29,24 +29,46 @@ from current_model.ui.tab2_contract.charts import create_cost_donut_figure, crea
 def _find_active_load_data_in_session() -> Tuple[Optional[Any], str]:
     """
     Finds the active consumption load dataset created in Tab 1
-    (either 365-Day Annual Synthetic, 24h Synthetic, or CSV real meter timeseries).
+    (either CSV real meter timeseries, 365-Day Annual Synthetic, or 24h Synthetic).
     Returns (data, source_type_description).
     """
-    # 1. Check for explicitly cached active DataFrames (e.g. 365-day annual synthetic)
-    for key, val in st.session_state.items():
-        if "active_df" in key and isinstance(val, pd.DataFrame) and not val.empty:
-            if len(val) >= 35000:
-                return val, "365-Day Annual Synthetic Simulation"
-            return val, "24-Hour Synthetic Simulation"
+    active_source = st.session_state.get("tab1_active_source", "csv")
 
-    # 2. Check for CSV calculated datasets
-    for key, val in st.session_state.items():
-        if "calc_data" in key and isinstance(val, dict) and "df_clean" in val:
-            df_clean = val["df_clean"]
-            if isinstance(df_clean, pd.DataFrame) and not df_clean.empty:
-                return df_clean, "CSV Real Meter Data"
+    if active_source == "csv":
+        # 1. Directly check the active CSV dataframe
+        if "active_csv_df" in st.session_state and isinstance(st.session_state["active_csv_df"], pd.DataFrame):
+            df_active = st.session_state["active_csv_df"]
+            if not df_active.empty:
+                fname = st.session_state.get("active_csv_filename", "Uploaded CSV")
+                return df_active, f"CSV Real Meter Data ({fname})"
 
-    # 3. Check for Synthetic consumer lists
+        # Fallback to reverse scan of calc_data
+        for key in reversed(list(st.session_state.keys())):
+            if "calc_data" in key and isinstance(st.session_state[key], dict) and "df_clean" in st.session_state[key]:
+                df_clean = st.session_state[key]["df_clean"]
+                if isinstance(df_clean, pd.DataFrame) and not df_clean.empty:
+                    return df_clean, "CSV Real Meter Data"
+
+        # Fallback to synthetic
+        if "active_synthetic_df" in st.session_state and isinstance(st.session_state["active_synthetic_df"], pd.DataFrame):
+            df_syn = st.session_state["active_synthetic_df"]
+            if not df_syn.empty:
+                return df_syn, "Synthetic Simulation"
+
+    else:
+        # Prioritize Synthetic
+        if "active_synthetic_df" in st.session_state and isinstance(st.session_state["active_synthetic_df"], pd.DataFrame):
+            df_syn = st.session_state["active_synthetic_df"]
+            if not df_syn.empty:
+                return df_syn, "Synthetic Simulation"
+
+        if "active_csv_df" in st.session_state and isinstance(st.session_state["active_csv_df"], pd.DataFrame):
+            df_active = st.session_state["active_csv_df"]
+            if not df_active.empty:
+                fname = st.session_state.get("active_csv_filename", "Uploaded CSV")
+                return df_active, f"CSV Real Meter Data ({fname})"
+
+    # Fallback to consumer list if exists
     for key, val in st.session_state.items():
         if "consumers" in key and isinstance(val, list) and len(val) > 0:
             df_day, total_curve, _ = aggregate_synthetic_24h(val)
