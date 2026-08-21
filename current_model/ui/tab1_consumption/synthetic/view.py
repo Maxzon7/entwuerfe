@@ -20,7 +20,12 @@ import numpy as np
 import pandas as pd
 
 from current_model.models.load_component import SimpleConsumer
-from current_model.models.presets import PRESET_FACTORIES
+from current_model.models.presets import (
+    PRESET_FACTORIES,
+    PRESET_TEMPLATES,
+    get_preset_factory,
+    get_industry_preset_consumers
+)
 from current_model.core.synthetic_engine import aggregate_synthetic_24h, aggregate_synthetic_year
 from current_model.ui.common.cards import render_kpi_card
 from current_model.ui.tab1_consumption.synthetic.charts import (
@@ -40,7 +45,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
 
     # Initialize default industry consumers if not yet set
     if state_consumers_key not in st.session_state:
-        st.session_state[state_consumers_key] = PRESET_FACTORIES["manufacturing"]()
+        st.session_state[state_consumers_key] = get_industry_preset_consumers()
 
     consumers: List[SimpleConsumer] = st.session_state[state_consumers_key]
 
@@ -51,16 +56,16 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     # 1. Preset Loader Toolbar
     col_pre, col_res = st.columns([5, 2])
     with col_pre:
-        preset_names = list(PRESET_FACTORIES.keys())
+        preset_names = list(PRESET_TEMPLATES.keys())
         selected_preset = st.selectbox(
             "Load Predefined Template:",
             options=["-- Select a Template --"] + preset_names,
             index=0,
             key=f"{key_prefix}_preset_select"
         )
-        if selected_preset in PRESET_FACTORIES:
+        if selected_preset in PRESET_TEMPLATES:
             if st.button("Apply Template", key=f"{key_prefix}_apply_preset", use_container_width=True):
-                st.session_state[state_consumers_key] = PRESET_FACTORIES[selected_preset]()
+                st.session_state[state_consumers_key] = PRESET_TEMPLATES[selected_preset]()
                 st.rerun()
 
     with col_res:
@@ -120,7 +125,10 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     )
 
     # Store active dataset in session state so Tab 2 can automatically read it
-    st.session_state[f"{key_prefix}_active_df"] = df_year if horizon_mode.startswith("Full Year") else df_day
+    active_synthetic_dataset = df_year if horizon_mode.startswith("Full Year") else df_day
+    st.session_state[f"{key_prefix}_active_df"] = active_synthetic_dataset
+    st.session_state["active_synthetic_df"] = active_synthetic_dataset
+
 
     # 5. KPI Cards
     if horizon_mode.startswith("24-Hour"):

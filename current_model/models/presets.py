@@ -118,8 +118,33 @@ def get_ev_hub_preset_consumers() -> List[SimpleConsumer]:
     ]
 
 
-PRESET_FACTORIES: Dict[str, Any] = {
+def get_preset_factory(key: str) -> Callable[[], List[SimpleConsumer]]:
+    """Safe lookup for preset factory with alias and partial match support."""
+    if key in PRESET_FACTORIES:
+        return PRESET_FACTORIES[key]
+    key_clean = key.lower().strip()
+    if "manufactur" in key_clean or "industr" in key_clean:
+        return get_industry_preset_consumers
+    if "office" in key_clean or "commercial" in key_clean:
+        return get_office_preset_consumers
+    if "ev" in key_clean or "mobility" in key_clean or "charg" in key_clean:
+        return get_ev_hub_preset_consumers
+    return get_industry_preset_consumers
+
+
+PRESET_TEMPLATES: Dict[str, Callable[[], List[SimpleConsumer]]] = {
     "🏭 Industry & Manufacturing": get_industry_preset_consumers,
     "🏢 Commercial Office Building": get_office_preset_consumers,
-    "⚡ Mobility & EV Hub": get_ev_hub_preset_consumers
+    "⚡ Mobility & EV Hub": get_ev_hub_preset_consumers,
 }
+
+PRESET_FACTORIES: Dict[str, Any] = {
+    **PRESET_TEMPLATES,
+    # Standard alias keys for programmatic access
+    "manufacturing": get_industry_preset_consumers,
+    "industry": get_industry_preset_consumers,
+    "office": get_office_preset_consumers,
+    "ev_hub": get_ev_hub_preset_consumers,
+}
+
+

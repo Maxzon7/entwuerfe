@@ -13,6 +13,8 @@ from .financial import CostLineItem, MonthlyPaymentRecord, FinancialCostBreakdow
 from .calendar_config import CalendarConfig
 from .presets import (
     PRESET_FACTORIES,
+    PRESET_TEMPLATES,
+    get_preset_factory,
     get_industry_preset_consumers,
     get_office_preset_consumers,
     get_ev_hub_preset_consumers
@@ -31,7 +33,10 @@ __all__ = [
     "FinancialCostBreakdown",
     "CalendarConfig",
     "PRESET_FACTORIES",
+    "PRESET_TEMPLATES",
+    "get_preset_factory",
     "get_industry_preset_consumers",
     "get_office_preset_consumers",
     "get_ev_hub_preset_consumers",
 ]
+

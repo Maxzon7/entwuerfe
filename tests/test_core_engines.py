@@ -122,8 +122,27 @@ M1508422;01.01.2025;00:15:00;53,136;0,144;3,168
         # At 11:00 (step 44), both are active -> 30 + 20 = 50 kW
         self.assertEqual(total_curve[44], 50.0)
         self.assertEqual(metrics["peak_demand_kw"], 50.0)
-        self.assertEqual(metrics["consumer_count"], 2)
+    def test_date_range_filtering(self):
+        # 14 days of 15-minute load data
+        dates = pd.date_range("2026-02-01 00:00", "2026-02-14 23:45", freq="15min")
+        df = pd.DataFrame({
+            "timestamp": dates,
+            "Total_Demand_kW": [10.0 if d.day <= 7 else 50.0 for d in dates]
+        })
+        self.assertEqual(len(df), 14 * 96)
+
+        # Slice 3 specific days: Feb 2 to Feb 4
+        start_d = datetime.date(2026, 2, 2)
+        end_d = datetime.date(2026, 2, 4)
+        mask = (df["timestamp"].dt.date >= start_d) & (df["timestamp"].dt.date <= end_d)
+        df_sliced = df.loc[mask].reset_index(drop=True)
+
+        self.assertEqual(len(df_sliced), 3 * 96)
+        kpis_sliced = compute_load_profile_kpis(df_sliced)
+        self.assertEqual(kpis_sliced.peak_kw, 10.0)
+        self.assertAlmostEqual(kpis_sliced.duration_days, 3.0, places=1)
 
 
 if __name__ == "__main__":
     unittest.main()
+

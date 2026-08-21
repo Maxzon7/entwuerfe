@@ -166,12 +166,77 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
 
         cached = st.session_state.get(calc_cache_key)
         if cached:
-            # Ensure active dataset pointer is always synced with currently rendered file
-            st.session_state["active_csv_df"] = cached["df_clean"]
-            st.session_state["active_csv_filename"] = file_name
-            df_clean = cached["df_clean"]
-            kpis = cached["kpis"]
+            df_clean_full = cached["df_clean"]
             selected_power_cols = cached["selected_power_cols"]
+
+            # --- Date Range Filtering (Day-Accurate) ---
+            min_ts = df_clean_full["timestamp"].min()
+            max_ts = df_clean_full["timestamp"].max()
+            min_date = min_ts.date()
+            max_date = max_ts.date()
+
+            st.markdown("### 📅 Zeitraum filtern / Date Range Filter")
+            f_col1, f_col2, f_col3 = st.columns([4, 4, 3])
+
+            with f_col1:
+                start_date = st.date_input(
+                    "📅 Startdatum (inklusive):",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    format="DD.MM.YYYY",
+                    key=f"{key_prefix}_start_date_{file_name}"
+                )
+            with f_col2:
+                end_date = st.date_input(
+                    "📅 Enddatum (inklusive):",
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    format="DD.MM.YYYY",
+                    key=f"{key_prefix}_end_date_{file_name}"
+                )
+            with f_col3:
+                st.write("")
+                st.write("")
+                if st.button("🔄 Ganzer Zeitraum", key=f"{key_prefix}_reset_date_{file_name}", use_container_width=True):
+                    st.session_state[f"{key_prefix}_start_date_{file_name}"] = min_date
+                    st.session_state[f"{key_prefix}_end_date_{file_name}"] = max_date
+                    st.rerun()
+
+            if start_date > end_date:
+                st.error("Das Startdatum darf nicht nach dem Enddatum liegen. Bitte korrigiere die Datumsauswahl.")
+                continue
+
+            # Apply day-accurate filter (from 00:00:00 of start_date to 23:59:59 of end_date)
+            mask = (df_clean_full["timestamp"].dt.date >= start_date) & (df_clean_full["timestamp"].dt.date <= end_date)
+            df_clean = df_clean_full.loc[mask].reset_index(drop=True)
+
+            if df_clean.empty:
+                st.warning(f"Keine Datenpunkte im gewählten Zeitraum ({start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}) gefunden.")
+                continue
+
+            is_filtered = (start_date > min_date) or (end_date < max_date)
+            if is_filtered:
+                st.info(
+                    f"🔍 **Aktiver Filter:** {start_date.strftime('%d.%m.%Y')} bis {end_date.strftime('%d.%m.%Y')} "
+                    f"| **{len(df_clean):,}** von {len(df_clean_full):,} Datenpunkten aktiv "
+                    f"({(len(df_clean)/len(df_clean_full)*100.0):.1f}% der Gesamtdaten)"
+                )
+            else:
+                st.caption(
+                    f"🗓️ **Gesamter Zeitraum:** {min_date.strftime('%d.%m.%Y')} bis {max_date.strftime('%d.%m.%Y')} "
+                    f"| **{len(df_clean):,} Datenpunkte**"
+                )
+
+            # Recalculate KPIs on the filtered slice
+            kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
+
+            # Ensure active dataset pointer for Tab 2 is always synced with filtered file
+            st.session_state["active_csv_df"] = df_clean
+            range_suffix = f" [{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}]" if is_filtered else ""
+            st.session_state["active_csv_filename"] = f"{file_name}{range_suffix}"
+
 
             st.subheader("3. Energy Metrics & Key Performance Indicators")
             k1, k2, k3, k4 = st.columns(4)

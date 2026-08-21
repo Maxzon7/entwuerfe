@@ -55,7 +55,7 @@ def read_raw_content(file: Any) -> str:
 
 
 def sniff_delimiter_and_decimal(lines: List[str]) -> Tuple[str, str]:
-    """
+    r"""
     Analyzes non-empty sample lines to robustly determine the delimiter (';', '\t', ',', '|', r'\s+')
     and the decimal separator (',' or '.').
     """
