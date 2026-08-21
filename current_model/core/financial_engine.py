@@ -320,23 +320,26 @@ def compute_financial_bill(
     # 8. Construct Full-Duration Monthly Payment Series (Zahlungsreihe)
     monthly_series: List[MonthlyPaymentRecord] = []
 
-    # Case A: Real multi-month CSV data with timestamps spanning multiple months
-    is_multi_month_csv = False
+    # Case A: Real timestamped data from CSV or annual timeseries
+    is_real_timestamped_data = False
     if df_clean_ref is not None and "timestamp" in df_clean_ref.columns:
         ts_series = pd.to_datetime(df_clean_ref["timestamp"], errors="coerce")
-        if ts_series.notnull().all() and (ts_series.max() - ts_series.min()).days >= 28:
-            unique_periods = ts_series.dt.to_period("M").unique()
-            if len(unique_periods) > 1:
-                is_multi_month_csv = True
+        if ts_series.notnull().any():
+            unique_periods = ts_series.dropna().dt.to_period("M").unique()
+            if len(unique_periods) >= 1:
+                is_real_timestamped_data = True
                 for period in unique_periods:
                     mask = (ts_series.dt.to_period("M") == period)
                     sub_df = df_clean_ref.loc[mask]
-                    sub_powers = sub_df["Total_Demand_kW"].to_numpy(dtype=float)
+                    if "Total_Demand_kW" in sub_df.columns:
+                        sub_powers = sub_df["Total_Demand_kW"].to_numpy(dtype=float)
+                    else:
+                        sub_powers = sub_df.select_dtypes(include=[np.number]).sum(axis=1).to_numpy(dtype=float)
                     sub_ts = sub_df["timestamp"].tolist()
 
                     sub_kwh = float(sub_powers.sum() * step_hours)
                     sub_peak = float(sub_powers.max()) if len(sub_powers) > 0 else 0.0
-                    sub_days = max(1, len(sub_df) * step_hours / 24.0)
+                    sub_days = max(1.0, len(sub_df) * step_hours / 24.0)
 
                     # Compute energy cost for this calendar month
                     sub_energy_cost = 0.0
@@ -372,10 +375,11 @@ def compute_financial_bill(
                         )
                     )
 
-    # Case B: Standard 12-month calendar schedule for 24h synthetic or shorter profiles
-    if not is_multi_month_csv:
+    # Case B: Standard 12-month calendar schedule for 24h synthetic typical daily profile (no real calendar dates)
+    if not is_real_timestamped_data:
         daily_kwh = total_consumption_kwh / max(1.0, duration_days)
         daily_energy_cost = total_energy_period / max(1.0, duration_days)
+        demand_cap_tariff = float(getattr(contract, "demand_capacity_tariff", 0.0))
         month_days_calendar = [
             ("January", 31), ("February", 28), ("March", 31), ("April", 30),
             ("May", 31), ("June", 30), ("July", 31), ("August", 31),
@@ -385,7 +389,7 @@ def compute_financial_bill(
         for m_name, m_days in month_days_calendar:
             m_kwh = daily_kwh * m_days
             m_energy_cost = daily_energy_cost * m_days
-            m_cap_cost = contracted_kw * cap_tariff
+            m_cap_cost = contracted_kw * cap_tariff + (peak_demand_kw * demand_cap_tariff)
             m_penalty = excess_kw * penalty_rate
             m_base = base_fee_monthly
             m_net = m_energy_cost + m_cap_cost + m_penalty + m_base
@@ -410,6 +414,7 @@ def compute_financial_bill(
                     effective_rate_kwh=round(m_rate, 4)
                 )
             )
+
 
     return FinancialCostBreakdown(
         currency=currency,

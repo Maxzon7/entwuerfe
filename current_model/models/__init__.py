@@ -19,6 +19,13 @@ from .presets import (
     get_office_preset_consumers,
     get_ev_hub_preset_consumers
 )
+from .solar import (
+    SolarLocation,
+    SolarPVConfig,
+    SolarMonthlyYield,
+    SolarKPIs,
+    SolarSimulationResult
+)
 
 __all__ = [
     "TimeWindow",
@@ -38,5 +45,11 @@ __all__ = [
     "get_industry_preset_consumers",
     "get_office_preset_consumers",
     "get_ev_hub_preset_consumers",
+    "SolarLocation",
+    "SolarPVConfig",
+    "SolarMonthlyYield",
+    "SolarKPIs",
+    "SolarSimulationResult",
 ]
+
 

@@ -44,9 +44,8 @@ class Contract:
     weekend_is_off_peak: bool = False
 
     # Taxes & Additional Fees (Dynamic Table)
-    taxes_and_fees: List[Dict[str, Any]] = field(default_factory=lambda: [
-        {"name": "VAT", "type": "percentage", "value": 20.0, "description": "Standard Value Added Tax"}
-    ])
+    taxes_and_fees: List[Dict[str, Any]] = field(default_factory=list)
+
 
     def _parse_time_to_minutes(self, t_val: Any) -> int:
         """Helper to convert time string, int hour, or datetime.time to minutes of day [0, 1440]."""

@@ -52,9 +52,11 @@ def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
             go.Pie(
                 labels=labels,
                 values=values,
-                hole=0.55,
-                textinfo="label+percent",
-                marker=dict(colors=colors),
+                hole=0.58,
+                textinfo="percent",
+                textposition="inside",
+                insidetextorientation="horizontal",
+                marker=dict(colors=colors, line=dict(color="#0B0F19", width=2)),
                 hovertemplate=f"<b>%{{label}}</b><br>Amount: %{{value:,.2f}} {currency}<br>Share: %{{percent}}<extra></extra>"
             )
         ]
@@ -64,22 +66,26 @@ def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
         template="plotly_dark",
         title=dict(
             text="<b>Cost Component Distribution</b>",
-            font=dict(size=14, color="#F8FAFC")
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.05,
+            y=0.96
         ),
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=-0.18,
+            yanchor="top",
+            y=-0.06,
             xanchor="center",
-            x=0.5
+            x=0.5,
+            font=dict(size=11)
         ),
-        margin=dict(l=20, r=20, t=35, b=25),
+        margin=dict(l=10, r=10, t=35, b=60),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
-        height=300
+        height=370
     )
 
     return fig
+
 
 
 def create_monthly_payment_series_figure(

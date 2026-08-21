@@ -63,18 +63,18 @@ def render_contract_form(
     current: Contract = st.session_state[state_contract_key]
 
     # Backward compatibility migration for session state objects
-    if not hasattr(current, "tou_rates") or not current.tou_rates:
+    if not hasattr(current, "tou_rates") or current.tou_rates is None:
         default_r = getattr(current, "default_energy_rate", 0.20)
         current.tou_rates = [{"name": "Standard Rate", "rate": default_r, "start_time": "00:00", "end_time": "24:00"}]
 
-    if not hasattr(current, "taxes_and_fees") or not current.taxes_and_fees:
-        current.taxes_and_fees = [{"name": "VAT", "type": "percentage", "value": 20.0, "description": "Standard Value Added Tax"}]
+    if not hasattr(current, "taxes_and_fees") or current.taxes_and_fees is None:
+        current.taxes_and_fees = []
 
-    if state_tou_key not in st.session_state or st.session_state[state_tou_key].empty:
+    if state_tou_key not in st.session_state:
         st.session_state[state_tou_key] = pd.DataFrame(current.tou_rates)
 
-    if state_taxes_key not in st.session_state or st.session_state[state_taxes_key].empty:
-        st.session_state[state_taxes_key] = pd.DataFrame(current.taxes_and_fees)
+    if state_taxes_key not in st.session_state:
+        st.session_state[state_taxes_key] = pd.DataFrame(current.taxes_and_fees) if current.taxes_and_fees else pd.DataFrame(columns=["name", "type", "value", "description"])
 
     container = st.expander("Electricity Supply Contract & Tariff Configuration", expanded=False) if as_expander else st.container()
 
@@ -132,20 +132,20 @@ def render_contract_form(
 
             # 4. Dynamic Taxes & Additional Fees Table
             st.subheader("4. Taxes & Additional Fees")
-            st.caption("Standard: 20% VAT. You can add custom fees or delete rows:")
+            st.caption("Add custom percentage or fixed fees, or clear table to disable taxes:")
 
             edited_taxes = st.data_editor(
                 st.session_state[state_taxes_key],
                 num_rows="dynamic",
                 use_container_width=True,
                 column_config={
-                    "name": st.column_config.TextColumn("Fee/Tax Name", required=True),
+                    "name": st.column_config.TextColumn("Fee/Tax Name"),
                     "type": st.column_config.SelectboxColumn(
                         "Type",
                         options=["percentage", "per_kwh", "fixed_monthly"],
-                        required=True
+                        default="percentage"
                     ),
-                    "value": st.column_config.NumberColumn("Rate / Value", format="%.4f", required=True),
+                    "value": st.column_config.NumberColumn("Rate / Value", format="%.4f"),
                     "description": st.column_config.TextColumn("Notes / Description")
                 },
                 key=f"{key_prefix}_taxes_editor"
@@ -155,7 +155,7 @@ def render_contract_form(
 
         if submitted:
             # Clean, sanitize, and validate TOU rates table
-            cleaned_tou = edited_tou.dropna(subset=["name", "rate"]).to_dict(orient="records")
+            cleaned_tou = edited_tou.dropna(subset=["name", "rate"]).to_dict(orient="records") if edited_tou is not None and not edited_tou.empty else []
             for r in cleaned_tou:
                 r["rate"] = _sanitize_rate_val(r.get("rate", 0.20))
                 # Fix common typo where 05:00 to 23:00 was entered for Resto instead of 05:00 to 18:00
@@ -167,11 +167,26 @@ def render_contract_form(
             st.session_state[state_tou_key] = pd.DataFrame(cleaned_tou)
 
             # Clean and validate Taxes table
-            cleaned_taxes = edited_taxes.dropna(subset=["name", "value"]).to_dict(orient="records")
-            for t in cleaned_taxes:
-                t["value"] = _sanitize_tax_val(t.get("value", 0.0))
+            cleaned_taxes = []
+            if edited_taxes is not None and not edited_taxes.empty:
+                # Drop invalid rows where name or value is null or empty
+                valid_tax_df = edited_taxes.dropna(subset=["name", "value"]).copy()
+                mask = ~valid_tax_df["name"].astype(str).str.strip().str.lower().isin(["", "none", "nan"])
+                valid_tax_df = valid_tax_df.loc[mask]
+                raw_tax_records = valid_tax_df.to_dict(orient="records")
+                for t in raw_tax_records:
+                    t_name = str(t.get("name", "")).strip()
+                    t_val = _sanitize_tax_val(t.get("value", 0.0))
+                    if t_name and abs(t_val) > 1e-6:
+                        cleaned_taxes.append({
+                            "name": t_name,
+                            "type": str(t.get("type", "percentage")).strip(),
+                            "value": t_val,
+                            "description": str(t.get("description", "")).strip() if pd.notnull(t.get("description")) else ""
+                        })
 
             st.session_state[state_taxes_key] = pd.DataFrame(cleaned_taxes) if cleaned_taxes else pd.DataFrame(columns=["name", "type", "value", "description"])
+
 
             default_rate = float(cleaned_tou[0].get("rate", 0.20))
 

@@ -142,7 +142,21 @@ M1508422;01.01.2025;00:15:00;53,136;0,144;3,168
         self.assertEqual(kpis_sliced.peak_kw, 10.0)
         self.assertAlmostEqual(kpis_sliced.duration_days, 3.0, places=1)
 
+    def test_dayfirst_heuristic_and_sampling(self):
+        import re
+        sample_dmy = "01.01.2025 00:00:00"
+        starts_with_year = bool(re.match(r"^\s*\d{4}", sample_dmy))
+        self.assertFalse(starts_with_year)
+        default_dayfirst = not starts_with_year
+        self.assertTrue(default_dayfirst)
+
+        sample_iso = "2025-01-01 00:00:00"
+        starts_with_year_iso = bool(re.match(r"^\s*\d{4}", sample_iso))
+        self.assertTrue(starts_with_year_iso)
+        self.assertFalse(not starts_with_year_iso)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

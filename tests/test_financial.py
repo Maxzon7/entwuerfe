@@ -83,5 +83,20 @@ class TestFinancialEngine(unittest.TestCase):
         self.assertEqual(feb_breakdown.duration_days, 28.0)
 
 
+    def test_single_month_csv_series(self):
+        # Exactly 1 month of 15-minute load data (January 2026: 31 days = 2976 points)
+        dates = pd.date_range("2026-01-01 00:00", "2026-01-31 23:45", freq="15min")
+        df_csv = pd.DataFrame({
+            "timestamp": dates,
+            "Total_Demand_kW": [50.0] * len(dates)
+        })
+
+        breakdown = compute_financial_bill(load_data=df_csv, contract=self.contract)
+        self.assertEqual(len(breakdown.monthly_series), 1)
+        self.assertEqual(breakdown.monthly_series[0].period_label, "Jan 2026")
+        self.assertEqual(breakdown.monthly_series[0].days_count, 31)
+
+
 if __name__ == "__main__":
     unittest.main()
+
