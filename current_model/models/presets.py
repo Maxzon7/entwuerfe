@@ -133,9 +133,9 @@ def get_preset_factory(key: str) -> Callable[[], List[SimpleConsumer]]:
 
 
 PRESET_TEMPLATES: Dict[str, Callable[[], List[SimpleConsumer]]] = {
-    "🏭 Industry & Manufacturing": get_industry_preset_consumers,
-    "🏢 Commercial Office Building": get_office_preset_consumers,
-    "⚡ Mobility & EV Hub": get_ev_hub_preset_consumers,
+    "Industry & Manufacturing": get_industry_preset_consumers,
+    "Commercial Office Building": get_office_preset_consumers,
+    "Mobility & EV Hub": get_ev_hub_preset_consumers,
 }
 
 PRESET_FACTORIES: Dict[str, Any] = {

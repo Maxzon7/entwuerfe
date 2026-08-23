@@ -19,7 +19,11 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 
-from current_model.models.load_component import SimpleConsumer
+from current_model.models.load_component import (
+    SimpleConsumer,
+    consumers_to_drac,
+    consumers_from_drac
+)
 from current_model.models.presets import (
     PRESET_FACTORIES,
     PRESET_TEMPLATES,
@@ -34,6 +38,7 @@ from current_model.ui.tab1_consumption.synthetic.charts import (
     create_annual_heatmap_figure
 )
 from current_model.ui.tab1_consumption.synthetic.forms import render_add_consumer_form, render_consumer_editor
+import re
 
 
 def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
@@ -53,27 +58,84 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     if state_holidays_key not in st.session_state:
         st.session_state[state_holidays_key] = pd.DataFrame(columns=["date", "holiday_name"])
 
-    # 1. Preset Loader Toolbar
-    col_pre, col_res = st.columns([5, 2])
-    with col_pre:
-        preset_names = list(PRESET_TEMPLATES.keys())
-        selected_preset = st.selectbox(
-            "Load Predefined Template:",
-            options=["-- Select a Template --"] + preset_names,
-            index=0,
-            key=f"{key_prefix}_preset_select"
-        )
-        if selected_preset in PRESET_TEMPLATES:
-            if st.button("Apply Template", key=f"{key_prefix}_apply_preset", use_container_width=True):
-                st.session_state[state_consumers_key] = PRESET_TEMPLATES[selected_preset]()
-                st.rerun()
+    # 1. Preset & File Transfer Toolbar (.drac / Templates)
+    with st.expander("Profile Presets & File Transfer (.drac)", expanded=True):
+        f_col1, f_col2 = st.columns([1, 1])
 
-    with col_res:
-        st.write("")
-        st.write("")
-        if st.button("Reset / Clear All", key=f"{key_prefix}_clear_btn", use_container_width=True):
-            st.session_state[state_consumers_key] = []
-            st.rerun()
+        # LEFT: Upload & Predefined Templates
+        with f_col1:
+            st.markdown("##### Import Profile / Templates")
+            uploaded_profile = st.file_uploader(
+                "Upload a `.drac` load profile:",
+                type=["drac", "json"],
+                key=f"{key_prefix}_profile_uploader",
+                help="Upload a previously exported .drac profile to restore all consumer assets and schedules."
+            )
+            if uploaded_profile is not None:
+                prof_cache_key = f"{key_prefix}_last_loaded_profile"
+                prof_sig = f"{uploaded_profile.name}_{uploaded_profile.size}"
+                if st.session_state.get(prof_cache_key) != prof_sig:
+                    try:
+                        raw_data = uploaded_profile.getvalue().decode("utf-8")
+                        loaded_consumers = consumers_from_drac(raw_data)
+                        if loaded_consumers:
+                            st.session_state[state_consumers_key] = loaded_consumers
+                            st.session_state[prof_cache_key] = prof_sig
+                            st.success(f"Successfully imported **{len(loaded_consumers)}** consumer assets from `{uploaded_profile.name}`.")
+                            st.rerun()
+                        else:
+                            st.warning("No valid consumers found in the uploaded file.")
+                    except Exception as e:
+                        st.error(f"Failed to parse profile file: {str(e)}")
+
+            preset_names = list(PRESET_TEMPLATES.keys())
+            selected_preset = st.selectbox(
+                "Or load an industry preset:",
+                options=["-- Select a Template --"] + preset_names,
+                index=0,
+                key=f"{key_prefix}_preset_select"
+            )
+            p_btn1, p_btn2 = st.columns(2)
+            with p_btn1:
+                if selected_preset in PRESET_TEMPLATES:
+                    if st.button("Apply Template", key=f"{key_prefix}_apply_preset", use_container_width=True):
+                        st.session_state[state_consumers_key] = PRESET_TEMPLATES[selected_preset]()
+                        st.rerun()
+            with p_btn2:
+                if st.button("Clear All Assets", key=f"{key_prefix}_clear_btn", use_container_width=True):
+                    st.session_state[state_consumers_key] = []
+                    st.rerun()
+
+        # RIGHT: Download / Export as .drac
+        with f_col2:
+            st.markdown("##### Export Profile")
+            profile_name_input = st.text_input(
+                "Profile Name:",
+                value="Synthetic Load Profile",
+                key=f"{key_prefix}_profile_name_input"
+            )
+            default_drac_base = re.sub(r'[^a-zA-Z0-9_-]', '_', profile_name_input.lower().strip()) or "load_profile"
+            custom_prof_filename = st.text_input(
+                "Custom Download Filename (.drac):",
+                value=f"{default_drac_base}.drac",
+                key=f"{key_prefix}_prof_filename_input"
+            )
+            if not custom_prof_filename.strip().lower().endswith(".drac"):
+                custom_prof_filename = custom_prof_filename.strip() + ".drac"
+
+            drac_profile_content = consumers_to_drac(consumers, profile_name=profile_name_input)
+            st.download_button(
+                label=f"Download Profile as `{custom_prof_filename}`",
+                data=drac_profile_content,
+                file_name=custom_prof_filename,
+                mime="application/json",
+                key=f"{key_prefix}_prof_download_btn",
+                use_container_width=True,
+                type="secondary",
+                disabled=len(consumers) == 0
+            )
+            st.caption(f"Active profile has **{len(consumers)}** consumer assets.")
+
 
     # 2. System-wide Holiday Calendar Expander (Treated as Sundays)
     with st.expander("System-wide Holiday Calendar (Treated as Sundays)", expanded=False):

@@ -7,13 +7,15 @@ Description:
 ------------
 Streamlit form for defining electricity supply contracts, capacity charges (contracted + measured),
 reactive power rules, dynamic Time-of-Use (TOU) energy rates table, and custom taxes/fees.
-Includes intelligent input sanitization for European/Argentine comma decimals and auto-scaling.
+Includes custom-named .drac file download (export), upload (import), and presets loader.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import streamlit as st
 import pandas as pd
-from current_model.models.contract import Contract
+import json
+import re
+from current_model.models.contract import Contract, get_contract_presets
 
 
 def _sanitize_rate_val(val: Any, default: float = 0.20) -> float:
@@ -44,13 +46,38 @@ def _sanitize_tax_val(val: Any) -> float:
         return 0.0
 
 
+def _sanitize_filename(name: str, default: str = "contract.drac") -> str:
+    """Ensures a clean filename ending with .drac."""
+    name = (name or "").strip()
+    if not name:
+        return default
+    # Replace invalid filename characters
+    clean = re.sub(r'[\\/*?:"<>|]', "_", name)
+    if not clean.lower().endswith(".drac"):
+        clean += ".drac"
+    return clean
+
+
+def _sync_contract_to_state(contract: Contract, key_prefix: str) -> None:
+    """Synchronizes a Contract object into Streamlit session state and data editors."""
+    state_contract_key = f"{key_prefix}_contract_model"
+    state_tou_key = f"{key_prefix}_tou_rates_df"
+    state_taxes_key = f"{key_prefix}_taxes_df"
+
+    st.session_state[state_contract_key] = contract
+    st.session_state[state_tou_key] = pd.DataFrame(contract.tou_rates) if contract.tou_rates else pd.DataFrame([
+        {"name": "Standard Rate", "rate": contract.default_energy_rate, "start_time": "00:00", "end_time": "24:00"}
+    ])
+    st.session_state[state_taxes_key] = pd.DataFrame(contract.taxes_and_fees) if contract.taxes_and_fees else pd.DataFrame(columns=["name", "type", "value", "description"])
+
+
 def render_contract_form(
     current_contract: Contract = None,
     as_expander: bool = False,
     key_prefix: str = "contract"
 ) -> Contract:
     """
-    Renders the contract parameter configuration form.
+    Renders the contract parameter configuration form with custom-named .drac export/import and presets.
     Stores and retrieves the contract model directly from `st.session_state`.
     """
     state_contract_key = f"{key_prefix}_contract_model"
@@ -60,9 +87,35 @@ def render_contract_form(
     if state_contract_key not in st.session_state:
         st.session_state[state_contract_key] = current_contract or Contract()
 
-    current: Contract = st.session_state[state_contract_key]
+    raw_current = st.session_state[state_contract_key]
+
+    # Robust migration: ensure instance is of latest Contract class with to_json/from_json
+    if not hasattr(raw_current, "to_json"):
+        current = Contract(
+            name=str(getattr(raw_current, "name", "Electricity Contract")),
+            currency=str(getattr(raw_current, "currency", "EUR")),
+            base_monthly_fee=float(getattr(raw_current, "base_monthly_fee", 50.0)),
+            contracted_capacity_kw=float(getattr(raw_current, "contracted_capacity_kw", 400.0)),
+            monthly_capacity_tariff=float(getattr(raw_current, "monthly_capacity_tariff", 0.15)),
+            demand_capacity_tariff=float(getattr(raw_current, "demand_capacity_tariff", 0.0)),
+            max_physical_limit_kw=float(getattr(raw_current, "max_physical_limit_kw", 1000.0)),
+            peak_penalty_rate=float(getattr(raw_current, "peak_penalty_rate", 0.25)),
+            reactive_power_tariff=float(getattr(raw_current, "reactive_power_tariff", 0.03)),
+            min_power_factor=float(getattr(raw_current, "min_power_factor", 0.90)),
+            reactive_power_allowance_pct=float(getattr(raw_current, "reactive_power_allowance_pct", 33.0)),
+            tou_rates=getattr(raw_current, "tou_rates", [{"name": "Standard Rate", "rate": 0.20, "start_time": "00:00", "end_time": "24:00"}]),
+            default_energy_rate=float(getattr(raw_current, "default_energy_rate", 0.20)),
+            weekend_is_off_peak=bool(getattr(raw_current, "weekend_is_off_peak", False)),
+            taxes_and_fees=getattr(raw_current, "taxes_and_fees", [])
+        )
+        st.session_state[state_contract_key] = current
+    else:
+        current = raw_current
 
     # Backward compatibility migration for session state objects
+    if not hasattr(current, "name") or not current.name:
+        current.name = "Electricity Contract"
+
     if not hasattr(current, "tou_rates") or current.tou_rates is None:
         default_r = getattr(current, "default_energy_rate", 0.20)
         current.tou_rates = [{"name": "Standard Rate", "rate": default_r, "start_time": "00:00", "end_time": "24:00"}]
@@ -79,37 +132,118 @@ def render_contract_form(
     container = st.expander("Electricity Supply Contract & Tariff Configuration", expanded=False) if as_expander else st.container()
 
     with container:
-        st.caption("Configure contracted capacity, measured demand charges, reactive power rules, dynamic Time-of-Use (TOU) tariffs, and custom taxes/fees.")
+        # ==============================================================================
+        # Contract File Management & Presets Toolbar (Download / Upload as .drac)
+        # ==============================================================================
+        st.markdown("### Contract File Transfer & Presets (.drac)")
+        st.caption("Download your configured contract as a reusable `.drac` file or upload a previously saved contract file.")
 
+        col_up, col_down = st.columns([1, 1])
+
+        # --- LEFT: Upload / Import / Presets ---
+        with col_up:
+            st.markdown("##### Import Contract")
+            uploaded_file = st.file_uploader(
+                "Select a `.drac` or `.json` contract file:",
+                type=["drac", "json"],
+                key=f"{key_prefix}_file_uploader",
+                help="Upload a previously exported .drac electricity contract to load all parameters and tariff tables."
+            )
+
+            if uploaded_file is not None:
+                uploader_cache_key = f"{key_prefix}_last_loaded_file"
+                file_signature = f"{uploaded_file.name}_{uploaded_file.size}"
+                if st.session_state.get(uploader_cache_key) != file_signature:
+                    try:
+                        content_str = uploaded_file.getvalue().decode("utf-8")
+                        imported_contract = Contract.from_json(content_str)
+                        _sync_contract_to_state(imported_contract, key_prefix=key_prefix)
+                        st.session_state[uploader_cache_key] = file_signature
+                        st.success(f"Contract **'{imported_contract.name}'** successfully loaded from `{uploaded_file.name}`.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to parse contract file `{uploaded_file.name}`: {str(e)}")
+
+            # Preset selector
+            presets = get_contract_presets()
+            selected_preset_name = st.selectbox(
+                "Or load an industry contract preset:",
+                options=["-- Select a Template --"] + list(presets.keys()),
+                index=0,
+                key=f"{key_prefix}_preset_select"
+            )
+            if selected_preset_name in presets:
+                if st.button("Apply Preset", key=f"{key_prefix}_apply_preset_btn", use_container_width=True):
+                    _sync_contract_to_state(presets[selected_preset_name], key_prefix=key_prefix)
+                    st.success(f"Loaded preset: {selected_preset_name}")
+                    st.rerun()
+
+        # --- RIGHT: Download / Export as .drac ---
+        with col_down:
+            st.markdown("##### Export Contract")
+            default_file_base = re.sub(r'[^a-zA-Z0-9_-]', '_', current.name.lower().strip()) or "electricity_contract"
+            custom_download_filename = st.text_input(
+                "Individual Download Filename (.drac):",
+                value=f"{default_file_base}.drac",
+                key=f"{key_prefix}_custom_filename_input",
+                help="Specify your custom filename. The .drac extension will automatically be ensured."
+            )
+            final_filename = _sanitize_filename(custom_download_filename, default=f"{default_file_base}.drac")
+
+            contract_json_data = current.to_json(indent=2) if hasattr(current, "to_json") else Contract.from_dict(getattr(current, "__dict__", {})).to_json(indent=2)
+            st.download_button(
+                label=f"Download Contract as `{final_filename}`",
+                data=contract_json_data,
+                file_name=final_filename,
+                mime="application/json",
+                key=f"{key_prefix}_download_btn",
+                type="secondary",
+                use_container_width=True
+            )
+            st.caption(f"Ready for export: **{current.name}** ({current.currency}, {current.contracted_capacity_kw:.0f} kW, {len(current.tou_rates)} TOU windows)")
+
+        st.divider()
+
+        # ==============================================================================
+        # Contract Parameter Configuration Form
+        # ==============================================================================
         with st.form(key=f"{key_prefix}_contract_form"):
-            st.subheader("1. Active Capacity & Base Fees")
+            st.subheader("1. General & Active Capacity Parameters")
+
+            # Contract Name
+            contract_name_val = st.text_input(
+                "Contract Name / Identifier:",
+                value=str(current.name),
+                help="Custom name or tariff identifier for this contract."
+            )
+
             c1, c2 = st.columns(2)
             with c1:
                 curr_options = ["ARS", "EUR", "USD", "GBP", "CHF"]
-                current_curr = getattr(current, "currency", "ARS")
-                curr_idx = curr_options.index(current_curr) if current_curr in curr_options else 0
-                currency = st.selectbox("Currency:", options=curr_options, index=curr_idx, key=f"{key_prefix}_curr")
-                base_fee = st.number_input("Base Monthly Fee (Cargo Comercialización):", min_value=0.0, value=float(current.base_monthly_fee), step=5.0, format="%.2f", key=f"{key_prefix}_base_fee")
-                contracted_kw = st.number_input("Contracted Active Capacity (kW - Potencia Contratada):", min_value=0.0, value=float(current.contracted_capacity_kw), step=10.0, format="%.1f", key=f"{key_prefix}_kw")
+                current_curr = getattr(current, "currency", "EUR")
+                curr_idx = curr_options.index(current_curr) if current_curr in curr_options else 1
+                currency = st.selectbox("Currency:", options=curr_options, index=curr_idx)
+                base_fee = st.number_input("Base Monthly Fee (Cargo Comercialización):", min_value=0.0, value=float(current.base_monthly_fee), step=5.0, format="%.2f")
+                contracted_kw = st.number_input("Contracted Active Capacity (kW - Potencia Contratada):", min_value=0.0, value=float(current.contracted_capacity_kw), step=10.0, format="%.1f")
 
             with c2:
-                capacity_tariff = st.number_input("Contracted Capacity Tariff (/kW/month - Uso de Red):", min_value=0.0, value=float(current.monthly_capacity_tariff), step=1.0, format="%.4f", key=f"{key_prefix}_cap_t")
-                demand_tariff = st.number_input("Measured Demand Tariff (/kW/month - Consumo de Potencia):", min_value=0.0, value=float(getattr(current, "demand_capacity_tariff", 0.0)), step=1.0, format="%.4f", key=f"{key_prefix}_dem_t")
-                max_physical_kw = st.number_input("Max Physical Limit (kW):", min_value=0.0, value=float(current.max_physical_limit_kw), step=50.0, format="%.1f", key=f"{key_prefix}_max_kw")
-                penalty_rate = st.number_input("Peak Penalty Rate (/kW - Exceso de Potencia):", min_value=0.0, value=float(current.peak_penalty_rate), step=1.0, format="%.4f", key=f"{key_prefix}_pen")
+                capacity_tariff = st.number_input("Contracted Capacity Tariff (/kW/month - Uso de Red):", min_value=0.0, value=float(current.monthly_capacity_tariff), step=1.0, format="%.4f")
+                demand_tariff = st.number_input("Measured Demand Tariff (/kW/month - Consumo de Potencia):", min_value=0.0, value=float(getattr(current, "demand_capacity_tariff", 0.0)), step=1.0, format="%.4f")
+                max_physical_kw = st.number_input("Max Physical Limit (kW):", min_value=0.0, value=float(current.max_physical_limit_kw), step=50.0, format="%.1f")
+                penalty_rate = st.number_input("Peak Penalty Rate (/kW - Exceso de Potencia):", min_value=0.0, value=float(current.peak_penalty_rate), step=1.0, format="%.4f")
 
             st.subheader("2. Reactive Power Parameters")
             q1, q2, q3 = st.columns(3)
             with q1:
-                reactive_tariff = st.number_input("Reactive Energy Tariff (/kVARh):", min_value=0.0, value=float(current.reactive_power_tariff), step=0.005, format="%.4f", key=f"{key_prefix}_react_t")
+                reactive_tariff = st.number_input("Reactive Energy Tariff (/kVARh):", min_value=0.0, value=float(current.reactive_power_tariff), step=0.005, format="%.4f")
             with q2:
-                min_cos_phi = st.number_input("Min Power Factor (cos phi):", min_value=0.50, max_value=1.00, value=float(current.min_power_factor), step=0.02, format="%.2f", key=f"{key_prefix}_cos_phi")
+                min_cos_phi = st.number_input("Min Power Factor (cos phi):", min_value=0.50, max_value=1.00, value=float(current.min_power_factor), step=0.02, format="%.2f")
             with q3:
-                reactive_allowance = st.number_input("Reactive Allowance (% of kWh):", min_value=0.0, max_value=100.0, value=float(current.reactive_power_allowance_pct), step=1.0, format="%.1f", key=f"{key_prefix}_react_allow")
+                reactive_allowance = st.number_input("Reactive Allowance (% of kWh):", min_value=0.0, max_value=100.0, value=float(current.reactive_power_allowance_pct), step=1.0, format="%.1f")
 
             # 3. Dynamic Time-of-Use (TOU) Energy Rates
             st.subheader("3. Time-of-Use (TOU) Energy Rates")
-            st.caption("Standard: Default 24h rate. You can add multiple Time-of-Use tariff windows or delete rows:")
+            st.caption("Define Time-of-Use rate windows. The table supports adding and deleting rows:")
 
             edited_tou = st.data_editor(
                 st.session_state[state_tou_key],
@@ -126,8 +260,7 @@ def render_contract_form(
 
             weekend_off_peak = st.checkbox(
                 "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
-                value=bool(current.weekend_is_off_peak),
-                key=f"{key_prefix}_wknd"
+                value=bool(current.weekend_is_off_peak)
             )
 
             # 4. Dynamic Taxes & Additional Fees Table
@@ -187,10 +320,10 @@ def render_contract_form(
 
             st.session_state[state_taxes_key] = pd.DataFrame(cleaned_taxes) if cleaned_taxes else pd.DataFrame(columns=["name", "type", "value", "description"])
 
-
             default_rate = float(cleaned_tou[0].get("rate", 0.20))
 
-            st.session_state[state_contract_key] = Contract(
+            updated_contract = Contract(
+                name=contract_name_val.strip() if contract_name_val else "Electricity Contract",
                 currency=currency,
                 base_monthly_fee=base_fee,
                 contracted_capacity_kw=contracted_kw,
@@ -206,7 +339,7 @@ def render_contract_form(
                 weekend_is_off_peak=weekend_off_peak,
                 taxes_and_fees=cleaned_taxes
             )
+            _sync_contract_to_state(updated_contract, key_prefix=key_prefix)
             st.success("Contract configuration successfully saved.")
             st.rerun()
-
     return st.session_state[state_contract_key]

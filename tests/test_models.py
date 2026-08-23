@@ -8,8 +8,14 @@ import unittest
 import datetime
 import numpy as np
 
-from current_model.models.load_component import TimeWindow, SimpleConsumer, LoadComponent
-from current_model.models.contract import Contract
+from current_model.models.load_component import (
+    TimeWindow,
+    SimpleConsumer,
+    LoadComponent,
+    consumers_to_drac,
+    consumers_from_drac
+)
+from current_model.models.contract import Contract, get_contract_presets
 from current_model.models.grid_limit import GridLimitConfig, OverloadAnalysisResult
 from current_model.models.presets import get_industry_preset_consumers, get_office_preset_consumers, get_ev_hub_preset_consumers
 
@@ -97,12 +103,24 @@ class TestLoadComponentModels(unittest.TestCase):
         # 10:00 (step 40) -> 44 kW (11 kW * 4)
         self.assertEqual(curve[40], 44.0)
 
+    def test_consumer_drac_export_import_roundtrip(self):
+        original_consumers = get_industry_preset_consumers()
+        drac_json_str = consumers_to_drac(original_consumers, profile_name="Industry Test")
+        self.assertIn("drac_load_profile", drac_json_str)
+        self.assertIn("Industry Test", drac_json_str)
+
+        imported_consumers = consumers_from_drac(drac_json_str)
+        self.assertEqual(len(imported_consumers), len(original_consumers))
+        self.assertEqual(imported_consumers[0].name, original_consumers[0].name)
+        self.assertEqual(imported_consumers[0].power_kw, original_consumers[0].power_kw)
+
 
 class TestContractModel(unittest.TestCase):
-    """Tests for the Contract model and dynamic TOU rates."""
+    """Tests for the Contract model, dynamic TOU rates, and .drac serialization."""
 
     def test_default_contract_creation(self):
         ct = Contract()
+        self.assertEqual(ct.name, "Electricity Contract")
         self.assertEqual(ct.currency, "EUR")
         self.assertEqual(ct.base_monthly_fee, 50.0)
         self.assertTrue(len(ct.tou_rates) >= 1)
@@ -133,6 +151,65 @@ class TestContractModel(unittest.TestCase):
         dt_saturday = datetime.datetime(2026, 8, 22, 14, 0)
         self.assertAlmostEqual(ct.get_energy_rate(dt_saturday), 0.15)
 
+    def test_contract_drac_serialization_and_deserialization(self):
+        original = Contract(
+            name="Green Energy Pro 2026",
+            currency="USD",
+            base_monthly_fee=75.50,
+            contracted_capacity_kw=350.0,
+            monthly_capacity_tariff=0.25,
+            demand_capacity_tariff=1.80,
+            max_physical_limit_kw=700.0,
+            peak_penalty_rate=0.50,
+            reactive_power_tariff=0.04,
+            min_power_factor=0.92,
+            reactive_power_allowance_pct=30.0,
+            tou_rates=[
+                {"name": "Day Peak", "rate": 0.28, "start_time": "08:00", "end_time": "20:00"},
+                {"name": "Night Off-Peak", "rate": 0.14, "start_time": "20:00", "end_time": "08:00"}
+            ],
+            default_energy_rate=0.28,
+            weekend_is_off_peak=True,
+            taxes_and_fees=[
+                {"name": "City Utility Tax", "type": "percentage", "value": 4.5, "description": "Municipal Tax"},
+                {"name": "Grid Surcharge", "type": "fixed_monthly", "value": 25.0, "description": "Flat Monthly"}
+            ]
+        )
+
+        drac_json_str = original.to_json(indent=2)
+        self.assertIn("drac_contract", drac_json_str)
+        self.assertIn("Green Energy Pro 2026", drac_json_str)
+        self.assertIn("USD", drac_json_str)
+
+        restored = Contract.from_json(drac_json_str)
+        self.assertEqual(restored.name, "Green Energy Pro 2026")
+        self.assertEqual(restored.currency, "USD")
+        self.assertAlmostEqual(restored.base_monthly_fee, 75.50)
+        self.assertAlmostEqual(restored.contracted_capacity_kw, 350.0)
+        self.assertAlmostEqual(restored.monthly_capacity_tariff, 0.25)
+        self.assertAlmostEqual(restored.demand_capacity_tariff, 1.80)
+        self.assertEqual(len(restored.tou_rates), 2)
+        self.assertEqual(len(restored.taxes_and_fees), 2)
+        self.assertTrue(restored.weekend_is_off_peak)
+
+    def test_contract_presets(self):
+        presets = get_contract_presets()
+        self.assertGreaterEqual(len(presets), 3)
+        for name, preset_contract in presets.items():
+            self.assertIsInstance(preset_contract, Contract)
+            self.assertTrue(preset_contract.contracted_capacity_kw > 0)
+            self.assertTrue(len(preset_contract.tou_rates) >= 1)
+
+    def test_contract_resilience_to_malformed_data(self):
+        # Empty dict should fallback safely to valid defaults
+        empty_contract = Contract.from_dict({})
+        self.assertEqual(empty_contract.currency, "EUR")
+        self.assertTrue(len(empty_contract.tou_rates) >= 1)
+
+        # None/Invalid input
+        invalid_contract = Contract.from_dict(None)  # type: ignore
+        self.assertEqual(invalid_contract.currency, "EUR")
+
 
 class TestGridLimitModels(unittest.TestCase):
     """Tests for GridLimitConfig and OverloadAnalysisResult."""
@@ -158,3 +235,4 @@ class TestGridLimitModels(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

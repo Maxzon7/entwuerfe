@@ -221,6 +221,36 @@ class SimpleConsumer:
         )
 
 
+def consumers_to_drac(consumers: List[SimpleConsumer], profile_name: str = "Synthetic Profile") -> str:
+    """Serializes a list of consumers into a formatted .drac JSON string."""
+    import json
+    payload = {
+        "format": "drac_load_profile",
+        "version": "1.0",
+        "profile_name": profile_name,
+        "consumer_count": len(consumers),
+        "consumers": [c.to_dict() for c in consumers]
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def consumers_from_drac(data_input: Any) -> List[SimpleConsumer]:
+    """Deserializes a JSON string or dict into a list of SimpleConsumers."""
+    import json
+    if isinstance(data_input, str):
+        data = json.loads(data_input)
+    elif isinstance(data_input, dict):
+        data = data_input
+    elif isinstance(data_input, list):
+        data = {"consumers": data_input}
+    else:
+        return []
+
+    raw_consumers = data.get("consumers", [])
+    return [SimpleConsumer.from_dict(c) for c in raw_consumers if isinstance(c, dict)]
+
+
 # Aliases for unified naming
 LoadComponent = SimpleConsumer
 Consumer = SimpleConsumer
+

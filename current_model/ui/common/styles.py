@@ -13,9 +13,14 @@ import streamlit as st
 
 
 def apply_custom_styles() -> None:
-    """Injects custom CSS styling into the active Streamlit app."""
+    """Injects custom CSS styling and icon stylesheets (Font Awesome, Remix Icon, Flag Icons) into the active Streamlit app."""
     st.markdown(
         """
+        <!-- Icon Libraries: Font Awesome 6, Remix Icon, Flag Icons -->
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.2.3/css/flag-icons.min.css">
+
         <style>
         /* Card Containers */
         .sandbox-card {
