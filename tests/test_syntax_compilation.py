@@ -58,6 +58,8 @@ class TestSyntaxCompilation(unittest.TestCase):
             "current_model.ui.tab2_contract.view",
             "current_model.ui.tab2_contract.form",
             "current_model.ui.tab2_contract.charts",
+            "current_model.ui.tab2_contract.comparison_view",
+            "current_model.ui.tab2_contract.comparison_charts",
             "current_model.ui.tab3_solar.view",
             "current_model.ui.tab3_solar.forms",
             "current_model.ui.tab3_solar.charts",
