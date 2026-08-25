@@ -1,0 +1,51 @@
+{
+  "format": "drac_contract",
+  "version": "1.0",
+  "name": "3. Industrie 3-Stufen Tarif",
+  "currency": "EUR",
+  "base_monthly_fee": 120.0,
+  "contracted_capacity_kw": 600.0,
+  "monthly_capacity_tariff": 16.5,
+  "demand_capacity_tariff": 2.5,
+  "max_physical_limit_kw": 1000.0,
+  "peak_penalty_rate": 35.0,
+  "reactive_power_tariff": 0.03,
+  "min_power_factor": 0.9,
+  "reactive_power_allowance_pct": 33.0,
+  "tou_rates": [
+    {
+      "name": "Spitzenlast (Peak)",
+      "rate": 0.365,
+      "start_time": "08:00",
+      "end_time": "12:00"
+    },
+    {
+      "name": "Tageslast (Standard)",
+      "rate": 0.245,
+      "start_time": "12:00",
+      "end_time": "20:00"
+    },
+    {
+      "name": "Schwachlast (Night)",
+      "rate": 0.149,
+      "start_time": "20:00",
+      "end_time": "08:00"
+    }
+  ],
+  "default_energy_rate": 0.245,
+  "weekend_is_off_peak": true,
+  "taxes_and_fees": [
+    {
+      "name": "Konzessionsabgabe",
+      "type": "per_kwh",
+      "value": 0.015,
+      "description": "Kommunale Abgabe"
+    },
+    {
+      "name": "MwSt",
+      "type": "percentage",
+      "value": 19.0,
+      "description": "19% MwSt"
+    }
+  ]
+}

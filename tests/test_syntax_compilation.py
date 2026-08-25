@@ -8,6 +8,8 @@ import unittest
 import py_compile
 import glob
 import os
+import importlib
+import sys
 
 
 class TestSyntaxCompilation(unittest.TestCase):
@@ -26,7 +28,9 @@ class TestSyntaxCompilation(unittest.TestCase):
         failed_files = []
         for file_path in files:
             try:
-                py_compile.compile(file_path, doraise=True)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                compile(content, file_path, "exec")
             except Exception as err:
                 failed_files.append((file_path, str(err)))
 
@@ -35,6 +39,35 @@ class TestSyntaxCompilation(unittest.TestCase):
             f"Compilation errors detected in {len(failed_files)} file(s):\n" +
             "\n".join([f"{f}: {err}" for f, err in failed_files])
         )
+
+    def test_all_current_model_modules_import(self):
+        """Verifies that all current_model modules can be imported without NameErrors."""
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+
+        modules_to_test = [
+            "current_model.app",
+            "current_model.ui.tab1_consumption.view",
+            "current_model.ui.tab1_consumption.synthetic.view",
+            "current_model.ui.tab1_consumption.synthetic.forms",
+            "current_model.ui.tab1_consumption.synthetic.charts",
+            "current_model.ui.tab1_consumption.csv_inspector.view",
+            "current_model.ui.tab1_consumption.csv_inspector.forms",
+            "current_model.ui.tab1_consumption.csv_inspector.charts",
+            "current_model.ui.tab2_contract.view",
+            "current_model.ui.tab2_contract.form",
+            "current_model.ui.tab2_contract.charts",
+            "current_model.ui.tab3_solar.view",
+            "current_model.ui.tab3_solar.forms",
+            "current_model.ui.tab3_solar.charts",
+        ]
+
+        for mod_name in modules_to_test:
+            try:
+                importlib.import_module(mod_name)
+            except Exception as e:
+                self.fail(f"Failed to import {mod_name}: {e}")
 
 
 if __name__ == "__main__":

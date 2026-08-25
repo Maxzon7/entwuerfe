@@ -1,0 +1,45 @@
+{
+  "format": "drac_contract",
+  "version": "1.0",
+  "name": "1. Standard Gewerbe (HT/NT)",
+  "currency": "EUR",
+  "base_monthly_fee": 65.0,
+  "contracted_capacity_kw": 250.0,
+  "monthly_capacity_tariff": 12.5,
+  "demand_capacity_tariff": 0.0,
+  "max_physical_limit_kw": 400.0,
+  "peak_penalty_rate": 20.0,
+  "reactive_power_tariff": 0.03,
+  "min_power_factor": 0.9,
+  "reactive_power_allowance_pct": 33.0,
+  "tou_rates": [
+    {
+      "name": "Hochtarif (HT)",
+      "rate": 0.285,
+      "start_time": "06:00",
+      "end_time": "22:00"
+    },
+    {
+      "name": "Niedertarif (NT)",
+      "rate": 0.178,
+      "start_time": "22:00",
+      "end_time": "06:00"
+    }
+  ],
+  "default_energy_rate": 0.285,
+  "weekend_is_off_peak": true,
+  "taxes_and_fees": [
+    {
+      "name": "Stromsteuer",
+      "type": "per_kwh",
+      "value": 0.0205,
+      "description": "Gesetzliche Stromsteuer"
+    },
+    {
+      "name": "Umsatzsteuer (MwSt)",
+      "type": "percentage",
+      "value": 19.0,
+      "description": "19% MwSt"
+    }
+  ]
+}

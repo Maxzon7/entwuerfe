@@ -1,0 +1,86 @@
+{
+  "format": "drac_load_profile",
+  "version": "1.0",
+  "profile_name": "Gewerbekühlung + EV",
+  "consumer_count": 2,
+  "consumers": [
+    {
+      "id": "3542c19c",
+      "name": "Kühlanlage Gewerbe",
+      "power_kw": 45.0,
+      "category": "Cooling",
+      "count": 2,
+      "time_windows": [
+        {
+          "start_time": "00:00",
+          "end_time": "23:59",
+          "has_peak": false,
+          "peak_power_kw": 0.0,
+          "peak_duration_min": 30
+        }
+      ],
+      "active_days": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "seasonal_pattern": "flat",
+      "monthly_factors": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "is_active": true
+    },
+    {
+      "id": "d5bb9e4e",
+      "name": "EV Ladesäulen Fuhrpark",
+      "power_kw": 22.0,
+      "category": "EV Charging",
+      "count": 4,
+      "time_windows": [
+        {
+          "start_time": "08:00",
+          "end_time": "16:00",
+          "has_peak": false,
+          "peak_power_kw": 0.0,
+          "peak_duration_min": 30
+        }
+      ],
+      "active_days": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "seasonal_pattern": "flat",
+      "monthly_factors": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "is_active": true
+    }
+  ]
+}

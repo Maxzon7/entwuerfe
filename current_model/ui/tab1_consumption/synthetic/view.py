@@ -14,7 +14,10 @@ Main orchestrator for the Synthetic 24-Hour & 365-Day Annual Load Simulator:
   - Real-time grid capacity overload violation analysis.
 """
 
-from typing import List
+import io
+import os
+import zipfile
+from typing import List, Dict, Any, Optional
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -38,6 +41,40 @@ from current_model.ui.tab1_consumption.synthetic.charts import (
     create_annual_heatmap_figure
 )
 from current_model.ui.tab1_consumption.synthetic.forms import render_add_consumer_form, render_consumer_editor
+
+
+def _parse_uploaded_profile_files(uploaded_files: List[Any]) -> Dict[str, List[SimpleConsumer]]:
+    """Parses one or multiple .drac, .json, or .zip files containing consumer profiles."""
+    parsed: Dict[str, List[SimpleConsumer]] = {}
+    if not uploaded_files:
+        return parsed
+
+    for f in uploaded_files:
+        fname = getattr(f, "name", "profile.drac")
+        if fname.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(f.getvalue())) as z:
+                    for member in z.namelist():
+                        if member.lower().endswith((".drac", ".json")) and not member.startswith("__MACOSX"):
+                            try:
+                                raw_data = z.read(member).decode("utf-8")
+                                loaded = consumers_from_drac(raw_data)
+                                if loaded:
+                                    base_member = os.path.basename(member)
+                                    parsed[base_member or member] = loaded
+                            except Exception:
+                                continue
+            except Exception:
+                continue
+        else:
+            try:
+                raw_data = f.getvalue().decode("utf-8")
+                loaded = consumers_from_drac(raw_data)
+                if loaded:
+                    parsed[fname] = loaded
+            except Exception:
+                continue
+    return parsed
 import re
 
 
@@ -64,29 +101,52 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
 
         # LEFT: Upload & Predefined Templates
         with f_col1:
-            st.markdown("##### Import Profile / Templates")
-            uploaded_profile = st.file_uploader(
-                "Upload a `.drac` load profile:",
-                type=["drac", "json"],
+            st.markdown("##### Import Profile(s) / Templates")
+            uploaded_profiles = st.file_uploader(
+                "Upload `.drac`, `.json` or `.zip` load profile(s):",
+                type=["drac", "json", "zip"],
+                accept_multiple_files=True,
                 key=f"{key_prefix}_profile_uploader",
-                help="Upload a previously exported .drac profile to restore all consumer assets and schedules."
+                help="Upload one or multiple .drac profile files (or a .zip folder) to restore consumer assets and schedules."
             )
-            if uploaded_profile is not None:
-                prof_cache_key = f"{key_prefix}_last_loaded_profile"
-                prof_sig = f"{uploaded_profile.name}_{uploaded_profile.size}"
-                if st.session_state.get(prof_cache_key) != prof_sig:
-                    try:
-                        raw_data = uploaded_profile.getvalue().decode("utf-8")
-                        loaded_consumers = consumers_from_drac(raw_data)
-                        if loaded_consumers:
-                            st.session_state[state_consumers_key] = loaded_consumers
-                            st.session_state[prof_cache_key] = prof_sig
-                            st.success(f"Successfully imported **{len(loaded_consumers)}** consumer assets from `{uploaded_profile.name}`.")
-                            st.rerun()
-                        else:
-                            st.warning("No valid consumers found in the uploaded file.")
-                    except Exception as e:
-                        st.error(f"Failed to parse profile file: {str(e)}")
+            loaded_profiles_dict_key = f"{key_prefix}_loaded_profiles_dict"
+            prof_uploader_sig_key = f"{key_prefix}_last_profiles_sig"
+
+            if loaded_profiles_dict_key not in st.session_state:
+                st.session_state[loaded_profiles_dict_key] = {}
+
+            if uploaded_profiles:
+                current_sig = "|".join(sorted([f"{f.name}_{f.size}" for f in uploaded_profiles]))
+                if st.session_state.get(prof_uploader_sig_key) != current_sig:
+                    new_profiles = _parse_uploaded_profile_files(uploaded_profiles)
+                    if new_profiles:
+                        st.session_state[loaded_profiles_dict_key] = new_profiles
+                        st.session_state[prof_uploader_sig_key] = current_sig
+                        first_label = list(new_profiles.keys())[0]
+                        st.session_state[state_consumers_key] = new_profiles[first_label]
+                        st.session_state[f"{key_prefix}_active_profile_label"] = first_label
+                        st.success(f"Successfully imported **{len(new_profiles)}** profile(s)!")
+                        st.rerun()
+                    else:
+                        st.error("No valid load profiles (.drac or .json) found in uploaded file(s).")
+
+            # Dynamic Switcher if multiple profiles are loaded
+            loaded_prof_dict = st.session_state.get(loaded_profiles_dict_key, {})
+            if loaded_prof_dict:
+                prof_labels = list(loaded_prof_dict.keys())
+                curr_prof_sel = st.session_state.get(f"{key_prefix}_active_profile_label", prof_labels[0])
+                p_sel_idx = prof_labels.index(curr_prof_sel) if curr_prof_sel in prof_labels else 0
+
+                selected_prof_label = st.selectbox(
+                    "📑 Switch Active Profile:",
+                    options=prof_labels,
+                    index=p_sel_idx,
+                    key=f"{key_prefix}_switch_profile_select"
+                )
+                if selected_prof_label != st.session_state.get(f"{key_prefix}_active_profile_label"):
+                    st.session_state[f"{key_prefix}_active_profile_label"] = selected_prof_label
+                    st.session_state[state_consumers_key] = loaded_prof_dict[selected_prof_label]
+                    st.rerun()
 
             preset_names = list(PRESET_TEMPLATES.keys())
             selected_preset = st.selectbox(

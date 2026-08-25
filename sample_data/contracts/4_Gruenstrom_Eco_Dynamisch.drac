@@ -1,0 +1,51 @@
+{
+  "format": "drac_contract",
+  "version": "1.0",
+  "name": "4. Dynamischer Grünstrom Eco",
+  "currency": "EUR",
+  "base_monthly_fee": 50.0,
+  "contracted_capacity_kw": 200.0,
+  "monthly_capacity_tariff": 9.5,
+  "demand_capacity_tariff": 0.0,
+  "max_physical_limit_kw": 1000.0,
+  "peak_penalty_rate": 0.25,
+  "reactive_power_tariff": 0.03,
+  "min_power_factor": 0.9,
+  "reactive_power_allowance_pct": 33.0,
+  "tou_rates": [
+    {
+      "name": "Solar-Mittagsbonus",
+      "rate": 0.115,
+      "start_time": "11:00",
+      "end_time": "16:00"
+    },
+    {
+      "name": "Abendspitze",
+      "rate": 0.32,
+      "start_time": "17:00",
+      "end_time": "21:00"
+    },
+    {
+      "name": "Basiszeit",
+      "rate": 0.205,
+      "start_time": "00:00",
+      "end_time": "11:00"
+    }
+  ],
+  "default_energy_rate": 0.205,
+  "weekend_is_off_peak": true,
+  "taxes_and_fees": [
+    {
+      "name": "Ökostrom-Zertifikate",
+      "type": "percentage",
+      "value": 3.5,
+      "description": "Herkunftsnachweise"
+    },
+    {
+      "name": "MwSt",
+      "type": "percentage",
+      "value": 19.0,
+      "description": "19% MwSt"
+    }
+  ]
+}

@@ -10,7 +10,10 @@ reactive power rules, dynamic Time-of-Use (TOU) energy rates table, and custom t
 Includes custom-named .drac file download (export), upload (import), and presets loader.
 """
 
-from typing import Dict, Any, List, Optional
+import io
+import os
+import zipfile
+from typing import Dict, Any, List, Optional, Tuple
 import streamlit as st
 import pandas as pd
 import json
@@ -58,6 +61,40 @@ def _sanitize_filename(name: str, default: str = "contract.drac") -> str:
     return clean
 
 
+def _parse_uploaded_contract_files(uploaded_files: List[Any]) -> Dict[str, Contract]:
+    """Parses one or multiple .drac, .json, or .zip files containing electricity contracts."""
+    parsed_contracts: Dict[str, Contract] = {}
+    if not uploaded_files:
+        return parsed_contracts
+
+    for f in uploaded_files:
+        fname = getattr(f, "name", "contract.drac")
+        if fname.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(f.getvalue())) as z:
+                    for member in z.namelist():
+                        if member.lower().endswith((".drac", ".json")) and not member.startswith("__MACOSX"):
+                            try:
+                                content = z.read(member).decode("utf-8")
+                                c = Contract.from_json(content)
+                                base_member = os.path.basename(member)
+                                label = f"{c.name} ({base_member})" if c.name else base_member
+                                parsed_contracts[label] = c
+                            except Exception:
+                                continue
+            except Exception:
+                continue
+        else:
+            try:
+                content = f.getvalue().decode("utf-8")
+                c = Contract.from_json(content)
+                label = f"{c.name} ({fname})" if c.name else fname
+                parsed_contracts[label] = c
+            except Exception:
+                continue
+    return parsed_contracts
+
+
 def _sync_contract_to_state(contract: Contract, key_prefix: str) -> None:
     """Synchronizes a Contract object into Streamlit session state and data editors."""
     state_contract_key = f"{key_prefix}_contract_model"
@@ -69,6 +106,11 @@ def _sync_contract_to_state(contract: Contract, key_prefix: str) -> None:
         {"name": "Standard Rate", "rate": contract.default_energy_rate, "start_time": "00:00", "end_time": "24:00"}
     ])
     st.session_state[state_taxes_key] = pd.DataFrame(contract.taxes_and_fees) if contract.taxes_and_fees else pd.DataFrame(columns=["name", "type", "value", "description"])
+
+    # Clear data editor state keys so changes reflect immediately in UI
+    for k in [f"{key_prefix}_tou_editor", f"{key_prefix}_taxes_editor"]:
+        if k in st.session_state:
+            del st.session_state[k]
 
 
 def render_contract_form(
@@ -83,6 +125,8 @@ def render_contract_form(
     state_contract_key = f"{key_prefix}_contract_model"
     state_tou_key = f"{key_prefix}_tou_rates_df"
     state_taxes_key = f"{key_prefix}_taxes_df"
+    loaded_contracts_dict_key = f"{key_prefix}_loaded_contracts_dict"
+    uploader_sig_key = f"{key_prefix}_last_files_sig"
 
     if state_contract_key not in st.session_state:
         st.session_state[state_contract_key] = current_contract or Contract()
@@ -136,33 +180,56 @@ def render_contract_form(
         # Contract File Management & Presets Toolbar (Download / Upload as .drac)
         # ==============================================================================
         st.markdown("### Contract File Transfer & Presets (.drac)")
-        st.caption("Download your configured contract as a reusable `.drac` file or upload a previously saved contract file.")
+        st.caption("Download your configured contract as a reusable `.drac` file or upload multiple saved contract files / ZIP archives.")
 
         col_up, col_down = st.columns([1, 1])
 
         # --- LEFT: Upload / Import / Presets ---
         with col_up:
-            st.markdown("##### Import Contract")
-            uploaded_file = st.file_uploader(
-                "Select a `.drac` or `.json` contract file:",
-                type=["drac", "json"],
+            st.markdown("##### Import Contract(s)")
+            uploaded_files = st.file_uploader(
+                "Select `.drac`, `.json` or `.zip` contract file(s):",
+                type=["drac", "json", "zip"],
+                accept_multiple_files=True,
                 key=f"{key_prefix}_file_uploader",
-                help="Upload a previously exported .drac electricity contract to load all parameters and tariff tables."
+                help="Upload one or multiple .drac/.json contract files (or a .zip folder) to inspect and switch between them."
             )
 
-            if uploaded_file is not None:
-                uploader_cache_key = f"{key_prefix}_last_loaded_file"
-                file_signature = f"{uploaded_file.name}_{uploaded_file.size}"
-                if st.session_state.get(uploader_cache_key) != file_signature:
-                    try:
-                        content_str = uploaded_file.getvalue().decode("utf-8")
-                        imported_contract = Contract.from_json(content_str)
-                        _sync_contract_to_state(imported_contract, key_prefix=key_prefix)
-                        st.session_state[uploader_cache_key] = file_signature
-                        st.success(f"Contract **'{imported_contract.name}'** successfully loaded from `{uploaded_file.name}`.")
+            if loaded_contracts_dict_key not in st.session_state:
+                st.session_state[loaded_contracts_dict_key] = {}
+
+            if uploaded_files:
+                current_sig = "|".join(sorted([f"{f.name}_{f.size}" for f in uploaded_files]))
+                if st.session_state.get(uploader_sig_key) != current_sig:
+                    new_contracts = _parse_uploaded_contract_files(uploaded_files)
+                    if new_contracts:
+                        st.session_state[loaded_contracts_dict_key] = new_contracts
+                        st.session_state[uploader_sig_key] = current_sig
+                        first_label = list(new_contracts.keys())[0]
+                        _sync_contract_to_state(new_contracts[first_label], key_prefix=key_prefix)
+                        st.session_state[f"{key_prefix}_active_contract_label"] = first_label
+                        st.success(f"Successfully loaded **{len(new_contracts)}** contract(s)!")
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to parse contract file `{uploaded_file.name}`: {str(e)}")
+                    else:
+                        st.error("No valid contract files (.drac or .json) could be parsed from upload.")
+
+            # Dynamic Contract Switcher if multiple contracts are loaded
+            loaded_dict = st.session_state.get(loaded_contracts_dict_key, {})
+            if loaded_dict:
+                labels = list(loaded_dict.keys())
+                current_sel = st.session_state.get(f"{key_prefix}_active_contract_label", labels[0])
+                sel_idx = labels.index(current_sel) if current_sel in labels else 0
+
+                selected_label = st.selectbox(
+                    "📑 Switch Active Contract:",
+                    options=labels,
+                    index=sel_idx,
+                    key=f"{key_prefix}_switch_contract_select"
+                )
+                if selected_label != st.session_state.get(f"{key_prefix}_active_contract_label"):
+                    st.session_state[f"{key_prefix}_active_contract_label"] = selected_label
+                    _sync_contract_to_state(loaded_dict[selected_label], key_prefix=key_prefix)
+                    st.rerun()
 
             # Preset selector
             presets = get_contract_presets()
@@ -340,6 +407,10 @@ def render_contract_form(
                 taxes_and_fees=cleaned_taxes
             )
             _sync_contract_to_state(updated_contract, key_prefix=key_prefix)
+            if loaded_contracts_dict_key in st.session_state and st.session_state[loaded_contracts_dict_key]:
+                active_lbl = st.session_state.get(f"{key_prefix}_active_contract_label")
+                if active_lbl in st.session_state[loaded_contracts_dict_key]:
+                    st.session_state[loaded_contracts_dict_key][active_lbl] = updated_contract
             st.success("Contract configuration successfully saved.")
             st.rerun()
     return st.session_state[state_contract_key]

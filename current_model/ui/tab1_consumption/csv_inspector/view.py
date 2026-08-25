@@ -15,6 +15,9 @@ Orchestrates the CSV Load Profile Inspector component:
   - Overload peak, duration, and energy violation analysis
 """
 
+import io
+import os
+import zipfile
 import re
 import datetime
 from typing import List, Tuple
@@ -40,11 +43,35 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
     if uploaded_files:
         st.session_state[f"{key_prefix}_demo_loaded"] = False
         for f in uploaded_files:
-            try:
-                content = read_raw_content(f)
-                files_to_process.append((f.name, content))
-            except Exception as e:
-                st.error(f"Error reading {f.name}: {e}")
+            fname = getattr(f, "name", "file.csv")
+            if fname.lower().endswith(".zip"):
+                try:
+                    with zipfile.ZipFile(io.BytesIO(f.getvalue())) as z:
+                        for member in z.namelist():
+                            if member.lower().endswith((".csv", ".txt")) and not member.startswith("__MACOSX"):
+                                try:
+                                    raw_bytes = z.read(member)
+                                    # Decode using common encodings
+                                    content = None
+                                    for enc in ["utf-8", "utf-8-sig", "latin1", "cp1252"]:
+                                        try:
+                                            content = raw_bytes.decode(enc)
+                                            break
+                                        except Exception:
+                                            continue
+                                    if content:
+                                        base_member = os.path.basename(member)
+                                        files_to_process.append((base_member or member, content))
+                                except Exception:
+                                    continue
+                except Exception as e:
+                    st.error(f"Error extracting ZIP archive {fname}: {e}")
+            else:
+                try:
+                    content = read_raw_content(f)
+                    files_to_process.append((fname, content))
+                except Exception as e:
+                    st.error(f"Error reading {fname}: {e}")
     elif is_demo:
         demo_name, demo_content = generate_sample_demo_csv(days=14)
         files_to_process = [(demo_name, demo_content)]

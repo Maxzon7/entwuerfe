@@ -22,8 +22,8 @@ def render_csv_uploader_section(key_prefix: str = "csv_inspector") -> Tuple[Opti
 
     with col_up:
         uploaded_files = st.file_uploader(
-            "Upload Load Profile CSV(s):",
-            type=["csv", "txt"],
+            "Upload Load Profile CSV(s) or ZIP folder:",
+            type=["csv", "txt", "zip"],
             accept_multiple_files=True,
             key=f"{key_prefix}_uploader"
         )
