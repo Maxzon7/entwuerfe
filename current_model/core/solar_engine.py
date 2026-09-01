@@ -388,18 +388,31 @@ def calculate_recommended_inverter_size(
 
 def compute_multi_year_generation(
     annual_kwh: float,
-    degradation_pct_a: float = 0.5,
-    lifetime_years: int = 15
+    first_year_deg_pct: float = 1.50,
+    annual_deg_pct: float = 0.40,
+    lifetime_years: int = 15,
+    degradation_pct_a: Optional[float] = None
 ) -> List[Dict[str, Any]]:
     """
     Projects yearly energy generation over a multi-year horizon (e.g. 15 years) applying
-    cumulative annual module degradation:
-      f_age(n) = (1 - degradation_rate)^(n - 1)
+    2-stage physical degradation (Year 1 LID vs Year 2+ linear wear):
+      f_age(1) = 1.0 - d1
+      f_age(n) = (1.0 - d1) * (1.0 - d2)^(n - 1)
     """
-    deg_rate = degradation_pct_a / 100.0
+    if degradation_pct_a is not None:
+        d1 = degradation_pct_a / 100.0
+        d2 = degradation_pct_a / 100.0
+    else:
+        d1 = first_year_deg_pct / 100.0
+        d2 = annual_deg_pct / 100.0
+
     projections = []
     for year_idx in range(1, lifetime_years + 1):
-        f_age = (1.0 - deg_rate) ** (year_idx - 1)
+        if year_idx == 1:
+            f_age = 1.0 - d1
+        else:
+            f_age = (1.0 - d1) * ((1.0 - d2) ** (year_idx - 1))
+
         deg_kwh = annual_kwh * f_age
         projections.append({
             "year": year_idx,
@@ -409,6 +422,79 @@ def compute_multi_year_generation(
             "cumulative_loss_pct": round((1.0 - f_age) * 100.0, 2)
         })
     return projections
+
+
+def compute_technology_comparison(
+    module_count: int,
+    poa_arr: np.ndarray,
+    t_amb_arr: np.ndarray,
+    dt_hours: float = 0.25,
+    nmot_c: float = 45.0,
+    dc_loss_pct: float = 4.9,
+    inverter_eff_pct: float = 98.0
+) -> List[Any]:
+    """
+    Computes comparative production metrics for the 3 industry-standard cell technologies
+    matching the DRACBV reference workbooks (PERC, TOPCon, Backcontact) for the given module count:
+      1. PERC (410 Wp, gamma = -0.35 %/°C, 1st yr 2.0%, annual 0.55%)
+      2. TOPCon (450 Wp, gamma = -0.29 %/°C, 1st yr 1.5%, annual 0.40%)
+      3. Backcontact (470 Wp, gamma = -0.26 %/°C, 1st yr 1.0%, annual 0.35%)
+    """
+    from current_model.models.solar import TECHNOLOGY_SPECS, TechnologyComparisonItem
+
+    items: List[TechnologyComparisonItem] = []
+    baseline_y1_kwh = 0.0
+
+    for tech_key in ["PERC", "TOPCon", "Backcontact"]:
+        spec = TECHNOLOGY_SPECS[tech_key]
+        p_wp = spec["power_wp"]
+        gamma_abs = abs(spec["temp_coeff_pct_c"]) / 100.0
+        d1 = spec["first_year_deg_pct"] / 100.0
+        d2 = spec["annual_deg_pct"] / 100.0
+
+        p_dc_kwp = (module_count * p_wp) / 1000.0
+        t_cell = t_amb_arr + poa_arr * ((nmot_c - 20.0) / 800.0)
+        temp_excess = np.maximum(0.0, t_cell - 25.0)
+        f_temp = np.clip(1.0 - temp_excess * gamma_abs, 0.40, 1.00)
+
+        # STC ideal AC generation before degradation
+        dc_loss_factor = 1.0 - dc_loss_pct / 100.0
+        eta_inv = inverter_eff_pct / 100.0
+        inv_max = p_dc_kwp / 1.175
+        p_dc = np.maximum(0.0, p_dc_kwp * (poa_arr / 1000.0) * f_temp * dc_loss_factor)
+        p_ac = np.minimum(p_dc * eta_inv, inv_max)
+        stc_annual_kwh = float(np.sum(p_ac * dt_hours))
+
+        # 2-stage degradation for years 1, 5, 10, 15
+        y1_kwh = stc_annual_kwh * (1.0 - d1)
+        y5_kwh = stc_annual_kwh * (1.0 - d1) * ((1.0 - d2) ** 4)
+        y10_kwh = stc_annual_kwh * (1.0 - d1) * ((1.0 - d2) ** 9)
+        y15_kwh = stc_annual_kwh * (1.0 - d1) * ((1.0 - d2) ** 14)
+
+        if tech_key == "PERC":
+            baseline_y1_kwh = max(1.0, y1_kwh)
+            gain_pct = 0.0
+        else:
+            gain_pct = ((y1_kwh - baseline_y1_kwh) / baseline_y1_kwh) * 100.0
+
+        items.append(
+            TechnologyComparisonItem(
+                tech_key=tech_key,
+                tech_name=spec["name"],
+                module_power_wp=p_wp,
+                dc_capacity_kwp=round(p_dc_kwp, 1),
+                temp_coeff_pct_c=spec["temp_coeff_pct_c"],
+                first_year_deg_pct=spec["first_year_deg_pct"],
+                annual_deg_pct=spec["annual_deg_pct"],
+                year_1_kwh=round(y1_kwh, 0),
+                year_5_kwh=round(y5_kwh, 0),
+                year_10_kwh=round(y10_kwh, 0),
+                year_15_kwh=round(y15_kwh, 0),
+                gain_pct_vs_perc=round(gain_pct, 1)
+            )
+        )
+
+    return items
 
 
 def compute_solar_load_dispatch(
@@ -468,11 +554,11 @@ def simulate_solar_pv_generation(
     Executes physical Solar PV generation simulation across 15-minute intervals (35,040 steps/year):
       1. Irradiance on plane of array (POA) via Perez / Anisotropic model
       2. Dynamic cell temperature: T_cell = T_amb + POA * (NMOT - 20) / 800
-      3. Assignment temperature derating: eta_temp = 1.0 - max(0, T_cell - 25°C) * 0.0025 (no loss <= 25°C)
+      3. Assignment temperature derating: eta_temp = 1.0 - max(0, T_cell - 25°C) * (|gamma|/100)
       4. System DC losses: soiling, shading, DC wiring
       5. Inverter AC conversion & clipping: P_ac = min(P_dc * eta_inv, P_ac_max)
       6. 15-minute interval energy: E_ac(t) = P_ac(t) * 0.25h
-      7. Electrical dispatch against load profile (if provided)
+      7. Multi-technology comparative matrix (PERC, TOPCon, Backcontact)
       8. Multi-year degradation yield table (15 years)
     """
     if weather_df is None or weather_df.empty:
@@ -535,21 +621,17 @@ def simulate_solar_pv_generation(
     # 5. Electrical Load Dispatch Coupling (if load data exists)
     p_solar_arr = df["P_AC_kW"].to_numpy(dtype=float)
     if load_df is not None and not load_df.empty:
-        # Check power column
         p_load_col = "Total_Demand_kW" if "Total_Demand_kW" in load_df.columns else load_df.columns[1]
         raw_load_arr = load_df[p_load_col].to_numpy(dtype=float)
 
-        # Handle size alignment
         if len(raw_load_arr) == len(p_solar_arr):
             p_load_aligned = raw_load_arr
         elif len(raw_load_arr) < len(p_solar_arr):
-            # Tile or repeat (e.g. 24h profile tiled across 365 days)
             reps = int(math.ceil(len(p_solar_arr) / len(raw_load_arr)))
             p_load_aligned = np.tile(raw_load_arr, reps)[:len(p_solar_arr)]
         else:
             p_load_aligned = raw_load_arr[:len(p_solar_arr)]
     else:
-        # Default baseline: zero load
         p_load_aligned = np.zeros(len(p_solar_arr), dtype=float)
 
     dispatch_res = compute_solar_load_dispatch(
@@ -604,11 +686,9 @@ def simulate_solar_pv_generation(
     full_load_hours = annual_energy_kwh / max(0.1, p_nom)
     capacity_factor = (annual_energy_kwh / (p_nom * 8760.0) * 100.0) if p_nom > 0 else 0.0
 
-    # Total Solar Irradiance Energy on POA (kWh/m2)
     poa_energy_kwh_m2 = float(np.sum(poa * dt_hours) / 1000.0)
     ghi_energy_kwh_m2 = float(np.sum(df["GHI_W_m2"].to_numpy() * dt_hours) / 1000.0) if "GHI_W_m2" in df.columns else poa_energy_kwh_m2
 
-    # Performance Ratio (PR)
     ideal_poa_energy_kwh = p_nom * poa_energy_kwh_m2
     performance_ratio = (annual_energy_kwh / ideal_poa_energy_kwh * 100.0) if ideal_poa_energy_kwh > 0 else 0.0
 
@@ -648,11 +728,23 @@ def simulate_solar_pv_generation(
         "Net AC Energy Delivered": round(annual_energy_kwh, 1)
     }
 
-    # 9. Multi-Year Degradation Projections (15-Year Horizon)
+    # 9. Multi-Year Degradation Projections (15-Year Horizon, 2-Stage)
     multi_year_yields = compute_multi_year_generation(
         annual_kwh=annual_energy_kwh,
-        degradation_pct_a=config.degradation_pct_a,
+        first_year_deg_pct=config.first_year_degradation_pct,
+        annual_deg_pct=config.annual_degradation_pct,
         lifetime_years=config.economic_lifetime_years
+    )
+
+    # 10. Multi-Technology Comparison Matrix (PERC vs TOPCon vs Backcontact)
+    tech_comparison = compute_technology_comparison(
+        module_count=config.module_count,
+        poa_arr=poa,
+        t_amb_arr=t_amb,
+        dt_hours=dt_hours,
+        nmot_c=config.nmot_c,
+        dc_loss_pct=config.total_dc_loss_pct,
+        inverter_eff_pct=config.inverter_efficiency_pct
     )
 
     return SolarSimulationResult(
@@ -662,5 +754,7 @@ def simulate_solar_pv_generation(
         monthly_yields=monthly_yields,
         kpis=kpis,
         loss_breakdown=loss_breakdown,
-        multi_year_yields=multi_year_yields
+        multi_year_yields=multi_year_yields,
+        technology_comparison=tech_comparison
     )
+

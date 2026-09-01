@@ -309,3 +309,71 @@ def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.F
     )
 
     return fig
+
+
+def create_technology_comparison_figure(tech_items: List[Any]) -> go.Figure:
+    """
+    Constructs a comparative grouped bar chart comparing electricity production (MWh)
+    across Year 1, Year 5, Year 10, and Year 15 for PERC, TOPCon, and Backcontact.
+    """
+    years = ["Year 1", "Year 5", "Year 10", "Year 15"]
+    colors = {
+        "PERC": "#94A3B8",        # Slate
+        "TOPCon": "#38BDF8",      # Sky Blue
+        "Backcontact": "#10B981"  # Emerald
+    }
+
+    fig = go.Figure()
+
+    for item in tech_items:
+        mwh_vals = [
+            item.year_1_kwh / 1000.0,
+            item.year_5_kwh / 1000.0,
+            item.year_10_kwh / 1000.0,
+            item.year_15_kwh / 1000.0
+        ]
+        color = colors.get(item.tech_key, "#F59E0B")
+        gain_str = f" (+{item.gain_pct_vs_perc:.1f}%)" if item.gain_pct_vs_perc > 0 else " (Baseline)"
+
+        fig.add_trace(
+            go.Bar(
+                x=years,
+                y=mwh_vals,
+                name=f"{item.tech_key} ({item.module_power_wp:.0f} Wp){gain_str}",
+                marker=dict(color=color),
+                text=[f"{v:,.1f} MWh" for v in mwh_vals],
+                textposition="outside",
+                textfont=dict(size=10, color="#CBD5E1"),
+                hovertemplate=f"<b>{item.tech_name}</b><br>%{{x}}: <b>%{{y:,.1f}} MWh</b><extra></extra>"
+            )
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text="<b>Multi-Technology Production Comparison (Identical Module Count & Area)</b>",
+            font=dict(size=14, color="#F8FAFC")
+        ),
+        barmode="group",
+        xaxis=dict(gridcolor="#1E293B"),
+        yaxis=dict(
+            title="Annual Electricity Yield (MWh)",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155"
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+            font=dict(size=11)
+        ),
+        margin=dict(l=20, r=20, t=60, b=20),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=360
+    )
+
+    return fig
+

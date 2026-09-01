@@ -140,27 +140,67 @@ class TestSolarEngine(unittest.TestCase):
         self.assertAlmostEqual(inv_size, 51.6, delta=0.2)
 
     def test_multi_year_aging_degradation_15_years(self):
-        """Verify 15-year lifetime degradation calculation with f_age(n) = (1 - deg)^(n-1)."""
-        projections = compute_multi_year_generation(annual_kwh=100000.0, degradation_pct_a=0.5, lifetime_years=15)
+        """Verify 15-year lifetime degradation calculation with 2-stage degradation."""
+        projections = compute_multi_year_generation(
+            annual_kwh=100000.0,
+            first_year_deg_pct=1.50,
+            annual_deg_pct=0.40,
+            lifetime_years=15
+        )
         self.assertEqual(len(projections), 15)
 
-        # Year 1: factor = 1.0, 100,000 kWh
+        # Year 1: factor = 1 - 0.015 = 0.985, 98,500 kWh
         self.assertEqual(projections[0]["year"], 1)
-        self.assertAlmostEqual(projections[0]["aging_factor"], 1.0, delta=1e-4)
-        self.assertAlmostEqual(projections[0]["energy_kwh"], 100000.0, delta=1.0)
+        self.assertAlmostEqual(projections[0]["aging_factor"], 0.985, delta=1e-4)
+        self.assertAlmostEqual(projections[0]["energy_kwh"], 98500.0, delta=1.0)
 
-        # Year 2: factor = 0.995, 99,500 kWh
+        # Year 2: factor = (1 - 0.015) * (1 - 0.004) = 0.985 * 0.996 = 0.98106
         self.assertEqual(projections[1]["year"], 2)
-        self.assertAlmostEqual(projections[1]["aging_factor"], 0.995, delta=1e-4)
-        self.assertAlmostEqual(projections[1]["energy_kwh"], 99500.0, delta=1.0)
+        self.assertAlmostEqual(projections[1]["aging_factor"], 0.98106, delta=1e-4)
+        self.assertAlmostEqual(projections[1]["energy_kwh"], 98106.0, delta=2.0)
 
-        # Year 15: factor = (1 - 0.005)^14 = 0.93217
-        expected_y15_factor = (1.0 - 0.005) ** 14
-        self.assertEqual(projections[14]["year"], 15)
-        self.assertAlmostEqual(projections[14]["aging_factor"], expected_y15_factor, delta=1e-4)
-        self.assertAlmostEqual(projections[14]["energy_kwh"], 100000.0 * expected_y15_factor, delta=2.0)
+    def test_module_sizing_and_area_calculation(self):
+        """Verify module count, wattage sizing, and physical area requirements."""
+        # Test Case 1: 1,548 panels à 410 Wp -> 634.68 kWp
+        cfg1 = SolarPVConfig(module_count=1548, module_power_wp=410.0)
+        self.assertAlmostEqual(cfg1.dc_capacity_kwp, 634.68, delta=0.1)
+
+        # Test Case 2: 80 panels, 1.2m x 0.7m, factor 1.8 -> exactly 121.0 m² (Matching Excel Bild 4)
+        cfg2 = SolarPVConfig(
+            module_count=80,
+            module_length_m=1.20,
+            module_width_m=0.70,
+            area_factor=1.80
+        )
+        self.assertAlmostEqual(cfg2.gross_panel_area_m2, 67.20, delta=0.01)
+        self.assertAlmostEqual(cfg2.required_area_m2, 121.0, delta=0.1)
+
+    def test_multi_technology_comparison_matrix(self):
+        """Verify comparative production matrix computes PERC vs TOPCon vs Backcontact yields."""
+        result: SolarSimulationResult = simulate_solar_pv_generation(
+            config=self.config,
+            location=self.location
+        )
+        tech_items = result.technology_comparison
+        self.assertEqual(len(tech_items), 3)
+
+        perc = next(t for t in tech_items if t.tech_key == "PERC")
+        topcon = next(t for t in tech_items if t.tech_key == "TOPCon")
+        backcontact = next(t for t in tech_items if t.tech_key == "Backcontact")
+
+        # PERC baseline gain must be 0%
+        self.assertEqual(perc.gain_pct_vs_perc, 0.0)
+
+        # TOPCon (450W, -0.29%/°C) must yield higher than PERC (410W, -0.35%/°C)
+        self.assertGreater(topcon.year_1_kwh, perc.year_1_kwh)
+        self.assertGreater(topcon.gain_pct_vs_perc, 8.0)
+
+        # Backcontact (470W, -0.26%/°C) must yield higher than TOPCon
+        self.assertGreater(backcontact.year_1_kwh, topcon.year_1_kwh)
+        self.assertGreater(backcontact.gain_pct_vs_perc, topcon.gain_pct_vs_perc)
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

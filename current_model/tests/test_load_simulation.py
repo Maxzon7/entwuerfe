@@ -16,9 +16,9 @@ import datetime
 import numpy as np
 import pandas as pd
 
-from models.load_component import LoadComponent, TimeWindow
-from models.load_aggregator import LoadAggregator
-from models.presets import get_preset_industry
+from current_model.models.load_component import LoadComponent, TimeWindow, SimpleConsumer
+from current_model.models.presets import get_industry_preset_consumers
+from current_model.core.synthetic_engine import aggregate_synthetic_24h, aggregate_synthetic_year
 
 
 def test_time_window_single_and_dual():
@@ -26,7 +26,7 @@ def test_time_window_single_and_dual():
     # Machine 2: 20 kW, 02:00 to 13:00 AND 14:00 to 17:00
     comp = LoadComponent(
         name="Machine 2",
-        nominal_power_kw=20.0,
+        power_kw=20.0,
         time_windows=[
             TimeWindow(start_time=datetime.time(2, 0), end_time=datetime.time(13, 0)),
             TimeWindow(start_time=datetime.time(14, 0), end_time=datetime.time(17, 0))
@@ -67,8 +67,7 @@ def test_peak_load_spike():
     # Machine 1: 100 kW, 05:00-14:00 with 130 kW peak for 30 minutes
     comp = LoadComponent(
         name="Machine 1",
-        nominal_power_kw=100.0,
-        peak_power_kw=130.0,
+        power_kw=100.0,
         time_windows=[
             TimeWindow(
                 start_time=datetime.time(5, 0),
@@ -101,7 +100,7 @@ def test_24h_continuous_and_overnight():
     # Server: 24h
     comp_24h = LoadComponent(
         name="Server",
-        nominal_power_kw=10.0,
+        power_kw=10.0,
         time_windows=[
             TimeWindow(start_time=datetime.time(0, 0), end_time=datetime.time(0, 0))
         ],
@@ -114,7 +113,7 @@ def test_24h_continuous_and_overnight():
     # Overnight Shift: 22:00 to 06:00
     comp_night = LoadComponent(
         name="Night Shift",
-        nominal_power_kw=50.0,
+        power_kw=50.0,
         time_windows=[
             TimeWindow(start_time=datetime.time(22, 0), end_time=datetime.time(6, 0))
         ],
@@ -132,23 +131,18 @@ def test_24h_continuous_and_overnight():
 
 def test_aggregator_and_kpis():
     """Tests aggregator DataFrame synthesis, baseload addition, and KPI metrics."""
-    aggregator = get_preset_industry()
-    df_day = aggregator.get_daily_dataframe(day_of_week=0)
+    consumers = get_industry_preset_consumers()
+    df_day, total_day, metrics_day = aggregate_synthetic_24h(consumers=consumers)
     assert len(df_day) == 96
     assert "Total_kW" in df_day.columns
-    assert "Baseload (Standby)" in df_day.columns
-    assert df_day["Baseload (Standby)"].iloc[0] == 12.0
+    assert metrics_day["peak_demand_kw"] > 0
+    assert metrics_day["daily_energy_kwh"] > 0
 
-    kpis = aggregator.calculate_kpis()
-    assert kpis["p_max_kw"] > 0
-    assert kpis["annual_kwh"] > 0
-    assert kpis["annual_mwh"] > 0
-    assert "component_shares" in kpis
-
-    # Yearly dataframe test
-    df_year = aggregator.get_yearly_dataframe()
-    assert len(df_year) == 35040  # 365 * 96
-    assert "consumption_kw" in df_year.columns
+    df_year, total_year, metrics_year = aggregate_synthetic_year(consumers=consumers, year=2025)
+    assert len(df_year) == 35040
+    assert "Total_Demand_kW" in df_year.columns
+    assert metrics_year["annual_energy_mwh"] > 0
+    assert metrics_year["peak_demand_kw"] > 0
 
 
 if __name__ == "__main__":
@@ -156,4 +150,4 @@ if __name__ == "__main__":
     test_peak_load_spike()
     test_24h_continuous_and_overnight()
     test_aggregator_and_kpis()
-    print("All unit tests passed successfully!")
+    print("All load simulation tests passed successfully!")
