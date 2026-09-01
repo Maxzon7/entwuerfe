@@ -5,14 +5,14 @@ Solar PV Visualizations & Plotly Charts (current_model/ui/tab3_solar/charts.py)
 
 Description:
 ------------
-Generates dark-themed, high-contrast Plotly figures for Solar PV analysis:
-  - Full-year / period interactive power timeseries with range slider
-  - Monthly energy yield (MWh) and specific yield (kWh/kWp) bar chart
-  - Seasonal 24-hour average daily generation profiles (Summer vs. Winter bell curves)
-  - Loss Waterfall diagram (Irradiance potential -> Thermal -> BOS -> Inverter -> AC Net)
+Generates dark-themed, high-contrast Plotly figures for pure Solar PV analysis:
+  - 15-Minute interactive power timeseries with range slider (POA, DC power, AC power, Inverter limit)
+  - 12-Month energy yield (MWh) and specific yield (kWh/kWp) bar chart
+  - System Loss Waterfall diagram (Irradiance potential -> Thermal -> BOS -> Inverter -> AC Net)
+  - Seasonal 24-hour average daily generation profiles (Summer vs. Winter curves)
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -28,12 +28,13 @@ def create_solar_timeseries_figure(
     Constructs an interactive time-series figure of AC & DC solar generation with range slider.
     """
     fig = go.Figure()
+    timestamps = df["timestamp"]
 
     # 1. Plane of Array Irradiance (Area / subtle fill)
     if "POA_W_m2" in df.columns:
         fig.add_trace(
             go.Scatter(
-                x=df["timestamp"],
+                x=timestamps,
                 y=df["POA_W_m2"] / 10.0,  # Scaled for visual comparison (1000 W/m² -> 100)
                 name="Irradiance (POA / 10 W/m²)",
                 line=dict(color="rgba(251, 191, 36, 0.35)", width=1, dash="dot"),
@@ -46,7 +47,7 @@ def create_solar_timeseries_figure(
     if "P_DC_kW" in df.columns:
         fig.add_trace(
             go.Scatter(
-                x=df["timestamp"],
+                x=timestamps,
                 y=df["P_DC_kW"],
                 name="DC Array Power (kW)",
                 line=dict(color="#F59E0B", width=1.5),
@@ -59,12 +60,12 @@ def create_solar_timeseries_figure(
     if "P_AC_kW" in df.columns:
         fig.add_trace(
             go.Scatter(
-                x=df["timestamp"],
+                x=timestamps,
                 y=df["P_AC_kW"],
                 name="AC Grid Power (kW)",
                 line=dict(color="#10B981", width=2.2),
                 fill="tozeroy",
-                fillcolor="rgba(16, 185, 129, 0.12)",
+                fillcolor="rgba(16, 185, 129, 0.15)",
                 hovertemplate="<b>%{x|%d %b %Y %H:%M}</b><br><b>AC Output:</b> %{y:,.1f} kW<extra></extra>",
                 showlegend=True
             )
@@ -84,8 +85,8 @@ def create_solar_timeseries_figure(
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text=f"<b>Solar PV Generation Timeseries Profile</b> ({dc_capacity_kwp:,.0f} kWp DC / {inverter_capacity_kw:,.0f} kW AC)",
-            font=dict(size=15, color="#F8FAFC")
+            text=f"<b>Solar PV Generation Timeseries Profile</b> ({dc_capacity_kwp:,.0f} kWp DC / {inverter_capacity_kw:,.0f} kW AC - 15-Min Resolution)",
+            font=dict(size=14, color="#F8FAFC")
         ),
         xaxis=dict(
             title="Date & Time",
@@ -94,7 +95,7 @@ def create_solar_timeseries_figure(
             gridcolor="#1E293B"
         ),
         yaxis=dict(
-            title="Power (kW)",
+            title="Active Power (kW)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
@@ -172,30 +173,29 @@ def create_solar_monthly_bar_figure(
 
 def create_solar_seasonal_daily_figure(df: pd.DataFrame) -> go.Figure:
     """
-    Plots average 24-hour daily generation profiles for different quarters/seasons.
+    Plots average 24-hour daily generation profiles for representative seasonal solstices/equinoxes.
     """
     df_copy = df.copy()
     df_copy["hour"] = df_copy["timestamp"].dt.hour
     df_copy["month"] = df_copy["timestamp"].dt.month
 
-    # Group into representative seasonal months (e.g. Jan = Summer/Winter, Apr = Autumn/Spring, Jul, Oct)
     seasons = {
-        "January (Peak Solstice)": df_copy[df_copy["month"] == 1],
-        "April (Equinox)": df_copy[df_copy["month"] == 4],
+        "January (Solstice / Summer)": df_copy[df_copy["month"] == 1],
+        "April (Autumn Equinox)": df_copy[df_copy["month"] == 4],
         "July (Winter Solstice)": df_copy[df_copy["month"] == 7],
-        "October (Spring)": df_copy[df_copy["month"] == 10]
+        "October (Spring Equinox)": df_copy[df_copy["month"] == 10]
     }
 
     colors = {
-        "January (Peak Solstice)": "#F59E0B",
-        "April (Equinox)": "#10B981",
+        "January (Solstice / Summer)": "#F59E0B",
+        "April (Autumn Equinox)": "#10B981",
         "July (Winter Solstice)": "#3B82F6",
-        "October (Spring)": "#8B5CF6"
+        "October (Spring Equinox)": "#8B5CF6"
     }
 
     fig = go.Figure()
-
     hours = list(range(24))
+
     for s_name, s_df in seasons.items():
         if not s_df.empty:
             avg_hourly = s_df.groupby("hour")["P_AC_kW"].mean().reindex(hours, fill_value=0.0)
@@ -224,7 +224,7 @@ def create_solar_seasonal_daily_figure(df: pd.DataFrame) -> go.Figure:
             gridcolor="#1E293B"
         ),
         yaxis=dict(
-            title="Average Power Output (kW)",
+            title="Average Active Power (kW)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
@@ -247,7 +247,7 @@ def create_solar_seasonal_daily_figure(df: pd.DataFrame) -> go.Figure:
 
 def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.Figure:
     """
-    Constructs a Waterfall figure illustrating energy loss stages from raw sunlight to grid AC.
+    Constructs a Waterfall figure illustrating physical energy loss stages from raw sunlight to grid AC.
     """
     pot = loss_breakdown.get("Nominal Plane-of-Array Potential", 100000.0)
     therm = loss_breakdown.get("Thermal Losses (Temperature Derate)", 5000.0)
@@ -265,7 +265,6 @@ def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.F
         "Inverter Clipping",
         "Net AC Energy"
     ]
-    # In MWh
     y_vals = [
         pot / 1000.0,
         -therm / 1000.0,
@@ -294,7 +293,7 @@ def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.F
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text="<b>Solar PV System Loss Waterfall (Energy Flow from Sun to Grid)</b>",
+            text="<b>Solar PV System Loss Waterfall (Physical Energy Flow from Sun to AC Grid)</b>",
             font=dict(size=14, color="#F8FAFC")
         ),
         yaxis=dict(

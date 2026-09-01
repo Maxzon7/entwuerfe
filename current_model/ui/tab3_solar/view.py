@@ -5,16 +5,14 @@ Tab 3 Solar PV Simulator View (current_model/ui/tab3_solar/view.py)
 
 Description:
 ------------
-Orchestrates Tab 3:
-  - Prominent standalone isolation notice banner (st.warning)
-  - Folium interactive map coordinate selector and site presets
-  - Comprehensive technical configuration form
-  - High-performance physical simulation engine call
-  - Key Performance Indicator (KPI) cards (Yield, Specific Yield, PR, Full Load Hours)
-  - Interactive timeseries figure with range slider
-  - Monthly yield bar chart & seasonal 24-hour daily profile
-  - Energy loss waterfall diagram
-  - Detailed monthly data table export preview
+Pure Solar PV Generation Simulator:
+  - High-precision 15-minute resolution Open-Meteo physical simulation
+  - Geographic location picker (Search, map click, quick presets, coordinates)
+  - Technical PV specifications (DC kWp, tilt, azimuth, NMOT derating, inverter limit)
+  - Core electrical generation KPIs (Total MWh, kWh/kWp, PR %, Capacity Factor, Full load hours)
+  - Interactive generation timeseries profile with range slider
+  - 12-Month energy yield bar chart & seasonal 24-hour daily curves
+  - Physical loss waterfall diagram & itemized monthly data table
 """
 
 from typing import Optional
@@ -35,24 +33,18 @@ from current_model.ui.tab3_solar.charts import (
 
 def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
     """
-    Renders the complete Tab 3 Solar PV Generator view.
+    Renders the focused, clean Tab 3 Solar PV Generation Simulator view.
     """
-    # 1. Standalone Isolation Warning Banner
-    st.warning(
-        "⚠️ **Notice: The Solar PV Generation module is currently running in standalone simulation mode "
-        "to validate calculation accuracy and radiation modeling independently before grid and dispatch integration.**"
-    )
-
     st.markdown("### ☀️ Photovoltaic Solar Generation Simulator")
     st.caption(
-        "Model real-world solar generation using high-resolution Open-Meteo radiation data, "
-        "dynamic module temperature physics, balance-of-system losses, and inverter conversion characteristics."
+        "Calculate exact electrical solar power (kW) and energy yield (kWh / MWh) based on "
+        "15-minute radiation data, panel orientation, NMOT temperature physics, and inverter efficiency."
     )
 
-    # 2. Location Section (City Search, Interactive Map, Presets, and Coordinates)
+    # 1. Location Section (Search, Map, Presets, Coordinates)
     location: SolarLocation = render_solar_location_section(key_prefix=f"{key_prefix}_loc")
 
-    # 3. Technical PV Configuration Form
+    # 2. Technical PV Configuration Form
     state_cfg_key = f"{key_prefix}_config"
     state_res_key = f"{key_prefix}_sim_result"
 
@@ -66,9 +58,9 @@ def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
 
     st.session_state[state_cfg_key] = config
 
-    # 4. Simulation Execution & Caching
+    # 3. Physical Simulation Execution & Caching
     if submitted or state_res_key not in st.session_state:
-        with st.spinner("Fetching Open-Meteo radiation data and simulating solar PV physics..."):
+        with st.spinner("Calculating 15-minute physical solar PV generation..."):
             try:
                 sim_result: SolarSimulationResult = simulate_solar_pv_generation(
                     config=config,
@@ -83,19 +75,22 @@ def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
     kpis = sim_res.kpis
     df_ts = sim_res.df_timeseries
 
-
+    # Save to global session state for downstream use
+    st.session_state["solar_kw_15min"] = df_ts["P_AC_kW"]
+    st.session_state["solar_kpis"] = kpis
+    st.session_state["solar_config"] = config
 
     st.divider()
 
-    # 5. Energy Metrics & Key Performance Indicators
-    st.subheader("3. Annual Performance Metrics & Key Performance Indicators")
+    # 4. Core Electrical Generation KPIs
+    st.subheader("3. Annual Electricity Generation & Performance Metrics")
     k1, k2, k3, k4 = st.columns(4)
 
     with k1:
         render_kpi_card(
             "⚡ Total Annual Yield",
             f"{kpis.annual_energy_mwh:,.2f} MWh",
-            f"{kpis.annual_energy_kwh:,.0f} kWh total generation"
+            f"{kpis.annual_energy_kwh:,.0f} kWh total AC generation"
         )
     with k2:
         render_kpi_card(
@@ -104,7 +99,7 @@ def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
             f"Full Load Hours: {kpis.full_load_hours:,.0f} h/a"
         )
     with k3:
-        pr_status = "ok" if kpis.performance_ratio_pct >= 80.0 else "neutral"
+        pr_status = "ok" if kpis.performance_ratio_pct >= 75.0 else "neutral"
         render_kpi_card(
             "📊 Performance Ratio (PR)",
             f"{kpis.performance_ratio_pct:.1f} %",
@@ -118,8 +113,8 @@ def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
             f"Peak AC Power: {kpis.max_ac_power_kw:,.1f} kW"
         )
 
-    # 6. Interactive Timeseries Plot
-    st.subheader("4. Solar Generation Profile Timeseries (Hourly Resolution)")
+    # 5. Interactive 15-Minute Generation Timeseries Plot
+    st.subheader("4. Solar Generation Profile Timeseries (15-Minute Resolution)")
     fig_ts = create_solar_timeseries_figure(
         df=df_ts,
         dc_capacity_kwp=config.dc_capacity_kwp,
@@ -127,7 +122,7 @@ def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
     )
     st.plotly_chart(fig_ts, use_container_width=True)
 
-    # 7. Monthly Yields & Seasonal Profiles
+    # 6. Monthly Yields & Seasonal Profiles
     st.subheader("5. Seasonal & Monthly Production Analysis")
     col_m, col_s = st.columns(2)
 
@@ -142,13 +137,13 @@ def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
         fig_seasonal = create_solar_seasonal_daily_figure(df=df_ts)
         st.plotly_chart(fig_seasonal, use_container_width=True)
 
-    # 8. Loss Waterfall Analysis
-    st.subheader("6. Energy Loss Cascade (Waterfall Diagram)")
-    st.caption("Detailed breakdown from raw available sunlight on module plane to net usable AC energy delivered to grid/facility.")
+    # 7. Loss Waterfall Analysis
+    st.subheader("6. Physical Energy Loss Cascade (Waterfall Diagram)")
+    st.caption("Detailed breakdown from raw available sunlight on module plane to net usable AC energy delivered to grid.")
     fig_loss = create_solar_loss_waterfall_figure(loss_breakdown=sim_res.loss_breakdown)
     st.plotly_chart(fig_loss, use_container_width=True)
 
-    # 9. Itemized Monthly Yield Table
+    # 8. Itemized Monthly Yield Table
     with st.expander("📋 Itemized Monthly Yield Table & Statistics", expanded=False):
         table_rows = []
         for m in sim_res.monthly_yields:

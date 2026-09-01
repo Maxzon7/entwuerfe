@@ -1,0 +1,39 @@
+{
+  "format": "drac_contract",
+  "version": "1.0",
+  "name": "5. Großverbraucher Hochspannung (USD)",
+  "currency": "USD",
+  "base_monthly_fee": 250.0,
+  "contracted_capacity_kw": 1200.0,
+  "monthly_capacity_tariff": 18.0,
+  "demand_capacity_tariff": 4.0,
+  "max_physical_limit_kw": 2000.0,
+  "peak_penalty_rate": 45.0,
+  "reactive_power_tariff": 0.03,
+  "min_power_factor": 0.9,
+  "reactive_power_allowance_pct": 33.0,
+  "tou_rates": [
+    {
+      "name": "On-Peak Day",
+      "rate": 0.185,
+      "start_time": "09:00",
+      "end_time": "19:00"
+    },
+    {
+      "name": "Off-Peak Night",
+      "rate": 0.098,
+      "start_time": "19:00",
+      "end_time": "09:00"
+    }
+  ],
+  "default_energy_rate": 0.185,
+  "weekend_is_off_peak": true,
+  "taxes_and_fees": [
+    {
+      "name": "State Energy Surcharge",
+      "type": "percentage",
+      "value": 6.5,
+      "description": "State Grid Fee"
+    }
+  ]
+}

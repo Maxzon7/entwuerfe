@@ -1,0 +1,166 @@
+"""
+========================================================================================
+Unit Tests for Solar PV Simulation Engine (tests/test_solar_engine.py)
+========================================================================================
+"""
+
+import unittest
+import pandas as pd
+import numpy as np
+
+from current_model.models.solar import SolarLocation, SolarPVConfig, SolarSimulationResult
+from current_model.core.solar_engine import (
+    generate_synthetic_solar_weather,
+    fetch_open_meteo_solar_data,
+    simulate_solar_pv_generation,
+    calculate_scenario_target_kwp,
+    calculate_recommended_inverter_size,
+    compute_multi_year_generation
+)
+
+
+class TestSolarEngine(unittest.TestCase):
+    """Test suite verifying the Solar PV physics calculations, 15-min resolution, and data structures."""
+
+    def setUp(self):
+        self.location = SolarLocation(
+            name="Mendoza Test Site",
+            latitude=-33.5133,
+            longitude=-69.2561,
+            elevation_m=1100.0
+        )
+        self.config = SolarPVConfig(
+            dc_capacity_kwp=100.0,
+            module_technology="Mono-Si PERC/TOPCon",
+            temp_coefficient_pct_c=-0.25,
+            nmot_c=45.0,
+            tilt_deg=30.0,
+            azimuth_deg=0.0,
+            albedo=0.20,
+            inverter_capacity_kw=85.0,
+            inverter_efficiency_pct=98.0,
+            soiling_loss_pct=2.0,
+            shading_loss_pct=1.5,
+            dc_wiring_loss_pct=1.5,
+            degradation_pct_a=0.5,
+            economic_lifetime_years=15
+        )
+
+    def test_synthetic_solar_weather_15min_resolution(self):
+        """Verify clear-sky solar weather generates full 35,040 15-minute steps with physical ranges."""
+        df = generate_synthetic_solar_weather(
+            latitude=self.location.latitude,
+            longitude=self.location.longitude,
+            tilt_deg=self.config.tilt_deg,
+            azimuth_deg=self.config.azimuth_deg,
+            albedo=self.config.albedo,
+            year=2025
+        )
+        self.assertEqual(len(df), 35040)
+        self.assertTrue("GHI_W_m2" in df.columns)
+        self.assertTrue("POA_W_m2" in df.columns)
+        self.assertTrue("Temp_Ambient_C" in df.columns)
+
+        # Check physical non-negativity
+        self.assertTrue((df["GHI_W_m2"] >= 0.0).all())
+        self.assertTrue((df["POA_W_m2"] >= 0.0).all())
+        # Max POA should be realistic peak sunlight (e.g. 700 - 1350 W/m2)
+        self.assertTrue(700.0 <= df["POA_W_m2"].max() <= 1350.0)
+
+    def test_temperature_derating_physics(self):
+        """Verify temperature derating strictly applies -0.25%/°C above 25°C and 0 loss at/below 25°C."""
+        result: SolarSimulationResult = simulate_solar_pv_generation(
+            config=self.config,
+            location=self.location
+        )
+        df = result.df_timeseries
+
+        # Points where cell temperature <= 25.0°C must have derate factor of 1.0 (no penalty)
+        cool_mask = df["Temp_Cell_C"] <= 25.0
+        if cool_mask.any():
+            self.assertTrue(np.allclose(df.loc[cool_mask, "Thermal_Derate_Factor"], 1.0, atol=1e-3))
+
+        # Points where cell temperature is 45.0°C (excess 20°C) must have derate factor: 1.0 - 20 * 0.0025 = 0.95
+        hot_mask = np.isclose(df["Temp_Cell_C"], 45.0, atol=0.2)
+        if hot_mask.any():
+            self.assertTrue(np.allclose(df.loc[hot_mask, "Thermal_Derate_Factor"], 0.95, atol=0.01))
+
+    def test_solar_pv_simulation_physics_and_clipping(self):
+        """Verify full physical simulation returns valid KPIs and clipped power on 15-minute grid."""
+        result: SolarSimulationResult = simulate_solar_pv_generation(
+            config=self.config,
+            location=self.location
+        )
+        kpis = result.kpis
+        df = result.df_timeseries
+
+        # 1. 35,040 steps
+        self.assertEqual(len(df), 35040)
+
+        # 2. AC power must never exceed inverter capacity
+        self.assertTrue((df["P_AC_kW"] <= self.config.inverter_capacity_kw + 1e-3).all())
+
+        # 3. Energy per step must equal P_AC * 0.25h
+        self.assertTrue(np.allclose(df["E_AC_kWh"], df["P_AC_kW"] * 0.25, atol=1e-2))
+
+        # 4. Cell temperature must be higher than ambient during peak sunlight
+        sunny_mask = df["POA_W_m2"] > 800.0
+        if sunny_mask.any():
+            self.assertTrue((df.loc[sunny_mask, "Temp_Cell_C"] > df.loc[sunny_mask, "Temp_Ambient_C"]).all())
+
+        # 5. Specific yield in sunny Mendoza should be in the realistic range (1,300 to 2,100 kWh/kWp)
+        self.assertTrue(1300.0 <= kpis.specific_yield_kwh_per_kwp <= 2100.0)
+
+        # 6. Performance Ratio must be realistic (72% - 90%)
+        self.assertTrue(72.0 <= kpis.performance_ratio_pct <= 90.0)
+
+        # 7. Exactly 12 monthly yields
+        self.assertEqual(len(result.monthly_yields), 12)
+        for m in result.monthly_yields:
+            self.assertTrue(m.energy_kwh >= 0.0)
+            self.assertTrue(m.specific_yield_kwh_kwp >= 0.0)
+
+        # 8. Loss breakdown must contain all expected stages
+        self.assertTrue("Nominal Plane-of-Array Potential" in result.loss_breakdown)
+        self.assertTrue("Net AC Energy Delivered" in result.loss_breakdown)
+
+    def test_auto_sizing_and_inverter_scaling(self):
+        """Verify scenario auto-sizing target kWp and recommended inverter size calculations."""
+        # 100,000 kWh annual consumption with 1650 kWh/kWp specific yield
+        # 100% target: 100,000 / 1650 = 60.6 kWp
+        kwp_100 = calculate_scenario_target_kwp(annual_load_kwh=100000.0, specific_yield_kwh_kwp=1650.0, scenario_pct=100.0)
+        self.assertAlmostEqual(kwp_100, 60.6, delta=0.2)
+
+        # 40% target: 40,000 / 1650 = 24.2 kWp
+        kwp_40 = calculate_scenario_target_kwp(annual_load_kwh=100000.0, specific_yield_kwh_kwp=1650.0, scenario_pct=40.0)
+        self.assertAlmostEqual(kwp_40, 24.2, delta=0.2)
+
+        # Inverter size: 60.6 kWp / 1.175 = 51.6 kW
+        inv_size = calculate_recommended_inverter_size(dc_kwp=kwp_100, dc_ac_ratio=1.175)
+        self.assertAlmostEqual(inv_size, 51.6, delta=0.2)
+
+    def test_multi_year_aging_degradation_15_years(self):
+        """Verify 15-year lifetime degradation calculation with f_age(n) = (1 - deg)^(n-1)."""
+        projections = compute_multi_year_generation(annual_kwh=100000.0, degradation_pct_a=0.5, lifetime_years=15)
+        self.assertEqual(len(projections), 15)
+
+        # Year 1: factor = 1.0, 100,000 kWh
+        self.assertEqual(projections[0]["year"], 1)
+        self.assertAlmostEqual(projections[0]["aging_factor"], 1.0, delta=1e-4)
+        self.assertAlmostEqual(projections[0]["energy_kwh"], 100000.0, delta=1.0)
+
+        # Year 2: factor = 0.995, 99,500 kWh
+        self.assertEqual(projections[1]["year"], 2)
+        self.assertAlmostEqual(projections[1]["aging_factor"], 0.995, delta=1e-4)
+        self.assertAlmostEqual(projections[1]["energy_kwh"], 99500.0, delta=1.0)
+
+        # Year 15: factor = (1 - 0.005)^14 = 0.93217
+        expected_y15_factor = (1.0 - 0.005) ** 14
+        self.assertEqual(projections[14]["year"], 15)
+        self.assertAlmostEqual(projections[14]["aging_factor"], expected_y15_factor, delta=1e-4)
+        self.assertAlmostEqual(projections[14]["energy_kwh"], 100000.0 * expected_y15_factor, delta=2.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

@@ -1,0 +1,33 @@
+{
+  "format": "drac_contract",
+  "version": "1.0",
+  "name": "2. KMU Flattarif 24/7",
+  "currency": "EUR",
+  "base_monthly_fee": 45.0,
+  "contracted_capacity_kw": 150.0,
+  "monthly_capacity_tariff": 8.0,
+  "demand_capacity_tariff": 0.0,
+  "max_physical_limit_kw": 250.0,
+  "peak_penalty_rate": 15.0,
+  "reactive_power_tariff": 0.03,
+  "min_power_factor": 0.9,
+  "reactive_power_allowance_pct": 33.0,
+  "tou_rates": [
+    {
+      "name": "Flattarif 24/7",
+      "rate": 0.228,
+      "start_time": "00:00",
+      "end_time": "24:00"
+    }
+  ],
+  "default_energy_rate": 0.228,
+  "weekend_is_off_peak": false,
+  "taxes_and_fees": [
+    {
+      "name": "MwSt",
+      "type": "percentage",
+      "value": 19.0,
+      "description": "Mehrwertsteuer"
+    }
+  ]
+}

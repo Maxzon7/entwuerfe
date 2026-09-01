@@ -5,16 +5,18 @@ Solar PV Simulation & Radiation Engine (current_model/core/solar_engine.py)
 
 Description:
 ------------
-Integrates Open-Meteo Solar API with a physical photovoltaic simulation model to compute:
-  - Global Horizontal & Plane-of-Array (POA) solar irradiance
-  - Dynamic cell temperature modeling based on ambient temperature and NMOT
-  - Temperature derating & Balance of System (BOS) system losses
-  - Inverter AC conversion efficiency and power clipping
-  - Key Performance Indicators (Specific Yield kWh/kWp, PR %, Capacity Factor, Monthly Yields)
-  - Offline fallback clear-sky radiation generator for offline/resilient execution
+High-performance physical photovoltaic and radiation engine harmonized to 15-minute intervals:
+  - 15-minute time resolution (35,040 intervals/year, 96 intervals/day, dt = 0.25h)
+  - Perez / Anisotropic sky diffuse & ground-reflected (albedo = 0.20) transposition model
+  - Physical NMOT cell temperature modeling: T_cell = T_amb + G_POA * (NMOT - 20) / 800
+  - Assignment temperature derating: f_temp = 1.0 - max(0, T_cell - 25°C) * 0.0025
+  - Balance of System (BOS) derate & inverter conversion with AC clipping
+  - Multi-year aging degradation across a 15-year operational horizon
+  - Consumption-coupled auto-sizing (40%, 60%, 80%, 100% net coverage)
+  - Interval-by-interval electrical load dispatch (Direct consumption, PV surplus, Residual load)
 """
 
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Optional, Dict, List, Tuple, Any, Union
 import datetime
 import math
 import numpy as np
@@ -74,81 +76,175 @@ def search_locations_open_meteo(query: str, count: int = 5, timeout_sec: int = 4
     return []
 
 
-
-def generate_synthetic_solar_weather(
+def calculate_solar_position_and_poa(
+    timestamps: pd.DatetimeIndex,
     latitude: float,
     longitude: float,
-    tilt_deg: float = 30.0,
-    azimuth_deg: float = 0.0,
-    year: int = 2024
-) -> pd.DataFrame:
+    tilt_deg: float,
+    azimuth_deg: float,
+    ghi_arr: np.ndarray,
+    dni_arr: np.ndarray,
+    dhi_arr: np.ndarray,
+    albedo: float = 0.20
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Robust analytical clear-sky solar radiation and ambient temperature model (8,760 hourly intervals).
-    Used as an offline fallback or baseline when external API is unreachable.
+    Calculates solar position (elevation & zenith) and transposes horizontal solar radiation
+    components (GHI, DNI, DHI) to the tilted plane of array (POA) using the Perez/Klucher
+    anisotropic transposition model with standard ground albedo.
+
+    Parameters:
+      - tilt_deg: 0° = horizontal, 90° = vertical
+      - azimuth_deg: 0° = North, 180° = South, 90° = East, -90° / 270° = West
+      - albedo: Ground reflectance (default: 0.20)
+
+    Returns: (poa_arr, solar_elevations_deg)
     """
-    start_dt = pd.Timestamp(f"{year}-01-01 00:00:00")
-    timestamps = pd.date_range(start=start_dt, periods=8760, freq="1h")
+    n_points = len(timestamps)
+    poa_arr = np.zeros(n_points, dtype=float)
+    elev_arr = np.zeros(n_points, dtype=float)
 
     lat_rad = math.radians(latitude)
     tilt_rad = math.radians(tilt_deg)
-    # Southern hemisphere summer is in Jan/Dec, winter in Jun/Jul
-    is_south = (latitude < 0)
-
-    ghi_arr = np.zeros(8760, dtype=float)
-    dni_arr = np.zeros(8760, dtype=float)
-    dhi_arr = np.zeros(8760, dtype=float)
-    poa_arr = np.zeros(8760, dtype=float)
-    temp_arr = np.zeros(8760, dtype=float)
-
-    base_temp = 16.0 - abs(latitude) * 0.2
+    surf_az_rad = math.radians(azimuth_deg)
+    cos_tilt = math.cos(tilt_rad)
+    sin_tilt = math.sin(tilt_rad)
 
     for i, ts in enumerate(timestamps):
         day_of_year = ts.dayofyear
-        hour = ts.hour + ts.minute / 60.0
+        hour_fraction = ts.hour + ts.minute / 60.0 + ts.second / 3600.0
 
         # Solar declination angle
         declination = 23.45 * math.sin(math.radians(360.0 / 365.0 * (284 + day_of_year)))
         dec_rad = math.radians(declination)
 
         # Solar hour angle (12:00 = 0°)
-        hour_angle = 15.0 * (hour - 12.0)
+        hour_angle = 15.0 * (hour_fraction - 12.0)
         ha_rad = math.radians(hour_angle)
 
-        # Solar zenith angle / elevation
+        # Solar elevation
+        sin_elev = math.sin(lat_rad) * math.sin(dec_rad) + math.cos(lat_rad) * math.cos(dec_rad) * math.cos(ha_rad)
+        solar_elevation = math.degrees(math.asin(max(-1.0, min(1.0, sin_elev))))
+        elev_arr[i] = solar_elevation
+
+        ghi = max(0.0, float(ghi_arr[i]))
+        dni = max(0.0, float(dni_arr[i]))
+        dhi = max(0.0, float(dhi_arr[i]))
+
+        if solar_elevation <= 0.05 or ghi <= 0.0:
+            poa_arr[i] = 0.0
+            continue
+
+        zenith_rad = math.radians(max(0.01, 90.0 - solar_elevation))
+        cos_zenith = math.cos(zenith_rad)
+
+        # Solar azimuth calculation
+        cos_az = (math.sin(dec_rad) * math.cos(lat_rad) - math.cos(dec_rad) * math.sin(lat_rad) * math.cos(ha_rad)) / max(1e-4, math.cos(math.radians(solar_elevation)))
+        cos_az = max(-1.0, min(1.0, cos_az))
+        sol_az_rad = math.acos(cos_az)
+        if math.sin(ha_rad) > 0:
+            sol_az_rad = 2.0 * math.pi - sol_az_rad
+
+        # Angle of incidence theta on tilted surface
+        cos_inc = cos_zenith * cos_tilt + math.sin(zenith_rad) * sin_tilt * math.cos(sol_az_rad - surf_az_rad)
+        cos_inc_clamped = max(0.0, cos_inc)
+
+        # Extraterrestrial normal irradiance
+        e_0 = 1367.0 * (1.0 + 0.033 * math.cos(math.radians(360.0 * day_of_year / 365.0)))
+        anisotropy_index = min(1.0, max(0.0, dni / max(1e-2, e_0)))
+
+        # Beam tilt factor R_b
+        r_b = cos_inc_clamped / max(math.cos(math.radians(85.0)), cos_zenith)
+
+        # Direct beam on plane of array
+        i_beam = dni * cos_inc_clamped
+
+        # Diffuse sky component with circumsolar & horizon brightening (Klucher / Hay-Davies model)
+        f_mod = 1.0 - (dhi / max(1e-2, ghi)) ** 2 if ghi > 0 else 0.0
+        i_diffuse = dhi * (
+            anisotropy_index * r_b +
+            (1.0 - anisotropy_index) * ((1.0 + cos_tilt) / 2.0) * (1.0 + f_mod * (math.sin(tilt_rad / 2.0) ** 3))
+        )
+
+        # Ground-reflected diffuse component with albedo
+        i_ground = ghi * albedo * ((1.0 - cos_tilt) / 2.0)
+
+        poa_total = max(0.0, i_beam + i_diffuse + i_ground)
+        poa_arr[i] = round(poa_total, 2)
+
+    return poa_arr, elev_arr
+
+
+def generate_synthetic_solar_weather(
+    latitude: float,
+    longitude: float,
+    tilt_deg: float = 30.0,
+    azimuth_deg: float = 0.0,
+    albedo: float = 0.20,
+    year: int = 2025
+) -> pd.DataFrame:
+    """
+    Analytical clear-sky solar radiation and ambient temperature engine with exact 15-minute resolution
+    (35,040 intervals per 365-day year, dt = 0.25h).
+    """
+    start_dt = pd.Timestamp(f"{year}-01-01 00:00:00")
+    timestamps = pd.date_range(start=start_dt, periods=35040, freq="15min")
+    n_points = len(timestamps)
+
+    is_south = (latitude < 0)
+    base_temp = 16.0 - abs(latitude) * 0.2
+
+    ghi_arr = np.zeros(n_points, dtype=float)
+    dni_arr = np.zeros(n_points, dtype=float)
+    dhi_arr = np.zeros(n_points, dtype=float)
+    temp_arr = np.zeros(n_points, dtype=float)
+
+    lat_rad = math.radians(latitude)
+
+    for i, ts in enumerate(timestamps):
+        day_of_year = ts.dayofyear
+        hour_fraction = ts.hour + ts.minute / 60.0 + ts.second / 3600.0
+
+        declination = 23.45 * math.sin(math.radians(360.0 / 365.0 * (284 + day_of_year)))
+        dec_rad = math.radians(declination)
+        ha_rad = math.radians(15.0 * (hour_fraction - 12.0))
+
         sin_elev = math.sin(lat_rad) * math.sin(dec_rad) + math.cos(lat_rad) * math.cos(dec_rad) * math.cos(ha_rad)
         solar_elevation_deg = math.degrees(math.asin(max(-1.0, min(1.0, sin_elev))))
 
         if solar_elevation_deg > 0.0:
             zenith_rad = math.radians(90.0 - solar_elevation_deg)
-            # Extraterrestrial irradiance with eccentricity
+            cos_zenith = math.cos(zenith_rad)
             e_0 = 1367.0 * (1.0 + 0.033 * math.cos(math.radians(360.0 * day_of_year / 365.0)))
 
-            # Air Mass
-            air_mass = 1.0 / (math.cos(zenith_rad) + 0.50572 * max(0.01, (96.07995 - (90.0 - solar_elevation_deg))) ** -1.6364)
-            air_mass = min(30.0, max(1.0, air_mass))
-
             # Clear sky GHI (Haurwitz model approximation)
-            ghi = max(0.0, 1098.0 * math.cos(zenith_rad) * math.exp(-0.057 / max(0.05, math.cos(zenith_rad))))
-            ghi = min(ghi, e_0 * math.cos(zenith_rad))
+            ghi = max(0.0, 1098.0 * cos_zenith * math.exp(-0.057 / max(0.05, cos_zenith)))
+            ghi = min(ghi, e_0 * cos_zenith)
 
-            dhi = ghi * (0.15 + 0.10 * (1.0 - math.cos(zenith_rad)))
-            dni = (ghi - dhi) / max(0.05, math.cos(zenith_rad))
-
-            # Approximate Plane of Array (POA) irradiance with tilt factor
-            # Optimal angle boost:
-            cos_inc = math.cos(zenith_rad) * math.cos(tilt_rad) + math.sin(zenith_rad) * math.sin(tilt_rad)
-            poa = max(0.0, dni * max(0.0, cos_inc) + dhi * (1.0 + math.cos(tilt_rad)) / 2.0 + ghi * 0.20 * (1.0 - math.cos(tilt_rad)) / 2.0)
+            dhi = ghi * (0.15 + 0.10 * (1.0 - cos_zenith))
+            dni = (ghi - dhi) / max(0.05, cos_zenith)
 
             ghi_arr[i] = round(ghi, 2)
             dni_arr[i] = round(dni, 2)
             dhi_arr[i] = round(dhi, 2)
-            poa_arr[i] = round(poa, 2)
 
         # Ambient temperature model (seasonal + daily sine wave)
         seasonal_phase = (day_of_year - 20) / 365.0 * 2.0 * math.pi
         seasonal_temp = -10.0 * math.cos(seasonal_phase) if is_south else 10.0 * math.cos(seasonal_phase - math.pi)
-        daily_temp = 5.5 * math.sin(math.radians((hour - 9.0) / 24.0 * 360.0))
+        daily_temp = 5.5 * math.sin(math.radians((hour_fraction - 9.0) / 24.0 * 360.0))
         temp_arr[i] = round(base_temp + seasonal_temp + daily_temp, 1)
+
+    # Transpose to Plane of Array
+    poa_arr, _ = calculate_solar_position_and_poa(
+        timestamps=timestamps,
+        latitude=latitude,
+        longitude=longitude,
+        tilt_deg=tilt_deg,
+        azimuth_deg=azimuth_deg,
+        ghi_arr=ghi_arr,
+        dni_arr=dni_arr,
+        dhi_arr=dhi_arr,
+        albedo=albedo
+    )
 
     df_weather = pd.DataFrame({
         "timestamp": timestamps,
@@ -166,20 +262,20 @@ def fetch_open_meteo_solar_data(
     longitude: float,
     tilt_deg: float = 30.0,
     azimuth_deg: float = 0.0,
+    albedo: float = 0.20,
     year: int = 2024,
     timeout_sec: int = 8
 ) -> Tuple[pd.DataFrame, str]:
     """
-    Fetches real solar irradiance and temperature data from Open-Meteo API.
-    Falls back gracefully to synthetic solar clear-sky engine if network is unavailable.
-    Returns (weather_dataframe, data_source_label).
+    Fetches historical radiation and temperature series from Open-Meteo API and harmonizes
+    them onto an exact 15-minute time grid (35,040 steps) via time-based interpolation.
+    Falls back gracefully to the analytical clear-sky engine if network is unavailable.
     """
-    # 1. Try Historical Archive API for a full 1-year historical dataset
     archive_url = (
         f"https://archive-api.open-meteo.com/v1/archive"
         f"?latitude={latitude:.4f}&longitude={longitude:.4f}"
         f"&start_date={year}-01-01&end_date={year}-12-31"
-        f"&hourly=shortwave_radiation,direct_normal_irradiance,diffuse_radiation,direct_radiation,temperature_2m"
+        f"&hourly=shortwave_radiation,direct_normal_irradiance,diffuse_radiation,temperature_2m"
         f"&timezone=auto"
     )
 
@@ -188,91 +284,216 @@ def fetch_open_meteo_solar_data(
         if resp.status_code == 200:
             data = resp.json()
             hourly = data.get("hourly", {})
-            times = pd.to_datetime(hourly.get("time", []))
-            ghi = np.array(hourly.get("shortwave_radiation", []), dtype=float)
-            dni = np.array(hourly.get("direct_normal_irradiance", []), dtype=float)
-            dhi = np.array(hourly.get("diffuse_radiation", []), dtype=float)
-            temp_amb = np.array(hourly.get("temperature_2m", []), dtype=float)
+            raw_times = pd.to_datetime(hourly.get("time", []))
+            raw_ghi = np.array(hourly.get("shortwave_radiation", []), dtype=float)
+            raw_dni = np.array(hourly.get("direct_normal_irradiance", []), dtype=float)
+            raw_dhi = np.array(hourly.get("diffuse_radiation", []), dtype=float)
+            raw_temp = np.array(hourly.get("temperature_2m", []), dtype=float)
 
-            if len(times) >= 8700:
-                # Transpose GHI/DNI to Plane of Array (POA) using Hay-Davies isotropic transposition
-                tilt_rad = math.radians(tilt_deg)
-                lat_rad = math.radians(latitude)
-                poa_list = []
+            if len(raw_times) >= 8700:
+                df_hourly = pd.DataFrame({
+                    "GHI_W_m2": raw_ghi,
+                    "DNI_W_m2": raw_dni,
+                    "DHI_W_m2": raw_dhi,
+                    "Temp_Ambient_C": raw_temp
+                }, index=raw_times)
 
-                for i, ts in enumerate(times):
-                    g = max(0.0, ghi[i]) if i < len(ghi) else 0.0
-                    d = max(0.0, dhi[i]) if i < len(dhi) else 0.0
-                    dn = max(0.0, dni[i]) if i < len(dni) else 0.0
+                # Resample to 15-minute intervals and interpolate smoothly
+                target_idx = pd.date_range(start=f"{year}-01-01 00:00:00", end=f"{year}-12-31 23:45:00", freq="15min")
+                df_15min = df_hourly.reindex(df_hourly.index.union(target_idx)).interpolate(method="time").reindex(target_idx)
 
-                    if g <= 0.0:
-                        poa_list.append(0.0)
-                        continue
+                # If 366 days in leap year, take first 35,040 (365 days)
+                if len(df_15min) > 35040:
+                    df_15min = df_15min.iloc[:35040]
 
-                    day_of_year = ts.dayofyear
-                    hour = ts.hour + ts.minute / 60.0
-                    declination = 23.45 * math.sin(math.radians(360.0 / 365.0 * (284 + day_of_year)))
-                    dec_rad = math.radians(declination)
-                    ha_rad = math.radians(15.0 * (hour - 12.0))
+                df_15min = df_15min.reset_index().rename(columns={"index": "timestamp"})
 
-                    sin_elev = math.sin(lat_rad) * math.sin(dec_rad) + math.cos(lat_rad) * math.cos(dec_rad) * math.cos(ha_rad)
-                    if sin_elev > 0.05:
-                        zenith_rad = math.asin(min(1.0, sin_elev))
-                        cos_inc = math.sin(zenith_rad) * math.cos(tilt_rad) + math.cos(zenith_rad) * math.sin(tilt_rad)
-                        poa_val = dn * max(0.0, cos_inc) + d * (1.0 + math.cos(tilt_rad)) / 2.0 + g * 0.20 * (1.0 - math.cos(tilt_rad)) / 2.0
-                        poa_list.append(max(0.0, float(poa_val)))
-                    else:
-                        poa_list.append(0.0)
+                ghi_arr = np.maximum(0.0, df_15min["GHI_W_m2"].to_numpy())
+                dni_arr = np.maximum(0.0, df_15min["DNI_W_m2"].to_numpy())
+                dhi_arr = np.maximum(0.0, df_15min["DHI_W_m2"].to_numpy())
+                temp_arr = df_15min["Temp_Ambient_C"].to_numpy()
 
-                df = pd.DataFrame({
-                    "timestamp": times,
-                    "GHI_W_m2": ghi,
-                    "DNI_W_m2": dni,
-                    "DHI_W_m2": dhi,
-                    "POA_W_m2": np.array(poa_list),
-                    "Temp_Ambient_C": temp_amb
+                poa_arr, elev_arr = calculate_solar_position_and_poa(
+                    timestamps=pd.DatetimeIndex(df_15min["timestamp"]),
+                    latitude=latitude,
+                    longitude=longitude,
+                    tilt_deg=tilt_deg,
+                    azimuth_deg=azimuth_deg,
+                    ghi_arr=ghi_arr,
+                    dni_arr=dni_arr,
+                    dhi_arr=dhi_arr,
+                    albedo=albedo
+                )
+
+                # Clamp night-time values to zero
+                night_mask = elev_arr <= 0.0
+                ghi_arr[night_mask] = 0.0
+                dni_arr[night_mask] = 0.0
+                dhi_arr[night_mask] = 0.0
+                poa_arr[night_mask] = 0.0
+
+                df_result = pd.DataFrame({
+                    "timestamp": df_15min["timestamp"],
+                    "GHI_W_m2": np.round(ghi_arr, 2),
+                    "DNI_W_m2": np.round(dni_arr, 2),
+                    "DHI_W_m2": np.round(dhi_arr, 2),
+                    "POA_W_m2": np.round(poa_arr, 2),
+                    "Temp_Ambient_C": np.round(temp_arr, 1)
                 })
-                return df, f"Open-Meteo Historical Archive ({year})"
+                return df_result, f"Open-Meteo Historical Archive ({year}) - 15-Min Harmonized"
 
     except Exception:
         pass
 
-    # 2. Fallback to High-Accuracy Clear-Sky Physical Engine
+    # Fallback to Analytical Clear-Sky 15-Min Physical Engine
     df_synthetic = generate_synthetic_solar_weather(
         latitude=latitude,
         longitude=longitude,
         tilt_deg=tilt_deg,
         azimuth_deg=azimuth_deg,
+        albedo=albedo,
         year=year
     )
-    return df_synthetic, "Analytical Solar Radiation Engine (Clear-Sky Model)"
+    return df_synthetic, "Analytical Solar Radiation Engine (15-Min Clear-Sky Model)"
+
+
+def calculate_scenario_target_kwp(
+    annual_load_kwh: float,
+    specific_yield_kwh_kwp: float,
+    scenario_pct: float
+) -> float:
+    """
+    Computes required DC kWp solar capacity to achieve a target annual energy coverage percentage (e.g. 40%, 60%, 80%, 100%).
+    Formula: Target kWp = (Annual Load kWh * Scenario %) / Specific Yield (kWh/kWp)
+    """
+    if annual_load_kwh <= 0.0:
+        return 100.0
+    spec_yield = max(500.0, specific_yield_kwh_kwp)
+    ratio = scenario_pct / 100.0
+    target_kwp = (annual_load_kwh * ratio) / spec_yield
+    return float(round(max(1.0, target_kwp), 1))
+
+
+def calculate_recommended_inverter_size(
+    dc_kwp: float,
+    dc_ac_ratio: float = 1.175
+) -> float:
+    """
+    Calculates the standard recommended AC inverter rating for a given DC capacity
+    using industry standard DC/AC sizing ratio of ~1.15 - 1.20 (default: 1.175).
+    """
+    inv_kw = dc_kwp / max(1.0, dc_ac_ratio)
+    return float(round(max(1.0, inv_kw), 1))
+
+
+def compute_multi_year_generation(
+    annual_kwh: float,
+    degradation_pct_a: float = 0.5,
+    lifetime_years: int = 15
+) -> List[Dict[str, Any]]:
+    """
+    Projects yearly energy generation over a multi-year horizon (e.g. 15 years) applying
+    cumulative annual module degradation:
+      f_age(n) = (1 - degradation_rate)^(n - 1)
+    """
+    deg_rate = degradation_pct_a / 100.0
+    projections = []
+    for year_idx in range(1, lifetime_years + 1):
+        f_age = (1.0 - deg_rate) ** (year_idx - 1)
+        deg_kwh = annual_kwh * f_age
+        projections.append({
+            "year": year_idx,
+            "aging_factor": round(f_age, 4),
+            "energy_kwh": round(deg_kwh, 1),
+            "energy_mwh": round(deg_kwh / 1000.0, 3),
+            "cumulative_loss_pct": round((1.0 - f_age) * 100.0, 2)
+        })
+    return projections
+
+
+def compute_solar_load_dispatch(
+    solar_power_kw: np.ndarray,
+    load_power_kw: np.ndarray,
+    hours_per_step: float = 0.25
+) -> Dict[str, Any]:
+    """
+    Computes interval-by-interval electrical power dispatch between Solar PV generation and Facility Load:
+      - Direct self-consumption: P_direct(t) = min(P_load(t), P_solar(t))
+      - PV Surplus (Export / BESS source): P_surplus(t) = max(0, P_solar(t) - P_load(t))
+      - Residual load (Grid / Generator): P_residual(t) = P_load(t) - P_direct(t)
+      - Self-consumption rate (SCR %): Direct Energy / Total Solar Energy
+      - Solar fraction / Autarky (SF %): Direct Energy / Total Facility Demand
+    """
+    n_len = min(len(solar_power_kw), len(load_power_kw))
+    p_solar = np.maximum(0.0, solar_power_kw[:n_len])
+    p_load = np.maximum(0.0, load_power_kw[:n_len])
+
+    p_direct = np.minimum(p_load, p_solar)
+    p_surplus = np.maximum(0.0, p_solar - p_load)
+    p_residual = np.maximum(0.0, p_load - p_direct)
+
+    # Energy calculations (kWh)
+    direct_kwh = float(np.sum(p_direct) * hours_per_step)
+    surplus_kwh = float(np.sum(p_surplus) * hours_per_step)
+    residual_kwh = float(np.sum(p_residual) * hours_per_step)
+    total_load_kwh = float(np.sum(p_load) * hours_per_step)
+    total_solar_kwh = float(np.sum(p_solar) * hours_per_step)
+
+    # Metrics
+    scr_pct = (direct_kwh / total_solar_kwh * 100.0) if total_solar_kwh > 0 else 0.0
+    sf_pct = (direct_kwh / total_load_kwh * 100.0) if total_load_kwh > 0 else 0.0
+
+    return {
+        "p_direct_kw": p_direct,
+        "p_surplus_kw": p_surplus,
+        "p_residual_kw": p_residual,
+        "p_load_kw": p_load,
+        "direct_kwh": round(direct_kwh, 1),
+        "surplus_kwh": round(surplus_kwh, 1),
+        "residual_kwh": round(residual_kwh, 1),
+        "total_load_kwh": round(total_load_kwh, 1),
+        "total_solar_kwh": round(total_solar_kwh, 1),
+        "self_consumption_rate_pct": round(scr_pct, 1),
+        "solar_fraction_autarky_pct": round(sf_pct, 1)
+    }
 
 
 def simulate_solar_pv_generation(
     config: SolarPVConfig,
     location: SolarLocation,
-    weather_df: Optional[pd.DataFrame] = None
+    weather_df: Optional[pd.DataFrame] = None,
+    load_df: Optional[pd.DataFrame] = None
 ) -> SolarSimulationResult:
     """
-    Executes physical Solar PV generation simulation across all hourly intervals:
-      1. Irradiance on plane of array (POA)
-      2. Dynamic cell temperature modeling: T_cell = T_amb + POA * (NMOT - 20) / 800
-      3. Temperature derating: f_temp = 1 + gamma * (T_cell - 25)
+    Executes physical Solar PV generation simulation across 15-minute intervals (35,040 steps/year):
+      1. Irradiance on plane of array (POA) via Perez / Anisotropic model
+      2. Dynamic cell temperature: T_cell = T_amb + POA * (NMOT - 20) / 800
+      3. Assignment temperature derating: eta_temp = 1.0 - max(0, T_cell - 25°C) * 0.0025 (no loss <= 25°C)
       4. System DC losses: soiling, shading, DC wiring
       5. Inverter AC conversion & clipping: P_ac = min(P_dc * eta_inv, P_ac_max)
-      6. Monthly yields, annual energy, specific yield (kWh/kWp), PR (%), Capacity Factor
+      6. 15-minute interval energy: E_ac(t) = P_ac(t) * 0.25h
+      7. Electrical dispatch against load profile (if provided)
+      8. Multi-year degradation yield table (15 years)
     """
     if weather_df is None or weather_df.empty:
         weather_df, _ = fetch_open_meteo_solar_data(
             latitude=location.latitude,
             longitude=location.longitude,
             tilt_deg=config.tilt_deg,
-            azimuth_deg=config.azimuth_deg
+            azimuth_deg=config.azimuth_deg,
+            albedo=config.albedo
         )
 
     df = weather_df.copy()
     timestamps = pd.to_datetime(df["timestamp"])
     df["timestamp"] = timestamps
+
+    # Determine time interval step in hours (standard 0.25h for 15-min)
+    if len(df) > 1:
+        dt_hours = (timestamps.iloc[1] - timestamps.iloc[0]).total_seconds() / 3600.0
+        dt_hours = dt_hours if dt_hours > 0 else 0.25
+    else:
+        dt_hours = 0.25
 
     poa = df["POA_W_m2"].to_numpy(dtype=float)
     t_amb = df["Temp_Ambient_C"].to_numpy(dtype=float)
@@ -283,15 +504,17 @@ def simulate_solar_pv_generation(
     t_cell = t_amb + poa * ((nmot - 20.0) / 800.0)
     df["Temp_Cell_C"] = np.round(t_cell, 1)
 
-    # 2. Temperature Derate Factor
-    gamma = float(config.temp_coefficient_pct_c) / 100.0
-    f_temp = 1.0 + gamma * (t_cell - 25.0)
-    # Physical clamp: f_temp > 0.4
-    f_temp = np.clip(f_temp, 0.40, 1.20)
+    # 2. Assignment Temperature Derate Factor
+    # Standard: -0.25%/°C above 25°C cell temperature. No loss at or below 25°C.
+    # eta_temp(t) = 1.0 - max(0, T_cell - 25°C) * (|gamma| / 100)
+    gamma_abs = abs(float(config.temp_coefficient_pct_c)) / 100.0
+    temp_excess = np.maximum(0.0, t_cell - 25.0)
+    f_temp = 1.0 - temp_excess * gamma_abs
+    # Physical lower bound clamp
+    f_temp = np.clip(f_temp, 0.40, 1.00)
     df["Thermal_Derate_Factor"] = np.round(f_temp, 4)
 
     # 3. DC Power Generation (kW)
-    # P_dc_ideal = P_dc_nom * (POA / 1000 W/m2)
     p_nom = float(config.dc_capacity_kwp)
     p_dc_ideal = p_nom * (poa / 1000.0)
     dc_loss_factor = (1.0 - config.total_dc_loss_pct / 100.0)
@@ -307,8 +530,40 @@ def simulate_solar_pv_generation(
 
     df["P_AC_kW"] = np.round(p_ac, 2)
     df["Clipping_Loss_kW"] = np.round(clipping_loss, 2)
+    df["E_AC_kWh"] = np.round(p_ac * dt_hours, 3)
 
-    # 5. Monthly Aggregations
+    # 5. Electrical Load Dispatch Coupling (if load data exists)
+    p_solar_arr = df["P_AC_kW"].to_numpy(dtype=float)
+    if load_df is not None and not load_df.empty:
+        # Check power column
+        p_load_col = "Total_Demand_kW" if "Total_Demand_kW" in load_df.columns else load_df.columns[1]
+        raw_load_arr = load_df[p_load_col].to_numpy(dtype=float)
+
+        # Handle size alignment
+        if len(raw_load_arr) == len(p_solar_arr):
+            p_load_aligned = raw_load_arr
+        elif len(raw_load_arr) < len(p_solar_arr):
+            # Tile or repeat (e.g. 24h profile tiled across 365 days)
+            reps = int(math.ceil(len(p_solar_arr) / len(raw_load_arr)))
+            p_load_aligned = np.tile(raw_load_arr, reps)[:len(p_solar_arr)]
+        else:
+            p_load_aligned = raw_load_arr[:len(p_solar_arr)]
+    else:
+        # Default baseline: zero load
+        p_load_aligned = np.zeros(len(p_solar_arr), dtype=float)
+
+    dispatch_res = compute_solar_load_dispatch(
+        solar_power_kw=p_solar_arr,
+        load_power_kw=p_load_aligned,
+        hours_per_step=dt_hours
+    )
+
+    df["P_Load_kW"] = np.round(dispatch_res["p_load_kw"], 2)
+    df["P_Direct_kW"] = np.round(dispatch_res["p_direct_kw"], 2)
+    df["P_Surplus_kW"] = np.round(dispatch_res["p_surplus_kw"], 2)
+    df["P_Residual_kW"] = np.round(dispatch_res["p_residual_kw"], 2)
+
+    # 6. Monthly Aggregations
     df["month"] = timestamps.dt.month
     monthly_yields: List[SolarMonthlyYield] = []
 
@@ -319,7 +574,7 @@ def simulate_solar_pv_generation(
         m_days = DAYS_IN_MONTHS[m_idx - 1]
 
         if not m_df.empty:
-            m_kwh = float(m_df["P_AC_kW"].sum())
+            m_kwh = float(m_df["E_AC_kWh"].sum())
             m_mwh = m_kwh / 1000.0
             m_avg_daily = m_kwh / max(1, m_days)
             m_peak = float(m_df["P_AC_kW"].max())
@@ -342,25 +597,24 @@ def simulate_solar_pv_generation(
             )
         )
 
-    # 6. Comprehensive KPIs
-    annual_energy_kwh = float(df["P_AC_kW"].sum())
+    # 7. Comprehensive KPIs
+    annual_energy_kwh = float(df["E_AC_kWh"].sum())
     annual_energy_mwh = annual_energy_kwh / 1000.0
     specific_yield = annual_energy_kwh / max(0.1, p_nom)
     full_load_hours = annual_energy_kwh / max(0.1, p_nom)
     capacity_factor = (annual_energy_kwh / (p_nom * 8760.0) * 100.0) if p_nom > 0 else 0.0
 
     # Total Solar Irradiance Energy on POA (kWh/m2)
-    poa_energy_kwh_m2 = float(poa.sum() / 1000.0)
-    ghi_energy_kwh_m2 = float(df["GHI_W_m2"].sum() / 1000.0) if "GHI_W_m2" in df.columns else poa_energy_kwh_m2
+    poa_energy_kwh_m2 = float(np.sum(poa * dt_hours) / 1000.0)
+    ghi_energy_kwh_m2 = float(np.sum(df["GHI_W_m2"].to_numpy() * dt_hours) / 1000.0) if "GHI_W_m2" in df.columns else poa_energy_kwh_m2
 
-    # Performance Ratio (PR) = Actual AC Energy / (Nominal DC Capacity * POA Irradiance / 1000)
+    # Performance Ratio (PR)
     ideal_poa_energy_kwh = p_nom * poa_energy_kwh_m2
     performance_ratio = (annual_energy_kwh / ideal_poa_energy_kwh * 100.0) if ideal_poa_energy_kwh > 0 else 0.0
 
-    total_clipping_loss_kwh = float(df["Clipping_Loss_kW"].sum())
-    # Thermal losses (relative to STC 25°C)
-    stc_dc_energy_kwh = float((p_nom * (poa / 1000.0) * dc_loss_factor).sum())
-    actual_dc_energy_kwh = float(df["P_DC_kW"].sum())
+    total_clipping_loss_kwh = float(np.sum(df["Clipping_Loss_kW"].to_numpy() * dt_hours))
+    stc_dc_energy_kwh = float(np.sum(p_nom * (poa / 1000.0) * dc_loss_factor * dt_hours))
+    actual_dc_energy_kwh = float(np.sum(df["P_DC_kW"].to_numpy() * dt_hours))
     thermal_loss_kwh = max(0.0, stc_dc_energy_kwh - actual_dc_energy_kwh)
 
     kpis = SolarKPIs(
@@ -375,10 +629,16 @@ def simulate_solar_pv_generation(
         clipping_loss_kwh=round(total_clipping_loss_kwh, 1),
         thermal_loss_kwh=round(thermal_loss_kwh, 1),
         location_name=location.name,
-        global_horizontal_irradiance_mwh_m2=round(ghi_energy_kwh_m2 / 1000.0, 2)
+        global_horizontal_irradiance_mwh_m2=round(ghi_energy_kwh_m2 / 1000.0, 2),
+        total_load_kwh=dispatch_res["total_load_kwh"],
+        direct_consumption_kwh=dispatch_res["direct_kwh"],
+        surplus_generation_kwh=dispatch_res["surplus_kwh"],
+        residual_load_kwh=dispatch_res["residual_kwh"],
+        self_consumption_rate_pct=dispatch_res["self_consumption_rate_pct"],
+        solar_fraction_autarky_pct=dispatch_res["solar_fraction_autarky_pct"]
     )
 
-    # 7. Loss Waterfall Breakdown (%)
+    # 8. Loss Waterfall Breakdown
     loss_breakdown = {
         "Nominal Plane-of-Array Potential": round(ideal_poa_energy_kwh, 1),
         "Thermal Losses (Temperature Derate)": round(thermal_loss_kwh, 1),
@@ -388,11 +648,19 @@ def simulate_solar_pv_generation(
         "Net AC Energy Delivered": round(annual_energy_kwh, 1)
     }
 
+    # 9. Multi-Year Degradation Projections (15-Year Horizon)
+    multi_year_yields = compute_multi_year_generation(
+        annual_kwh=annual_energy_kwh,
+        degradation_pct_a=config.degradation_pct_a,
+        lifetime_years=config.economic_lifetime_years
+    )
+
     return SolarSimulationResult(
         config=config,
         location=location,
         df_timeseries=df,
         monthly_yields=monthly_yields,
         kpis=kpis,
-        loss_breakdown=loss_breakdown
+        loss_breakdown=loss_breakdown,
+        multi_year_yields=multi_year_yields
     )

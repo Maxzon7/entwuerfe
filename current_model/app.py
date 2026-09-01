@@ -14,10 +14,12 @@ Main application entry point structured in two top-level tabs:
 import sys
 import os
 
-# Ensure project root is in sys.path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# Ensure both current_model and parent directory are in sys.path
+current_dir = os.path.abspath(os.path.dirname(__file__))
+parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
+for p in [current_dir, parent_dir]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 import streamlit as st
 from current_model.ui.common.styles import apply_custom_styles
