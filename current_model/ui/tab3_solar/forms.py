@@ -131,41 +131,43 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
     cur_lon = float(st.session_state[state_lon_key])
     cur_name = st.session_state.get(state_name_key, f"Site ({cur_lat:.3f}, {cur_lon:.3f})")
 
-    # Interactive Folium Map
-    m = folium.Map(
-        location=[cur_lat, cur_lon],
-        zoom_start=9 if abs(cur_lat) > 0 else 3,
-        tiles="OpenStreetMap",
-        control_scale=True
-    )
+    # Interactive Folium Map (Loaded on-demand inside expander to eliminate lag)
+    with st.expander("Interactive Site Map & Pin Location", expanded=False):
+        st.caption("Click anywhere on the map to pin exact site GPS coordinates:")
+        m = folium.Map(
+            location=[cur_lat, cur_lon],
+            zoom_start=9 if abs(cur_lat) > 0 else 3,
+            tiles="OpenStreetMap",
+            control_scale=True
+        )
 
-    folium.Marker(
-        location=[cur_lat, cur_lon],
-        popup=f"Selected Solar Site: {cur_name} ({cur_lat:.4f}, {cur_lon:.4f})",
-        tooltip=f"Pinned: {cur_name}",
-        icon=folium.Icon(color="orange", icon="sun", prefix="fa")
-    ).add_to(m)
+        folium.Marker(
+            location=[cur_lat, cur_lon],
+            popup=f"Selected Solar Site: {cur_name} ({cur_lat:.4f}, {cur_lon:.4f})",
+            tooltip=f"Pinned: {cur_name}",
+            icon=folium.Icon(color="orange", icon="sun", prefix="fa")
+        ).add_to(m)
 
-    map_out = st_folium(
-        m,
-        width="100%",
-        height=300,
-        returned_objects=["last_clicked"],
-        key=f"{key_prefix}_interactive_map"
-    )
+        map_out = st_folium(
+            m,
+            width="100%",
+            height=300,
+            returned_objects=["last_clicked"],
+            key=f"{key_prefix}_interactive_map"
+        )
 
-    if map_out and map_out.get("last_clicked"):
-        clicked = map_out["last_clicked"]
-        click_lat = round(float(clicked["lat"]), 4)
-        click_lon = round(float(clicked["lng"]), 4)
-        prev_click = st.session_state.get(state_prev_click_key)
+        if map_out and map_out.get("last_clicked"):
+            clicked = map_out["last_clicked"]
+            click_lat = round(float(clicked["lat"]), 4)
+            click_lon = round(float(clicked["lng"]), 4)
+            prev_click = st.session_state.get(state_prev_click_key)
 
-        if prev_click != (click_lat, click_lon) and (abs(click_lat - cur_lat) > 0.001 or abs(click_lon - cur_lon) > 0.001):
-            st.session_state[state_prev_click_key] = (click_lat, click_lon)
-            st.session_state[state_lat_key] = click_lat
-            st.session_state[state_lon_key] = click_lon
-            st.session_state[state_name_key] = f"Pinned Map Site ({click_lat:.3f}°, {click_lon:.3f}°)"
-            st.rerun()
+            if prev_click != (click_lat, click_lon) and (abs(click_lat - cur_lat) > 0.001 or abs(click_lon - cur_lon) > 0.001):
+                st.session_state[state_prev_click_key] = (click_lat, click_lon)
+                st.session_state[state_lat_key] = click_lat
+                st.session_state[state_lon_key] = click_lon
+                st.session_state[state_name_key] = f"Pinned Map Site ({click_lat:.3f}°, {click_lon:.3f}°)"
+                st.rerun()
 
     # Manual Coordinate Fields
     with st.expander("Manual Coordinates & GPS Fine-Tuning", expanded=False):
@@ -245,296 +247,291 @@ def render_solar_config_form(
     st.subheader("2. Solar PV Technical Specifications & Generator Sizing")
     st.caption("Configure solar module quantities, rated wattage, cell technology, mounting area, and inverter limits:")
 
-    # Detailed Educational Guide on Cell Technologies
+    # Compact Educational Guide on Cell Technologies
     with st.expander("Technology Guide: What are PERC, TOPCon, and Backcontact?", expanded=False):
         st.markdown(
             """
-            | Technology | Full Name | Standard Wattage | Temp. Coeff. $\\gamma$ | 1st Year Degr. | Annual Degr. | Characteristics & Benefits |
-            | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-            | **PERC** | *Passivated Emitter and Rear Cell* | $410\\,\\text{Wp}$ | $-0{,}35\\,\\%/^\\circ\\text{C}$ | $2{,}0\\,\\%$ | $0{,}55\\,\\%/\\text{a}$ | **P-Type Standard:** Established, cost-effective industrial workhorse. Higher initial LID degradation. |
-            | **TOPCon** | *Tunnel Oxide Passivated Contact* | $450\\,\\text{Wp}$ | $-0{,}29\\,\\%/^\\circ\\text{C}$ | $1{,}5\\,\\%$ | $0{,}40\\,\\%/\\text{a}$ | **N-Type Modern Standard:** $+9{,}8\\,\\%$ more power per area, superior low-light yield, lower thermal losses. |
-            | **Backcontact** | *Interdigitated Back Contact (IBC)* | $470\\,\\text{Wp}$ | $-0{,}26\\,\\%/^\\circ\\text{C}$ | $1{,}0\\,\\%$ | $0{,}35\\,\\%/\\text{a}$ | **Premium Tier:** Electrical busbars on rear side eliminate front shading. Highest efficiency, minimal degradation. |
+            | Technology | Std. Power | Temp. Coeff. γ | Degradation (Y1 / Annual) | Core Characteristics |
+            | :--- | :---: | :---: | :---: | :--- |
+            | **PERC** | 410 Wp | -0.35 %/°C | 2.0 % / 0.55 %/a | Cost-effective P-Type industrial standard. Higher initial LID degradation. |
+            | **TOPCon** | 450 Wp | -0.29 %/°C | 1.5 % / 0.40 %/a | Modern N-Type benchmark: +9.8 % power density, superior low-light yield. |
+            | **Backcontact** | 470 Wp | -0.26 %/°C | 1.0 % / 0.35 %/a | Premium IBC tier: Zero front busbar shading, lowest thermal losses. |
             """
         )
 
-    # 1. Weather Data Foundation & Multi-Year Evaluation
-    st.markdown("##### 1. Weather Data Foundation & Multi-Year Evaluation")
-    weather_mode_options = [
-        "Typical Meteorological Year (TMY - 10-to-20 Year Climatological Baseline) [Default]",
-        "Specific Historical Calendar Year (e.g. 2024, 2023, 2022, 2021, 2020)",
-        "Multi-Year Range & P50 / P90 Risk Analysis (2015-2024)"
-    ]
-
-    current_w_mode = getattr(cfg, "weather_mode", "TMY")
-    w_idx = 0
-    if current_w_mode == "single_year":
-        w_idx = 1
-    elif current_w_mode == "multi_year":
-        w_idx = 2
-
-    w_col1, w_col2 = st.columns([7, 5])
-    with w_col1:
-        chosen_w_label = st.selectbox(
-            "Select Weather Data Mode:",
-            options=weather_mode_options,
-            index=w_idx,
-            help="Choose between long-term climatological TMY, specific historical calendar years, or 10-year P50/P90 risk simulation.",
-            key=f"{key_prefix}_weather_mode_select"
-        )
-
-    selected_mode = "TMY"
-    selected_year = getattr(cfg, "selected_weather_year", 2024)
-    if "Specific Historical" in chosen_w_label:
-        selected_mode = "single_year"
-        with w_col2:
-            selected_year = st.selectbox(
-                "Historical Calendar Year:",
-                options=[2024, 2023, 2022, 2021, 2020],
-                index=0,
-                key=f"{key_prefix}_hist_year_select"
-            )
-    elif "Multi-Year Range" in chosen_w_label:
-        selected_mode = "multi_year"
-        with w_col2:
-            st.caption("10-Year Historical Evaluation Horizon: **2015 - 2024** (Computes P50 expected yield, P90 debt sizing, and volatility range)")
-
-    # Educational Guide on Weather Data Foundations
+    # Compact Educational Guide on Weather Data Foundations
     with st.expander("Educational Guide: How Solar Weather Data and Multi-Year Modeling Work", expanded=False):
         st.markdown(
             """
-            **1. Typical Meteorological Year (TMY / ISO 15927-4 Standard):**
-            * **How it works:** Rather than calculating a simple mathematical average (which would artificially smooth out peak solar irradiance and turn sunny days into perpetual haze), TMY selects 12 actual, representative historical calendar months from a 10-to-20-year database (e.g. a typical January from 2018, February from 2021, etc.) using Finkelstein-Schafer statistical ranking.
-            * **Why it matters:** It preserves authentic physical weather dynamics (true cloud front transitions, realistic diurnal temperature swings, and sun angles) while eliminating extreme single-year anomalies. This is the international bankability standard used by PVGIS, NREL, and DRACBV.
-
-            **2. Specific Historical Calendar Year:**
-            * **How it works:** Pulls the exact hourly radiation and ambient temperature recorded in a single calendar year (e.g. 2024).
-            * **When to use:** Crucial when reconciling simulated photovoltaic production against actual historical utility meter records or billing invoices from a specific billing cycle.
-
-            **3. Multi-Year P50 / P90 Risk Analysis (2015-2024):**
-            * **P50 (Median Expected Yield):** The annual energy production that has a 50% probability of being exceeded. This represents the central baseline for financial ROI and payback projections.
-            * **P90 (Conservative Debt-Sizing Limit):** The production level that has a 90% probability of being reached or exceeded (only 1 in 10 years will fall below this). Commercial lenders, infrastructure funds, and banks require P90 to guarantee loan repayment coverage in poor solar years.
-            * **Yield Volatility (Bandwidth):** Quantifies inter-annual weather risk (e.g. El Nino / La Nina cycles in South America) by contrasting the best and worst production years over a decade.
+            * **Typical Meteorological Year (TMY / ISO 15927-4):** Normalized 1-year climatological dataset combining 12 representative historical months from 10–20 years. Preserves true cloud dynamics and diurnal swings without single-year weather anomalies. International bankability standard (PVGIS/NREL).
+            * **Specific Historical Calendar Year:** Exact hourly measurements from a single calendar year (e.g. 2024). Best for reconciling simulations against actual utility billing invoices.
+            * **Multi-Year P50 / P90 Risk Analysis (2015–2024):** Empirical 10-year simulation:
+              - **P50 (Median Expected Yield):** 50% probability of exceedance; baseline for ROI and payback models.
+              - **P90 (Debt-Sizing Limit):** Conservative threshold reached in 90% of years; required by commercial lenders.
+              - **Volatility Bandwidth:** Inter-annual yield spread between best and worst historical years.
             """
         )
 
-    # 2. Module Quantities & Cell Technology (Input Panel)
-    st.markdown("##### 2. Module Quantity & Cell Technology (Input Panel)")
-    c1, c2, c3 = st.columns([4, 4, 4])
-
-    with c1:
-        tech_options = [
-            "TOPCon (450 Wp - N-Type Modern Standard)",
-            "PERC (410 Wp - P-Type Standard)",
-            "Backcontact / IBC (470 Wp - Premium)",
-            "Custom Parameters"
+    # Technical Specifications Form (Buffered in st.form to eliminate UI lag & reruns on input)
+    with st.form(key=f"{key_prefix}_specs_form", clear_on_submit=False):
+        # 1. Weather Data Foundation & Multi-Year Evaluation
+        st.markdown("##### 1. Weather Data Foundation & Multi-Year Evaluation")
+        weather_mode_options = [
+            "Typical Meteorological Year (TMY - 10-to-20 Year Climatological Baseline) [Default]",
+            "Specific Historical Calendar Year (e.g. 2024, 2023, 2022, 2021, 2020)",
+            "Multi-Year Range & P50 / P90 Risk Analysis (2015-2024)"
         ]
-        current_tech_idx = 0
-        preset_name = getattr(cfg, "technology_preset", "TOPCon")
-        if preset_name == "PERC":
-            current_tech_idx = 1
-        elif preset_name == "Backcontact":
-            current_tech_idx = 2
-        elif preset_name == "Custom":
-            current_tech_idx = 3
 
-        selected_tech = st.selectbox(
-            "Cell Technology Preset:",
-            options=tech_options,
-            index=current_tech_idx,
-            key=f"{key_prefix}_tech_choice"
-        )
+        current_w_mode = getattr(cfg, "weather_mode", "TMY")
+        w_idx = 0
+        if current_w_mode == "single_year":
+            w_idx = 1
+        elif current_w_mode == "multi_year":
+            w_idx = 2
 
-    # Technology Parameter Presets
-    if "TOPCon" in selected_tech:
-        preset_key = "TOPCon"
-        def_wp = 450.0
-        def_gamma = -0.29
-        def_d1 = 1.50
-        def_d2 = 0.40
-    elif "PERC" in selected_tech:
-        preset_key = "PERC"
-        def_wp = 410.0
-        def_gamma = -0.35
-        def_d1 = 2.00
-        def_d2 = 0.55
-    elif "Backcontact" in selected_tech:
-        preset_key = "Backcontact"
-        def_wp = 470.0
-        def_gamma = -0.26
-        def_d1 = 1.00
-        def_d2 = 0.35
-    else:
-        preset_key = "Custom"
-        def_wp = getattr(cfg, "module_power_wp", 450.0)
-        def_gamma = getattr(cfg, "temp_coefficient_pct_c", -0.29)
-        def_d1 = getattr(cfg, "first_year_degradation_pct", 1.50)
-        def_d2 = getattr(cfg, "annual_degradation_pct", 0.40)
+        w_col1, w_col2 = st.columns([7, 5])
+        with w_col1:
+            chosen_w_label = st.selectbox(
+                "Select Weather Data Mode:",
+                options=weather_mode_options,
+                index=w_idx,
+                help="Choose between long-term climatological TMY, specific historical calendar years, or 10-year P50/P90 risk simulation.",
+                key=f"{key_prefix}_weather_mode_select"
+            )
 
-    with c2:
-        mod_count = st.number_input(
-            "Amount of Modules (Units):",
-            min_value=0,
-            max_value=200000,
-            value=int(getattr(cfg, "module_count", 0)),
-            step=10,
-            help="Total number of physical PV panels (e.g. 80, 550, 600, 1548).",
-            key=f"{key_prefix}_mod_count"
-        )
+        selected_mode = "TMY"
+        selected_year = getattr(cfg, "selected_weather_year", 2024)
+        if "Specific Historical" in chosen_w_label:
+            selected_mode = "single_year"
+            with w_col2:
+                selected_year = st.selectbox(
+                    "Historical Calendar Year:",
+                    options=[2024, 2023, 2022, 2021, 2020],
+                    index=0,
+                    key=f"{key_prefix}_hist_year_select"
+                )
+        elif "Multi-Year Range" in chosen_w_label:
+            selected_mode = "multi_year"
+            with w_col2:
+                st.caption("10-Year Historical Evaluation Horizon: **2015 - 2024** (Computes P50 expected yield, P90 debt sizing, and volatility range)")
 
-    with c3:
-        mod_wp = st.number_input(
-            "Module Rated Power (Wp / Unit):",
-            min_value=50.0,
-            max_value=1000.0,
-            value=float(def_wp),
-            step=5.0,
-            format="%.1f",
-            help="Rated STC peak power per module in Watts-peak (Wp).",
-            key=f"{key_prefix}_mod_wp"
-        )
+        # 2. Module Quantities & Cell Technology (Input Panel)
+        st.markdown("##### 2. Module Quantity & Cell Technology (Input Panel)")
+        c1, c2, c3 = st.columns([4, 4, 4])
 
-    # Dynamic Calculated DC Capacity Info Banner (Live!)
-    calc_dc_kwp = round((mod_count * mod_wp) / 1000.0, 2)
-    if calc_dc_kwp > 0:
-        st.info(f"**Installed DC Generator Capacity:** `{calc_dc_kwp:,.2f} kWp` ({mod_count:,} Modules × {mod_wp:.0f} Wp)")
-    else:
-        st.info("**Installed DC Generator Capacity:** `0.00 kWp` (Enter module count above or click 'Load Example Case')")
+        with c1:
+            tech_options = [
+                "TOPCon (450 Wp - N-Type Modern Standard)",
+                "PERC (410 Wp - P-Type Standard)",
+                "Backcontact / IBC (470 Wp - Premium)",
+                "Custom Parameters"
+            ]
+            current_tech_idx = 0
+            preset_name = getattr(cfg, "technology_preset", "TOPCon")
+            if preset_name == "PERC":
+                current_tech_idx = 1
+            elif preset_name == "Backcontact":
+                current_tech_idx = 2
+            elif preset_name == "Custom":
+                current_tech_idx = 3
 
-    # 3. Physical Dimensions & Area Requirements (Year Sheet)
-    st.markdown("##### 3. Physical Dimensions & Required Area (Year Sheet)")
-    a1, a2, a3 = st.columns(3)
-    with a1:
-        mod_len = st.number_input(
-            "Module Length (m):",
-            min_value=0.5,
-            max_value=3.0,
-            value=float(getattr(cfg, "module_length_m", 1.76)),
-            step=0.05,
-            format="%.2f",
-            help="Physical length of panel (standard: 1.76m or 1.2m).",
-            key=f"{key_prefix}_mod_len"
-        )
-    with a2:
-        mod_wid = st.number_input(
-            "Module Width (m):",
-            min_value=0.3,
-            max_value=2.0,
-            value=float(getattr(cfg, "module_width_m", 1.13)),
-            step=0.05,
-            format="%.2f",
-            help="Physical width of panel (standard: 1.13m or 0.7m).",
-            key=f"{key_prefix}_mod_wid"
-        )
-    with a3:
-        area_factor = st.number_input(
-            "Area Spacing Factor (Row Pitch):",
-            min_value=1.0,
-            max_value=3.0,
-            value=float(getattr(cfg, "area_factor", 1.40)),
-            step=0.1,
-            format="%.2f",
-            help="1.0 = flush coplanar roof, 1.4 - 1.8 = ground mount / tilted rows with shadow clearance.",
-            key=f"{key_prefix}_area_fact"
-        )
+            selected_tech = st.selectbox(
+                "Cell Technology Preset:",
+                options=tech_options,
+                index=current_tech_idx,
+                key=f"{key_prefix}_tech_choice"
+            )
 
-    gross_panel_area = mod_count * mod_len * mod_wid
-    req_total_area = gross_panel_area * area_factor
-    st.caption(f"**Net Active Panel Area:** `{gross_panel_area:,.1f} m²` | **Total Required Installation Area:** `{req_total_area:,.1f} m²` (Pitch Factor: {area_factor:.2f})")
+        # Technology Parameter Presets
+        if "TOPCon" in selected_tech:
+            preset_key = "TOPCon"
+            def_wp = 450.0
+            def_gamma = -0.29
+            def_d1 = 1.50
+            def_d2 = 0.40
+        elif "PERC" in selected_tech:
+            preset_key = "PERC"
+            def_wp = 410.0
+            def_gamma = -0.35
+            def_d1 = 2.00
+            def_d2 = 0.55
+        elif "Backcontact" in selected_tech:
+            preset_key = "Backcontact"
+            def_wp = 470.0
+            def_gamma = -0.26
+            def_d1 = 1.00
+            def_d2 = 0.35
+        else:
+            preset_key = "Custom"
+            def_wp = getattr(cfg, "module_power_wp", 450.0)
+            def_gamma = getattr(cfg, "temp_coefficient_pct_c", -0.29)
+            def_d1 = getattr(cfg, "first_year_degradation_pct", 1.50)
+            def_d2 = getattr(cfg, "annual_degradation_pct", 0.40)
 
-    # 4. Temperature Physics & 2-Stage Degradation
-    st.markdown("##### 4. Temperature Physics & 2-Stage Degradation")
-    d1_col, d2_col, d3_col = st.columns(3)
-    with d1_col:
-        temp_coeff = st.number_input(
-            "Temperature Coeff. γ (%/°C above 25°C):",
-            min_value=-1.0,
-            max_value=0.0,
-            value=float(def_gamma),
-            step=0.01,
-            format="%.2f",
-            help="Derate coefficient per °C above 25°C cell temp. Standard: -0.25%/°C to -0.29%/°C.",
-            key=f"{key_prefix}_temp_coeff"
-        )
-    with d2_col:
-        first_yr_deg = st.number_input(
-            "Year 1 Degradation (%):",
-            min_value=0.0,
-            max_value=10.0,
-            value=float(def_d1),
-            step=0.1,
-            format="%.2f",
-            help="Initial light-induced degradation (LID) in year 1.",
-            key=f"{key_prefix}_deg_y1"
-        )
-    with d3_col:
-        annual_deg = st.number_input(
-            "Annual Degradation (%/year, Y2+):",
-            min_value=0.0,
-            max_value=5.0,
-            value=float(def_d2),
-            step=0.05,
-            format="%.2f",
-            help="Linear degradation per year for years 2 through 15.",
-            key=f"{key_prefix}_deg_annual"
-        )
+        with c2:
+            mod_count = st.number_input(
+                "Amount of Modules (Units):",
+                min_value=0,
+                max_value=200000,
+                value=int(getattr(cfg, "module_count", 0)),
+                step=10,
+                help="Total number of physical PV panels (e.g. 80, 550, 600, 1548).",
+                key=f"{key_prefix}_mod_count"
+            )
 
-    # 5. Mounting Orientation & Inverter Limits
-    st.markdown("##### 5. Mounting Orientation & Inverter Limits")
-    g1, g2, g3, g4 = st.columns(4)
-    with g1:
-        tilt_deg = st.number_input(
-            "Tilt Angle β (°):",
-            min_value=0.0,
-            max_value=90.0,
-            value=float(default_tilt),
-            step=1.0,
-            format="%.1f",
-            key=f"{key_prefix}_tilt"
-        )
-    with g2:
-        azimuth_deg = st.number_input(
-            "Azimuth Orientation α (°):",
-            min_value=-180.0,
-            max_value=360.0,
-            value=float(default_azimuth),
-            step=5.0,
-            format="%.1f",
-            help="0° = North (Optimal for South Hemisphere like Mendoza), 180° = South.",
-            key=f"{key_prefix}_azimuth"
-        )
-    with g3:
-        # Dynamically auto-scale recommended inverter size if not manually customized
-        rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1)) if calc_dc_kwp > 0 else 0.0
-        init_inv_kw = float(getattr(cfg, "inverter_capacity_kw", 0.0))
-        if init_inv_kw <= 0.0 and rec_inv_kw > 0.0:
-            init_inv_kw = rec_inv_kw
-        inverter_kw = st.number_input(
-            "Inverter AC Limit (kW):",
-            min_value=0.0,
-            max_value=50000.0,
-            value=float(init_inv_kw),
-            step=10.0,
-            format="%.1f",
-            help="Maximum AC inverter power (DC/AC ~ 1.175). Power exceeding this rating is clipped.",
-            key=f"{key_prefix}_inv_kw"
-        )
-    with g4:
-        inverter_eff = st.number_input(
-            "Inverter Efficiency (%):",
-            min_value=80.0,
-            max_value=100.0,
-            value=98.0,
-            step=0.1,
-            format="%.1f",
-            key=f"{key_prefix}_inv_eff"
-        )
+        with c3:
+            mod_wp = st.number_input(
+                "Module Rated Power (Wp / Unit):",
+                min_value=50.0,
+                max_value=1000.0,
+                value=float(def_wp),
+                step=5.0,
+                format="%.1f",
+                help="Rated STC peak power per module in Watts-peak (Wp).",
+                key=f"{key_prefix}_mod_wp"
+            )
 
-    submitted = st.button(
-        "Calculate Solar PV Generation & Multi-Technology Comparison",
-        type="primary",
-        use_container_width=True,
-        key=f"{key_prefix}_calc_btn"
-    )
+        # Dynamic Calculated DC Capacity Info Banner (Live!)
+        calc_dc_kwp = round((mod_count * mod_wp) / 1000.0, 2)
+        if calc_dc_kwp > 0:
+            st.info(f"**Installed DC Generator Capacity:** `{calc_dc_kwp:,.2f} kWp` ({mod_count:,} Modules × {mod_wp:.0f} Wp)")
+        else:
+            st.info("**Installed DC Generator Capacity:** `0.00 kWp` (Enter module count above or click 'Load Example Case')")
+
+        # 3. Physical Dimensions & Area Requirements (Year Sheet)
+        st.markdown("##### 3. Physical Dimensions & Required Area (Year Sheet)")
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            mod_len = st.number_input(
+                "Module Length (m):",
+                min_value=0.5,
+                max_value=3.0,
+                value=float(getattr(cfg, "module_length_m", 1.76)),
+                step=0.05,
+                format="%.2f",
+                help="Physical length of panel (standard: 1.76m or 1.2m).",
+                key=f"{key_prefix}_mod_len"
+            )
+        with a2:
+            mod_wid = st.number_input(
+                "Module Width (m):",
+                min_value=0.3,
+                max_value=2.0,
+                value=float(getattr(cfg, "module_width_m", 1.13)),
+                step=0.05,
+                format="%.2f",
+                help="Physical width of panel (standard: 1.13m or 0.7m).",
+                key=f"{key_prefix}_mod_wid"
+            )
+        with a3:
+            area_factor = st.number_input(
+                "Area Spacing Factor (Row Pitch):",
+                min_value=1.0,
+                max_value=3.0,
+                value=float(getattr(cfg, "area_factor", 1.40)),
+                step=0.1,
+                format="%.2f",
+                help="1.0 = flush coplanar roof, 1.4 - 1.8 = ground mount / tilted rows with shadow clearance.",
+                key=f"{key_prefix}_area_fact"
+            )
+
+        gross_panel_area = mod_count * mod_len * mod_wid
+        req_total_area = gross_panel_area * area_factor
+        st.caption(f"**Net Active Panel Area:** `{gross_panel_area:,.1f} m²` | **Total Required Installation Area:** `{req_total_area:,.1f} m²` (Pitch Factor: {area_factor:.2f})")
+
+        # 4. Temperature Physics & 2-Stage Degradation
+        st.markdown("##### 4. Temperature Physics & 2-Stage Degradation")
+        d1_col, d2_col, d3_col = st.columns(3)
+        with d1_col:
+            temp_coeff = st.number_input(
+                "Temperature Coeff. γ (%/°C above 25°C):",
+                min_value=-1.0,
+                max_value=0.0,
+                value=float(def_gamma),
+                step=0.01,
+                format="%.2f",
+                help="Derate coefficient per °C above 25°C cell temp. Standard: -0.25%/°C to -0.29%/°C.",
+                key=f"{key_prefix}_temp_coeff"
+            )
+        with d2_col:
+            first_yr_deg = st.number_input(
+                "Year 1 Degradation (%):",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(def_d1),
+                step=0.1,
+                format="%.2f",
+                help="Initial light-induced degradation (LID) in year 1.",
+                key=f"{key_prefix}_deg_y1"
+            )
+        with d3_col:
+            annual_deg = st.number_input(
+                "Annual Degradation (%/year, Y2+):",
+                min_value=0.0,
+                max_value=5.0,
+                value=float(def_d2),
+                step=0.05,
+                format="%.2f",
+                help="Linear degradation per year for years 2 through 15.",
+                key=f"{key_prefix}_deg_annual"
+            )
+
+        # 5. Mounting Orientation & Inverter Limits
+        st.markdown("##### 5. Mounting Orientation & Inverter Limits")
+        g1, g2, g3, g4 = st.columns(4)
+        with g1:
+            tilt_deg = st.number_input(
+                "Tilt Angle β (°):",
+                min_value=0.0,
+                max_value=90.0,
+                value=float(default_tilt),
+                step=1.0,
+                format="%.1f",
+                key=f"{key_prefix}_tilt"
+            )
+        with g2:
+            azimuth_deg = st.number_input(
+                "Azimuth Orientation α (°):",
+                min_value=-180.0,
+                max_value=360.0,
+                value=float(default_azimuth),
+                step=5.0,
+                format="%.1f",
+                help="0° = North (Optimal for South Hemisphere like Mendoza), 180° = South.",
+                key=f"{key_prefix}_azimuth"
+            )
+        with g3:
+            # Dynamically auto-scale recommended inverter size if not manually customized
+            rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1)) if calc_dc_kwp > 0 else 0.0
+            init_inv_kw = float(getattr(cfg, "inverter_capacity_kw", 0.0))
+            if init_inv_kw <= 0.0 and rec_inv_kw > 0.0:
+                init_inv_kw = rec_inv_kw
+            inverter_kw = st.number_input(
+                "Inverter AC Limit (kW):",
+                min_value=0.0,
+                max_value=50000.0,
+                value=float(init_inv_kw),
+                step=10.0,
+                format="%.1f",
+                help="Maximum AC inverter power (DC/AC ~ 1.175). Power exceeding this rating is clipped.",
+                key=f"{key_prefix}_inv_kw"
+            )
+        with g4:
+            inverter_eff = st.number_input(
+                "Inverter Efficiency (%):",
+                min_value=80.0,
+                max_value=100.0,
+                value=98.0,
+                step=0.1,
+                format="%.1f",
+                key=f"{key_prefix}_inv_eff"
+            )
+
+        submitted = st.form_submit_button(
+            "Calculate Solar PV Generation & Multi-Technology Comparison",
+            type="primary",
+            use_container_width=True
+        )
 
     if submitted and mod_count <= 0:
         st.warning("Please enter a module count greater than 0 before calculating, or click 'Load Example Case' above.")

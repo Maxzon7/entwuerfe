@@ -28,14 +28,18 @@ def create_solar_timeseries_figure(
     Constructs an interactive time-series figure of AC & DC solar generation with range slider.
     """
     fig = go.Figure()
-    timestamps = df["timestamp"]
+
+    # For ultra-smooth GPU WebGL rendering, decimate to 30-min resolution for annual overview (17,520 points)
+    step = 2 if len(df) > 20000 else 1
+    plot_df = df.iloc[::step]
+    timestamps = plot_df["timestamp"]
 
     # 1. Plane of Array Irradiance (Area / subtle fill)
-    if "POA_W_m2" in df.columns:
+    if "POA_W_m2" in plot_df.columns:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=timestamps,
-                y=df["POA_W_m2"] / 10.0,  # Scaled for visual comparison (1000 W/m² -> 100)
+                y=plot_df["POA_W_m2"] / 10.0,  # Scaled for visual comparison (1000 W/m² -> 100)
                 name="Irradiance (POA / 10 W/m²)",
                 line=dict(color="rgba(251, 191, 36, 0.35)", width=1, dash="dot"),
                 hoverinfo="skip",
@@ -44,11 +48,11 @@ def create_solar_timeseries_figure(
         )
 
     # 2. DC Power (Unclipped / Pre-inverter)
-    if "P_DC_kW" in df.columns:
+    if "P_DC_kW" in plot_df.columns:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=timestamps,
-                y=df["P_DC_kW"],
+                y=plot_df["P_DC_kW"],
                 name="DC Array Power (kW)",
                 line=dict(color="#F59E0B", width=1.5),
                 hovertemplate="<b>DC Power:</b> %{y:,.1f} kW<extra></extra>",
@@ -57,13 +61,13 @@ def create_solar_timeseries_figure(
         )
 
     # 3. AC Power (Inverter Output)
-    if "P_AC_kW" in df.columns:
+    if "P_AC_kW" in plot_df.columns:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=timestamps,
-                y=df["P_AC_kW"],
+                y=plot_df["P_AC_kW"],
                 name="AC Grid Power (kW)",
-                line=dict(color="#10B981", width=2.2),
+                line=dict(color="#10B981", width=2.0),
                 fill="tozeroy",
                 fillcolor="rgba(16, 185, 129, 0.15)",
                 hovertemplate="<b>%{x|%d %b %Y %H:%M}</b><br><b>AC Output:</b> %{y:,.1f} kW<extra></extra>",

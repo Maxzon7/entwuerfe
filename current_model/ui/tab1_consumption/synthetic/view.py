@@ -239,15 +239,20 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     # Calculate 24h baseline
     df_day, total_curve_24h, metrics_24h = aggregate_synthetic_24h(consumers)
 
-    # Calculate 365-day annual timeseries
-    df_year, total_curve_year, metrics_year = aggregate_synthetic_year(
-        consumers=consumers,
-        year=2025,
-        holidays=holiday_list
-    )
+    # Calculate 365-day annual timeseries on-demand only when Full Year is active
+    is_full_year = horizon_mode.startswith("Full Year")
+    if is_full_year:
+        df_year, total_curve_year, metrics_year = aggregate_synthetic_year(
+            consumers=consumers,
+            year=2025,
+            holidays=holiday_list
+        )
+        active_synthetic_dataset = df_year
+    else:
+        df_year, total_curve_year, metrics_year = None, None, None
+        active_synthetic_dataset = df_day
 
     # Store active dataset in session state so Tab 2 can automatically read it
-    active_synthetic_dataset = df_year if horizon_mode.startswith("Full Year") else df_day
     st.session_state[f"{key_prefix}_active_df"] = active_synthetic_dataset
     st.session_state["active_synthetic_df"] = active_synthetic_dataset
 
