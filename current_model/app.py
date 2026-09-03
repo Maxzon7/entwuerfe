@@ -30,7 +30,6 @@ from current_model.ui.tab3_solar.view import render_tab3_solar
 # 1. Page Configuration & Styling
 st.set_page_config(
     page_title="Energy Simulator & Load Profiler",
-    page_icon="⚡",
     layout="wide"
 )
 apply_custom_styles()
@@ -40,9 +39,9 @@ st.caption("Modular platform for 24-Hour synthetic bottom-up load modeling, real
 
 # 2. Top-Level Tab Navigation (1:1 mapped to ui/tab1_..., ui/tab2_..., ui/tab3_...)
 tab_consumption, tab_contract, tab_solar = st.tabs([
-    "⚡ 1. Consumption",
-    "📄 2. Contract Data",
-    "☀️ 3. Solar PV Generation"
+    "1. Consumption",
+    "2. Contract Data",
+    "3. Solar PV Generation"
 ])
 
 # TAB 1: Consumption

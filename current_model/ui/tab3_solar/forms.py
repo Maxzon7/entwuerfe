@@ -236,7 +236,7 @@ def render_solar_config_form(
         else:
             cfg = current_config
     else:
-        cfg = SolarPVConfig(module_count=1548, module_power_wp=450.0, inverter_capacity_kw=590.0)
+        cfg = SolarPVConfig(module_count=0, module_power_wp=450.0, inverter_capacity_kw=0.0)
 
     is_south = location.latitude < 0
     default_azimuth = 0.0 if is_south else 180.0
@@ -246,7 +246,7 @@ def render_solar_config_form(
     st.caption("Configure solar module quantities, rated wattage, cell technology, mounting area, and inverter limits:")
 
     # Detailed Educational Guide on Cell Technologies
-    with st.expander("ℹ️ Technology Guide: What are PERC, TOPCon, and Backcontact?", expanded=False):
+    with st.expander("Technology Guide: What are PERC, TOPCon, and Backcontact?", expanded=False):
         st.markdown(
             """
             | Technology | Full Name | Standard Wattage | Temp. Coeff. $\\gamma$ | 1st Year Degr. | Annual Degr. | Characteristics & Benefits |
@@ -257,8 +257,68 @@ def render_solar_config_form(
             """
         )
 
-    # 1. Module Quantities & Cell Technology (Input Panel)
-    st.markdown("##### 1. Module Quantity & Cell Technology (Input Panel)")
+    # 1. Weather Data Foundation & Multi-Year Evaluation
+    st.markdown("##### 1. Weather Data Foundation & Multi-Year Evaluation")
+    weather_mode_options = [
+        "Typical Meteorological Year (TMY - 10-to-20 Year Climatological Baseline) [Default]",
+        "Specific Historical Calendar Year (e.g. 2024, 2023, 2022, 2021, 2020)",
+        "Multi-Year Range & P50 / P90 Risk Analysis (2015-2024)"
+    ]
+
+    current_w_mode = getattr(cfg, "weather_mode", "TMY")
+    w_idx = 0
+    if current_w_mode == "single_year":
+        w_idx = 1
+    elif current_w_mode == "multi_year":
+        w_idx = 2
+
+    w_col1, w_col2 = st.columns([7, 5])
+    with w_col1:
+        chosen_w_label = st.selectbox(
+            "Select Weather Data Mode:",
+            options=weather_mode_options,
+            index=w_idx,
+            help="Choose between long-term climatological TMY, specific historical calendar years, or 10-year P50/P90 risk simulation.",
+            key=f"{key_prefix}_weather_mode_select"
+        )
+
+    selected_mode = "TMY"
+    selected_year = getattr(cfg, "selected_weather_year", 2024)
+    if "Specific Historical" in chosen_w_label:
+        selected_mode = "single_year"
+        with w_col2:
+            selected_year = st.selectbox(
+                "Historical Calendar Year:",
+                options=[2024, 2023, 2022, 2021, 2020],
+                index=0,
+                key=f"{key_prefix}_hist_year_select"
+            )
+    elif "Multi-Year Range" in chosen_w_label:
+        selected_mode = "multi_year"
+        with w_col2:
+            st.caption("10-Year Historical Evaluation Horizon: **2015 - 2024** (Computes P50 expected yield, P90 debt sizing, and volatility range)")
+
+    # Educational Guide on Weather Data Foundations
+    with st.expander("Educational Guide: How Solar Weather Data and Multi-Year Modeling Work", expanded=False):
+        st.markdown(
+            """
+            **1. Typical Meteorological Year (TMY / ISO 15927-4 Standard):**
+            * **How it works:** Rather than calculating a simple mathematical average (which would artificially smooth out peak solar irradiance and turn sunny days into perpetual haze), TMY selects 12 actual, representative historical calendar months from a 10-to-20-year database (e.g. a typical January from 2018, February from 2021, etc.) using Finkelstein-Schafer statistical ranking.
+            * **Why it matters:** It preserves authentic physical weather dynamics (true cloud front transitions, realistic diurnal temperature swings, and sun angles) while eliminating extreme single-year anomalies. This is the international bankability standard used by PVGIS, NREL, and DRACBV.
+
+            **2. Specific Historical Calendar Year:**
+            * **How it works:** Pulls the exact hourly radiation and ambient temperature recorded in a single calendar year (e.g. 2024).
+            * **When to use:** Crucial when reconciling simulated photovoltaic production against actual historical utility meter records or billing invoices from a specific billing cycle.
+
+            **3. Multi-Year P50 / P90 Risk Analysis (2015-2024):**
+            * **P50 (Median Expected Yield):** The annual energy production that has a 50% probability of being exceeded. This represents the central baseline for financial ROI and payback projections.
+            * **P90 (Conservative Debt-Sizing Limit):** The production level that has a 90% probability of being reached or exceeded (only 1 in 10 years will fall below this). Commercial lenders, infrastructure funds, and banks require P90 to guarantee loan repayment coverage in poor solar years.
+            * **Yield Volatility (Bandwidth):** Quantifies inter-annual weather risk (e.g. El Nino / La Nina cycles in South America) by contrasting the best and worst production years over a decade.
+            """
+        )
+
+    # 2. Module Quantities & Cell Technology (Input Panel)
+    st.markdown("##### 2. Module Quantity & Cell Technology (Input Panel)")
     c1, c2, c3 = st.columns([4, 4, 4])
 
     with c1:
@@ -313,9 +373,9 @@ def render_solar_config_form(
     with c2:
         mod_count = st.number_input(
             "Amount of Modules (Units):",
-            min_value=1,
+            min_value=0,
             max_value=200000,
-            value=int(getattr(cfg, "module_count", 1548)),
+            value=int(getattr(cfg, "module_count", 0)),
             step=10,
             help="Total number of physical PV panels (e.g. 80, 550, 600, 1548).",
             key=f"{key_prefix}_mod_count"
@@ -335,10 +395,13 @@ def render_solar_config_form(
 
     # Dynamic Calculated DC Capacity Info Banner (Live!)
     calc_dc_kwp = round((mod_count * mod_wp) / 1000.0, 2)
-    st.info(f"⚡ **Installed DC Generator Capacity:** `{calc_dc_kwp:,.2f} kWp` ({mod_count:,} Modules × {mod_wp:.0f} Wp)")
+    if calc_dc_kwp > 0:
+        st.info(f"**Installed DC Generator Capacity:** `{calc_dc_kwp:,.2f} kWp` ({mod_count:,} Modules × {mod_wp:.0f} Wp)")
+    else:
+        st.info("**Installed DC Generator Capacity:** `0.00 kWp` (Enter module count above or click 'Load Example Case')")
 
-    # 2. Physical Dimensions & Area Requirements (Year Sheet)
-    st.markdown("##### 2. Physical Dimensions & Required Area (Year Sheet)")
+    # 3. Physical Dimensions & Area Requirements (Year Sheet)
+    st.markdown("##### 3. Physical Dimensions & Required Area (Year Sheet)")
     a1, a2, a3 = st.columns(3)
     with a1:
         mod_len = st.number_input(
@@ -376,10 +439,10 @@ def render_solar_config_form(
 
     gross_panel_area = mod_count * mod_len * mod_wid
     req_total_area = gross_panel_area * area_factor
-    st.caption(f"📐 **Net Active Panel Area:** `{gross_panel_area:,.1f} m²` | **Total Required Installation Area:** `{req_total_area:,.1f} m²` (Pitch Factor: {area_factor:.2f})")
+    st.caption(f"**Net Active Panel Area:** `{gross_panel_area:,.1f} m²` | **Total Required Installation Area:** `{req_total_area:,.1f} m²` (Pitch Factor: {area_factor:.2f})")
 
-    # 3. Temperature Derating & 2-Stage Degradation
-    st.markdown("##### 3. Temperature Physics & 2-Stage Degradation")
+    # 4. Temperature Physics & 2-Stage Degradation
+    st.markdown("##### 4. Temperature Physics & 2-Stage Degradation")
     d1_col, d2_col, d3_col = st.columns(3)
     with d1_col:
         temp_coeff = st.number_input(
@@ -389,34 +452,34 @@ def render_solar_config_form(
             value=float(def_gamma),
             step=0.01,
             format="%.2f",
-            help="Power derate per °C above 25°C cell temperature. 0 loss at <= 25°C.",
-            key=f"{key_prefix}_gamma"
+            help="Derate coefficient per °C above 25°C cell temp. Standard: -0.25%/°C to -0.29%/°C.",
+            key=f"{key_prefix}_temp_coeff"
         )
     with d2_col:
         first_yr_deg = st.number_input(
-            "1st Year Initial Degradation (%):",
+            "Year 1 Degradation (%):",
             min_value=0.0,
             max_value=10.0,
             value=float(def_d1),
             step=0.1,
             format="%.2f",
-            help="Initial light-induced degradation (LID) in Year 1.",
-            key=f"{key_prefix}_deg1"
+            help="Initial light-induced degradation (LID) in year 1.",
+            key=f"{key_prefix}_deg_y1"
         )
     with d3_col:
         annual_deg = st.number_input(
-            "Annual Degradation after 2nd Year (%/a):",
+            "Annual Degradation (%/year, Y2+):",
             min_value=0.0,
             max_value=5.0,
             value=float(def_d2),
             step=0.05,
             format="%.2f",
-            help="Linear annual degradation rate from Year 2 onwards.",
-            key=f"{key_prefix}_deg2"
+            help="Linear degradation per year for years 2 through 15.",
+            key=f"{key_prefix}_deg_annual"
         )
 
-    # 4. Inverter & Mounting Geometry
-    st.markdown("##### 4. Mounting Orientation & Inverter Limits")
+    # 5. Mounting Orientation & Inverter Limits
+    st.markdown("##### 5. Mounting Orientation & Inverter Limits")
     g1, g2, g3, g4 = st.columns(4)
     with g1:
         tilt_deg = st.number_input(
@@ -441,12 +504,15 @@ def render_solar_config_form(
         )
     with g3:
         # Dynamically auto-scale recommended inverter size if not manually customized
-        rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1))
+        rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1)) if calc_dc_kwp > 0 else 0.0
+        init_inv_kw = float(getattr(cfg, "inverter_capacity_kw", 0.0))
+        if init_inv_kw <= 0.0 and rec_inv_kw > 0.0:
+            init_inv_kw = rec_inv_kw
         inverter_kw = st.number_input(
             "Inverter AC Limit (kW):",
-            min_value=1.0,
+            min_value=0.0,
             max_value=50000.0,
-            value=float(rec_inv_kw),
+            value=float(init_inv_kw),
             step=10.0,
             format="%.1f",
             help="Maximum AC inverter power (DC/AC ~ 1.175). Power exceeding this rating is clipped.",
@@ -464,11 +530,15 @@ def render_solar_config_form(
         )
 
     submitted = st.button(
-        "⚡ Calculate Solar PV Generation & Multi-Technology Comparison",
+        "Calculate Solar PV Generation & Multi-Technology Comparison",
         type="primary",
         use_container_width=True,
         key=f"{key_prefix}_calc_btn"
     )
+
+    if submitted and mod_count <= 0:
+        st.warning("Please enter a module count greater than 0 before calculating, or click 'Load Example Case' above.")
+        submitted = False
 
     updated_config = SolarPVConfig(
         module_count=int(mod_count),
@@ -490,9 +560,9 @@ def render_solar_config_form(
         soiling_loss_pct=2.0,
         shading_loss_pct=1.5,
         dc_wiring_loss_pct=1.5,
-        economic_lifetime_years=15
+        economic_lifetime_years=15,
+        weather_mode=selected_mode,
+        selected_weather_year=int(selected_year)
     )
 
     return updated_config, submitted
-
-

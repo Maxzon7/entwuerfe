@@ -12,6 +12,9 @@ from current_model.models.solar import SolarLocation, SolarPVConfig, SolarSimula
 from current_model.core.solar_engine import (
     generate_synthetic_solar_weather,
     fetch_open_meteo_solar_data,
+    fetch_pvgis_tmy_data,
+    load_solar_weather_data,
+    compute_multi_year_risk_profile,
     simulate_solar_pv_generation,
     calculate_scenario_target_kwp,
     calculate_recommended_inverter_size,
@@ -199,8 +202,59 @@ class TestSolarEngine(unittest.TestCase):
         self.assertGreater(backcontact.year_1_kwh, topcon.year_1_kwh)
         self.assertGreater(backcontact.gain_pct_vs_perc, topcon.gain_pct_vs_perc)
 
+    def test_pvgis_tmy_weather_data_fetching_and_structure(self):
+        """Verify TMY data returns a valid 35,040 15-minute grid with physical solar values."""
+        df_tmy, label = fetch_pvgis_tmy_data(
+            latitude=self.location.latitude,
+            longitude=self.location.longitude,
+            tilt_deg=self.config.tilt_deg,
+            azimuth_deg=self.config.azimuth_deg,
+            albedo=self.config.albedo
+        )
+        self.assertEqual(len(df_tmy), 35040)
+        self.assertTrue("POA_W_m2" in df_tmy.columns)
+        self.assertTrue("GHI_W_m2" in df_tmy.columns)
+        self.assertTrue("Temp_Ambient_C" in df_tmy.columns)
+        self.assertGreater(float(df_tmy["POA_W_m2"].max()), 500.0)
+        self.assertGreater(float(df_tmy["POA_W_m2"].sum()), 0.0)
+
+    def test_multi_year_risk_assessment(self):
+        """Verify empirical P50 and P90 risk statistics are computed over multi-year span."""
+        risk = compute_multi_year_risk_profile(
+            config=self.config,
+            location=self.location,
+            start_year=2020,
+            end_year=2024
+        )
+        self.assertTrue("p50_kwh" in risk)
+        self.assertTrue("p90_kwh" in risk)
+        self.assertTrue("p95_kwh" in risk)
+        self.assertTrue("volatility_pct" in risk)
+        self.assertGreater(risk["p50_kwh"], 0.0)
+        self.assertGreater(risk["p90_kwh"], 0.0)
+        self.assertLessEqual(risk["p90_kwh"], risk["p50_kwh"])
+        self.assertLessEqual(risk["p95_kwh"], risk["p90_kwh"])
+        self.assertGreater(risk["max_kwh"], risk["min_kwh"])
+
+    def test_simulate_solar_pv_generation_with_multi_year_mode(self):
+        """Verify simulate_solar_pv_generation populates multi-year risk metrics when requested."""
+        cfg_multi = SolarPVConfig(
+            module_count=600,
+            module_power_wp=450.0,
+            inverter_capacity_kw=230.0,
+            weather_mode="multi_year",
+            multi_year_start=2020,
+            multi_year_end=2024
+        )
+        res = simulate_solar_pv_generation(config=cfg_multi, location=self.location)
+        self.assertIsNotNone(res.kpis.p50_annual_kwh)
+        self.assertIsNotNone(res.kpis.p90_annual_kwh)
+        self.assertIsNotNone(res.multi_year_risk_summary)
+        self.assertGreater(res.kpis.p50_annual_kwh, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

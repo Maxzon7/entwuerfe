@@ -95,6 +95,12 @@ class SolarPVConfig:
     shading_loss_pct: float = 1.5                 # Near shading losses (%)
     dc_wiring_loss_pct: float = 1.5               # DC cable & mismatch losses (%)
 
+    # Weather Data Foundation
+    weather_mode: str = "TMY"                     # "TMY", "single_year", or "multi_year"
+    selected_weather_year: int = 2024             # Used when weather_mode == "single_year"
+    multi_year_start: int = 2015                  # Start year for multi-year risk evaluation
+    multi_year_end: int = 2024                    # End year for multi-year risk evaluation
+
     # Sizing Scenario Tag
     sizing_scenario: str = "custom"               # "40%", "60%", "80%", "100%", or "custom"
 
@@ -159,6 +165,13 @@ class SolarKPIs:
     thermal_loss_kwh: float = 0.0                  # Cell temperature derate loss (kWh)
     location_name: str = ""
     global_horizontal_irradiance_mwh_m2: float = 0.0
+    weather_data_source: str = ""                  # Description of active weather database
+
+    # Multi-Year P50 / P90 Risk Metrics
+    p50_annual_kwh: Optional[float] = None         # Median expected yield (50% exceedance)
+    p90_annual_kwh: Optional[float] = None         # Conservative debt sizing yield (90% exceedance)
+    p95_annual_kwh: Optional[float] = None         # Extreme conservative limit (95% exceedance)
+    multi_year_risk_summary: Optional[Dict[str, Any]] = None
 
     # Electrical Dispatch & Load Coupling KPIs (Tab 1 integration)
     total_load_kwh: float = 0.0                    # Total facility consumption over simulated horizon (kWh)
@@ -197,5 +210,6 @@ class SolarSimulationResult:
     loss_breakdown: Dict[str, float] = field(default_factory=dict)
     multi_year_yields: List[Dict[str, Any]] = field(default_factory=list)  # 15-year degradation profile
     technology_comparison: List[TechnologyComparisonItem] = field(default_factory=list)
+    multi_year_risk_summary: Optional[Dict[str, Any]] = None
 
 
