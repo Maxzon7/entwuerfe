@@ -29,6 +29,7 @@ Every top-level Tab in the Streamlit application corresponds directly to its ded
 | **Main Application Entry** | Top-level orchestrator & Tab navigation | [`app.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/app.py) |
 | **Global Theme & Styles** | Dark mode CSS, card classes, and icon CDNs | [`ui/common/styles.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/common/styles.py) |
 | **Shared KPI Components** | Metric cards (`render_kpi_card`) with status badges | [`ui/common/cards.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/common/cards.py) |
+| **Cross-Tab Session Utils** | Active load dataset & contract discovery helpers | [`ui/common/session_utils.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/common/session_utils.py) |
 | **Tab 1: Consumption** | Top-level switcher: Synthetic Simulator vs. Real Meter CSV | [`ui/tab1_consumption/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab1_consumption/view.py) |
 | **Tab 1: Synthetic View** | 24h & 365d simulation orchestrator, KPIs, and `.drac` toolbar | [`ui/tab1_consumption/synthetic/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab1_consumption/synthetic/view.py) |
 | **Tab 1: Synthetic Forms** | Add/edit consumer asset forms, operating windows, weekly schedules | [`ui/tab1_consumption/synthetic/forms.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab1_consumption/synthetic/forms.py) |
@@ -36,13 +37,18 @@ Every top-level Tab in the Streamlit application corresponds directly to its ded
 | **Tab 1: CSV Inspector** | Ingestion pipeline, multi-meter viewer, and overload analyzer | [`ui/tab1_consumption/csv_inspector/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab1_consumption/csv_inspector/view.py) |
 | **Tab 1: CSV Forms** | File upload widget, delimiter sniffer, and column mapping | [`ui/tab1_consumption/csv_inspector/forms.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab1_consumption/csv_inspector/forms.py) |
 | **Tab 1: CSV Charts** | High-performance interactive multi-channel timeseries chart | [`ui/tab1_consumption/csv_inspector/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab1_consumption/csv_inspector/charts.py) |
-| **Tab 2: Contract Data** | Billing assessment orchestrator, monthly series & KPIs | [`ui/tab2_contract/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/view.py) |
+| **Tab 2: Contract Data** | Subtabs: 2.1 Single Contract & 2.2 Multi-Contract Benchmark | [`ui/tab2_contract/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/view.py) |
 | **Tab 2: Contract Form** | Electricity tariff configuration form & `.drac` file transfer bar | [`ui/tab2_contract/form.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/form.py) |
 | **Tab 2: Financial Charts** | Cost distribution donut chart and monthly payment schedule series | [`ui/tab2_contract/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/charts.py) |
-| **Tab 3: Solar PV** | Solar PV generation simulator, irradiance & KPI dashboard | [`ui/tab3_solar/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/view.py) |
-| **Tab 3: Solar Forms** | Location coordinates, DC sizing, tilt/azimuth & loss factors | [`ui/tab3_solar/forms.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/forms.py) |
-| **Tab 3: Solar Charts** | Generation timeseries, monthly yield bar chart, and loss waterfall | [`ui/tab3_solar/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/charts.py) |
-| **Test Suite Runner** | Regression & health-check runner (36 automated tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/run_tests.py) |
+| **Tab 2: Comparison View** | Multi-tariff benchmark, savings leaderboard & ranking table | [`ui/tab2_contract/comparison_view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/comparison_view.py) |
+| **Tab 2: Comparison Charts**| Stacked component comparison, 12-month series & rate benchmark | [`ui/tab2_contract/comparison_charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/comparison_charts.py) |
+| **Tab 3: Solar PV** | Sub-tabs coordinator: 3.1 Standalone & 3.2 Integrated | [`ui/tab3_solar/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/view.py) |
+| **Tab 3.1: Standalone View**| Pure physical generation simulator, tech matrix & risk assessment | [`ui/tab3_solar/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/view.py) |
+| **Tab 3.1: Forms** | Site GPS, module sizing, tilt/azimuth & loss factors | [`ui/tab3_solar/forms.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/forms.py) |
+| **Tab 3.1: Charts** | 15-min generation curve, monthly yields, loss waterfall & matrix | [`ui/tab3_solar/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/charts.py) |
+| **Tab 3.2: Integration View**| Solar-load coupling, auto-sizing (40-100%), SCR & Autarky KPIs | [`ui/tab3_solar/integration_view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/integration_view.py) |
+| **Tab 3.2: Charts** | 15-min dispatch timeseries, monthly balance, seasonal & Sankey | [`ui/tab3_solar/integration_charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/integration_charts.py) |
+| **Test Suite Runner** | Regression & health-check runner (56 automated tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/run_tests.py) |
 
 ---
 
@@ -119,13 +125,29 @@ flowchart TD
 
 ---
 
-### 3. Tab 3: Solar PV Physical Generation Simulation
-* **Solar Physics Engine ([`core/solar_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_engine.py))**:
-  * Models solar geometry (tilt, azimuth, solar elevation, solar zenith).
-  * Direct Normal (DNI), Diffuse Horizontal (DHI), and Global Horizontal (GHI) irradiance transposition onto tilted planes.
-  * Cell temperature derating based on ambient temperature and Nominal Module Operating Temperature (NMOT).
-  * Inverter efficiency conversion and clipping power thresholds ($kW_{AC}$ limit).
-  * Calculates Key Performance Indicators (KPIs): Specific Yield ($kWh/kWp/year$), Performance Ratio ($PR$), Capacity Factor ($\%$) and Full Load Hours ($h/a$).
+### 3. Tab 3: Solar PV Simulation & Facility Load Integration
+* **Sub-Tab 3.1: Standalone Solar PV Generation Simulator**:
+  * **Solar Physics Engine ([`core/solar_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_engine.py))**:
+    * Models solar geometry (tilt, azimuth, solar elevation, solar zenith).
+    * Direct Normal (DNI), Diffuse Horizontal (DHI), and Global Horizontal (GHI) irradiance transposition onto tilted planes via Perez anisotropic sky model.
+    * Dynamic cell temperature modeling: $T_{\text{cell}} = T_{\text{amb}} + G_{\text{POA}} \times \frac{\text{NMOT} - 20}{800}$.
+    * Thermal derate factor: $\eta_{\text{temp}} = 1.0 - \max(0, T_{\text{cell}} - 25^\circ\text{C}) \times \frac{|\gamma|}{100}$.
+    * Inverter AC conversion and clipping power threshold ($kW_{\text{AC}}$ limit).
+    * Calculates Key Performance Indicators: Specific Yield ($kWh/kWp/year$), Performance Ratio ($PR$), Capacity Factor ($\%$) and Full Load Hours ($h/a$).
+    * Multi-technology production matrix across 15 years (PERC vs. TOPCon vs. Backcontact).
+    * Climatological 10-year multi-year risk evaluation (P50, P90 debt-financing limit, P95, volatility).
+* **Sub-Tab 3.2: Solar & Consumption Integration**:
+  * **Automated Load Coupling**: Discovers active consumption dataset from Tab 1 (CSV real meter or Synthetic 365d/24h) via `ui/common/session_utils.py`.
+  * **Target Net Coverage Auto-Sizing**: Quick-sizes PV capacity ($kW_p$) for **40%**, **60%**, **80%**, and **100% Net Zero** annual energy coverage:
+    $$\text{Target } kW_p = \frac{\text{Annual Consumption } (kWh) \times \text{Coverage } \%}{\text{Specific Yield } (kWh/kW_p)}$$
+  * **Interval-by-Interval Electrical Dispatch ($dt = 0.25h$)**:
+    * Direct Self-Consumption: $P_{\text{direct}}(t) = \min(P_{\text{load}}(t), P_{\text{solar}}(t))$
+    * Surplus Export / Battery Potential: $P_{\text{surplus}}(t) = \max(0, P_{\text{solar}}(t) - P_{\text{load}}(t))$
+    * Residual Grid Load: $P_{\text{residual}}(t) = \max(0, P_{\text{load}}(t) - P_{\text{solar}}(t))$
+    * Self-Consumption Rate: $\text{SCR} = \frac{E_{\text{direct}}}{E_{\text{solar}}} \times 100\%$
+    * Autarky / Solar Fraction: $\text{SF} = \frac{E_{\text{direct}}}{E_{\text{load}}} \times 100\%$
+    * Peak Shaving: $\Delta P_{\text{peak}} = P_{\text{load, max}} - P_{\text{residual, max}}$
+  * **Financial Avoided Cost Assessment**: Integrates with active Tab 2 electricity contract (evaluating baseline bill vs. residual bill), with optional deactivated-by-default manual flat-rate estimator.
 
 ---
 
@@ -203,7 +225,7 @@ Execute the health check and regression suite from the project root:
 python run_tests.py
 ```
 
-The suite covers **36 automated unit tests** across:
+The suite covers **56 automated unit tests** across:
 * `.drac` serialization, deserialization, and round-trip fidelity.
 * Backward compatibility and state migration.
 * Vectorized 24h and 365-day annual load aggregation.

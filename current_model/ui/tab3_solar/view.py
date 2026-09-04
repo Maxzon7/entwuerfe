@@ -29,11 +29,31 @@ from current_model.ui.tab3_solar.charts import (
     create_solar_loss_waterfall_figure,
     create_technology_comparison_figure
 )
+from current_model.ui.tab3_solar.integration_view import render_solar_integration_view
 
 
-def render_tab3_solar(key_prefix: str = "tab3_solar") -> None:
+def render_tab3_solar(key_prefix: str = "app_tab3") -> None:
     """
-    Renders the Excel-aligned Tab 3 Solar PV Generation Simulator view.
+    Main entry point for Tab 3: Solar PV Generation & Load Integration.
+    Structured into Sub-Tabs:
+      - 3.1 Standalone Solar PV Generation (Status Quo)
+      - 3.2 Solar & Consumption Integration
+    """
+    subtab_standalone, subtab_integration = st.tabs([
+        "3.1 Standalone Solar PV Generation",
+        "3.2 Solar & Consumption Integration"
+    ])
+
+    with subtab_standalone:
+        render_tab3_1_standalone(key_prefix=key_prefix)
+
+    with subtab_integration:
+        render_solar_integration_view(key_prefix=f"{key_prefix}_int")
+
+
+def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
+    """
+    Renders the Excel-aligned Sub-Tab 3.1 Pure Standalone Solar PV Generation Simulator view.
     """
     st.markdown("### Photovoltaic Solar Generation Simulator")
     st.caption(

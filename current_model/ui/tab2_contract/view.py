@@ -299,4 +299,5 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
             key_prefix=f"{key_prefix}_compare"
         )
 
+    st.session_state["active_contract"] = contract
     return contract

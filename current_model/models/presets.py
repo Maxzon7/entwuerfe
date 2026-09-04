@@ -132,10 +132,18 @@ def get_preset_factory(key: str) -> Callable[[], List[SimpleConsumer]]:
     return get_industry_preset_consumers
 
 
+
+def get_example1_preset_consumers() -> List[SimpleConsumer]:
+    """Returns the comprehensive European commercial & agro-industrial facility consumer profile (Example1)."""
+    from current_model.core.demo_scenario import get_example1_consumers
+    return get_example1_consumers()
+
+
 PRESET_TEMPLATES: Dict[str, Callable[[], List[SimpleConsumer]]] = {
     "Industry & Manufacturing": get_industry_preset_consumers,
     "Commercial Office Building": get_office_preset_consumers,
     "Mobility & EV Hub": get_ev_hub_preset_consumers,
+    "Example 1: European Commercial Facility": get_example1_preset_consumers,
 }
 
 PRESET_FACTORIES: Dict[str, Any] = {
@@ -145,6 +153,8 @@ PRESET_FACTORIES: Dict[str, Any] = {
     "industry": get_industry_preset_consumers,
     "office": get_office_preset_consumers,
     "ev_hub": get_ev_hub_preset_consumers,
+    "example1": get_example1_preset_consumers,
+    "example 1": get_example1_preset_consumers,
 }
 
 

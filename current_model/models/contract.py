@@ -328,6 +328,31 @@ def get_contract_presets() -> Dict[str, Contract]:
                 {"name": "IVA General", "type": "percentage", "value": 21.0, "description": "Impuesto al Valor Agregado"},
                 {"name": "Tasa Municipal / Alumbrado", "type": "percentage", "value": 6.0, "description": "Contribución municipal"}
             ]
+        ),
+        "Example 1: European Commercial Multi-Tariff (EUR)": Contract(
+            name="Example 1 - European Commercial Multi-Tariff",
+            currency="EUR",
+            base_monthly_fee=95.00,
+            contracted_capacity_kw=400.0,
+            monthly_capacity_tariff=14.50,
+            demand_capacity_tariff=2.50,
+            max_physical_limit_kw=750.0,
+            peak_penalty_rate=28.00,
+            reactive_power_tariff=0.032,
+            min_power_factor=0.92,
+            reactive_power_allowance_pct=33.0,
+            tou_rates=[
+                {"name": "Off-Peak (Valle / Night)", "rate": 0.1350, "start_time": "00:00", "end_time": "06:00"},
+                {"name": "Mid-Peak (Llano / Daytime)", "rate": 0.2150, "start_time": "06:00", "end_time": "17:00"},
+                {"name": "High-Peak (Punta / Evening)", "rate": 0.2950, "start_time": "17:00", "end_time": "22:00"},
+                {"name": "Off-Peak (Valle / Night)", "rate": 0.1350, "start_time": "22:00", "end_time": "24:00"}
+            ],
+            default_energy_rate=0.2150,
+            weekend_is_off_peak=True,
+            taxes_and_fees=[
+                {"name": "Electricity Tax (Stromsteuer)", "type": "per_kwh", "value": 0.0205, "description": "Statutory excise duty"},
+                {"name": "VAT / Mehrwertsteuer", "type": "percentage", "value": 19.00, "description": "Value added tax"}
+            ]
         )
     }
 
