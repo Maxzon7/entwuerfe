@@ -96,7 +96,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
         st.session_state[state_holidays_key] = pd.DataFrame(columns=["date", "holiday_name"])
 
     # 1. Preset & File Transfer Toolbar (.drac / Templates)
-    with st.expander("Profile Presets & File Transfer (.drac)", expanded=True):
+    with st.expander("Profile Presets & File Transfer (.drac)", icon=":material/folder_open:", expanded=True):
         f_col1, f_col2 = st.columns([1, 1])
 
         # LEFT: Upload & Predefined Templates
@@ -138,7 +138,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
                 p_sel_idx = prof_labels.index(curr_prof_sel) if curr_prof_sel in prof_labels else 0
 
                 selected_prof_label = st.selectbox(
-                    "📑 Switch Active Profile:",
+                    "Switch Active Profile:",
                     options=prof_labels,
                     index=p_sel_idx,
                     key=f"{key_prefix}_switch_profile_select"
@@ -158,11 +158,11 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
             p_btn1, p_btn2 = st.columns(2)
             with p_btn1:
                 if selected_preset in PRESET_TEMPLATES:
-                    if st.button("Apply Template", key=f"{key_prefix}_apply_preset", use_container_width=True):
+                    if st.button("Apply Template", icon=":material/playlist_add_check:", key=f"{key_prefix}_apply_preset", use_container_width=True):
                         st.session_state[state_consumers_key] = PRESET_TEMPLATES[selected_preset]()
                         st.rerun()
             with p_btn2:
-                if st.button("Clear All Assets", key=f"{key_prefix}_clear_btn", use_container_width=True):
+                if st.button("Clear All Assets", icon=":material/delete_sweep:", key=f"{key_prefix}_clear_btn", use_container_width=True):
                     st.session_state[state_consumers_key] = []
                     st.rerun()
 
@@ -189,6 +189,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
                 data=drac_profile_content,
                 file_name=custom_prof_filename,
                 mime="application/json",
+                icon=":material/download:",
                 key=f"{key_prefix}_prof_download_btn",
                 use_container_width=True,
                 type="secondary",
@@ -198,7 +199,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
 
 
     # 2. System-wide Holiday Calendar Expander (Treated as Sundays)
-    with st.expander("System-wide Holiday Calendar (Treated as Sundays)", expanded=False):
+    with st.expander("System-wide Holiday Calendar (Treated as Sundays)", icon=":material/calendar_month:", expanded=False):
         st.caption("Add specific holiday dates (YYYY-MM-DD) which will automatically be simulated using the Sunday schedule.")
         edited_holidays = st.data_editor(
             st.session_state[state_holidays_key],

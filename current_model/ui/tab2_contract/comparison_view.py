@@ -32,27 +32,28 @@ from current_model.ui.tab2_contract.comparison_charts import (
 
 def _gather_available_contracts(reference_contract: Contract, key_prefix: str) -> Dict[str, Contract]:
     """
-    Collects all available contracts from session state uploads, presets, and the reference contract.
+    Collects all available contracts from session state uploads, created contracts, presets, and the reference contract.
     """
     all_contracts: Dict[str, Contract] = {}
 
     # 1. Reference contract from Tab 2.1 (Always included as baseline)
     ref_name = getattr(reference_contract, "name", "Reference Contract (Tab 2.1)") or "Reference Contract"
-    ref_key = f"📌 {ref_name} [Baseline 2.1]"
+    ref_key = f"📌 {ref_name} (Baseline 2.1)"
     all_contracts[ref_key] = reference_contract
 
-    # 2. Check for contracts uploaded in Tab 2 uploader
-    # Check both with key_prefix and standard prefixes
-    for k in [f"{key_prefix}_loaded_contracts_dict", "tab2_loaded_contracts_dict", "app_tab2_loaded_contracts_dict"]:
-        if k in st.session_state and isinstance(st.session_state[k], dict):
-            for label, c in st.session_state[k].items():
+    # 2. Check for contracts uploaded or created in Tab 2
+    for k, v in list(st.session_state.items()):
+        if "loaded_contracts_dict" in k and isinstance(v, dict):
+            for label, c in v.items():
                 if isinstance(c, Contract):
-                    all_contracts[label] = c
+                    contract_key = f"📄 {label}"
+                    if contract_key not in all_contracts and label != ref_name:
+                        all_contracts[contract_key] = c
 
     # 3. Presets for additional comparison options
     presets = get_contract_presets()
     for p_name, p_contract in presets.items():
-        preset_key = f"📋 Preset: {p_name}"
+        preset_key = f"⚙️ Preset: {p_name}"
         if preset_key not in all_contracts and p_name != ref_name:
             all_contracts[preset_key] = p_contract
 
@@ -85,17 +86,33 @@ def render_contract_comparison_view(
     with col_sel:
         all_options = list(available_contracts.keys())
         ref_key = all_options[0]  # Reference contract is first
+        multiselect_key = f"{key_prefix}_multiselect_contracts"
 
-        # Default: select all uploaded contracts + reference contract (max 6)
-        default_selected = [k for k in all_options if not k.startswith("📋 Preset:")][:6]
-        if not default_selected:
-            default_selected = all_options[:3]
+        # Sanitize session state selection against active options
+        if multiselect_key not in st.session_state:
+            st.session_state[multiselect_key] = []
+        else:
+            st.session_state[multiselect_key] = [k for k in st.session_state[multiselect_key] if k in all_options]
+
+        # Quick action selection toolbar
+        b1, b2, b3 = st.columns([1.2, 1.2, 2.0])
+        with b1:
+            if st.button("Select All", key=f"{key_prefix}_btn_sel_all", use_container_width=True):
+                st.session_state[multiselect_key] = all_options
+                st.rerun()
+        with b2:
+            if st.button("Clear All", key=f"{key_prefix}_btn_clr_all", use_container_width=True):
+                st.session_state[multiselect_key] = []
+                st.rerun()
+        with b3:
+            if st.button("Baseline + Presets", key=f"{key_prefix}_btn_base_presets", use_container_width=True):
+                st.session_state[multiselect_key] = [k for k in all_options if k.startswith("📌") or k.startswith("⚙️")]
+                st.rerun()
 
         selected_contract_keys = st.multiselect(
             "Contracts to include in comparison:",
             options=all_options,
-            default=default_selected,
-            key=f"{key_prefix}_multiselect_contracts",
+            key=multiselect_key,
             help="Select 2 or more contracts to directly compare side-by-side."
         )
 
@@ -112,7 +129,7 @@ def render_contract_comparison_view(
         )
 
     if len(selected_contract_keys) < 1:
-        st.warning("Please select at least one contract to calculate costs.")
+        st.info("👆 Please select one or more contracts from the dropdown above to view the cost comparison and tariff benchmark.")
         return
 
     # 2. Perform simultaneous financial computation for each selected contract
@@ -251,10 +268,46 @@ def render_contract_comparison_view(
     df_comparison = pd.DataFrame(table_rows)
     st.dataframe(df_comparison, use_container_width=True, hide_index=True)
 
+    # 4. Direct Contract Switcher (Set as Active Status Quo)
+    st.markdown("##### 4. Set as Active Status Quo Contract")
+    st.caption("Directly apply any of the compared contracts as the active reference baseline across Tab 2.1 and the entire application.")
+
+    switch_col1, switch_col2 = st.columns([3, 1])
+    with switch_col1:
+        switchable_contracts = {res["display_name"]: res["contract"] for res in comparison_results}
+        selected_to_switch = st.selectbox(
+            "Select contract to set as active:",
+            options=list(switchable_contracts.keys()),
+            key=f"{key_prefix}_switch_target_select"
+        )
+    with switch_col2:
+        st.write("")
+        st.write("")
+        if st.button("Apply as Active Contract", icon=":material/check_circle:", type="primary", key=f"{key_prefix}_apply_active_btn", use_container_width=True):
+            chosen_contract = switchable_contracts[selected_to_switch]
+            # Synchronize to all tab2 keys
+            for prefix in ["app_tab2", "tab2", "contract"]:
+                st.session_state[f"{prefix}_contract_model"] = chosen_contract
+                st.session_state[f"{prefix}_tou_rates_df"] = pd.DataFrame(chosen_contract.tou_rates) if chosen_contract.tou_rates else pd.DataFrame([
+                    {"name": "Standard Rate", "rate": chosen_contract.default_energy_rate, "start_time": "00:00", "end_time": "24:00"}
+                ])
+                st.session_state[f"{prefix}_taxes_df"] = pd.DataFrame(chosen_contract.taxes_and_fees) if chosen_contract.taxes_and_fees else pd.DataFrame(columns=["name", "type", "value", "description"])
+                st.session_state[f"{prefix}_active_contract_label"] = chosen_contract.name
+                for ed_k in [f"{prefix}_tou_editor", f"{prefix}_taxes_editor"]:
+                    if ed_k in st.session_state:
+                        del st.session_state[ed_k]
+
+            if f"{key_prefix}_multiselect_contracts" in st.session_state:
+                del st.session_state[f"{key_prefix}_multiselect_contracts"]
+
+            st.session_state["active_contract"] = chosen_contract
+            st.success(f"Successfully activated **{chosen_contract.name}** as the status-quo contract!")
+            st.rerun()
+
     st.write("")
 
     # 5. Interactive Visual Benchmark Charts
-    st.markdown("##### 4. Visual Benchmark & Analysis")
+    st.markdown("##### 5. Visual Benchmark & Analysis")
 
     chart_tab1, chart_tab2, chart_tab3 = st.tabs([
         "📊 Cost Components Breakdown",

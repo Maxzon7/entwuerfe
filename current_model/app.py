@@ -1,4 +1,5 @@
 # To Run: python -m streamlit run current_model/app.py
+# Updated: 2026-09-07 17:36 - Solar PV Sizing & Reactive Form Synchronization
 
 """
 ========================================================================================
@@ -44,7 +45,7 @@ apply_custom_styles()
 # 2. Sidebar: Scenario & Active Model Control
 # --------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown("### Scenario & Model Control")
+    st.markdown("### :material/tune: Scenario & Model Control")
     st.caption("Toggle preconfigured end-to-end benchmark scenarios across all application tabs.")
 
     is_example1_active = bool(st.session_state.get("example1_active", False))
@@ -68,7 +69,7 @@ with st.sidebar:
     st.divider()
 
     # Active Model State Inspector
-    st.markdown("#### Current Active Model")
+    st.markdown("#### :material/info: Current Active Model")
     summary = get_active_model_summary()
 
     if summary["is_example1"]:
@@ -78,17 +79,19 @@ with st.sidebar:
             * **Location:** Seville, Spain (EUR)
             * **Load (Tab 1):** 365-Day Commercial (~1,120 MWh/a, 395 kW peak)
             * **Contract (Tab 2):** 400 kW Multi-Tariff (3 TOU Tiers)
-            * **Solar (Tab 3.1):** 696.6 kWp TOPCon (590 kW AC, 180° South)
-            * **Integration (Tab 3.2):** ~62% Self-Consumption, ~65% Autarky
+            * **Solar (Tab 3.1):** 696.6 kWp TOPCon | CAPEX: ~1,136,890 € (LCOE: ~0.059 €/kWh)
+            * **Integration (Tab 3.2):** ~62% Self-Consumption, ~65% Autarky (~6.5 Yrs Payback)
             """
         )
-        if st.button("Reset All Tabs", key="sidebar_reset_btn", use_container_width=True):
+        if st.button("Reset All Tabs", icon=":material/restart_alt:", key="sidebar_reset_btn", use_container_width=True):
             clear_demo_scenario()
             st.rerun()
     else:
         st.info("**Custom / User Defined**")
         c_label = f"{summary['contract_name']} ({summary['contract_currency']})" if summary['has_contract'] else "Unconfigured"
         s_label = f"{summary['solar_kwp']:.1f} kWp ({summary['solar_location']})" if summary['has_solar'] else "Unconfigured"
+        if summary.get("has_financials"):
+            s_label += f" | CAPEX: {summary['solar_capex']:,.0f} {summary.get('contract_currency', 'EUR')}"
         st.markdown(
             f"""
             * **Tab 1 Load:** {summary['load_desc']}
@@ -96,30 +99,31 @@ with st.sidebar:
             * **Tab 3 Solar:** {s_label}
             """
         )
-        if st.button("Load Example1 Scenario", key="sidebar_quick_load_btn", use_container_width=True, type="primary"):
+        if st.button("Load Example1 Scenario", icon=":material/rocket_launch:", key="sidebar_quick_load_btn", use_container_width=True, type="primary"):
             load_example1_scenario()
             st.rerun()
 
 # --------------------------------------------------------------------------
 # 3. Main Header & Scenario Notification Banner
 # --------------------------------------------------------------------------
-st.title("Energy Simulator & Load Profile Analyzer")
+st.title(":material/bolt: Energy Simulator & Load Profile Analyzer")
 st.caption("Modular platform for 24-Hour / 365-Day synthetic load modeling, real-world CSV meter analysis, electricity contract tariffs, and Solar PV generation.")
 
 if is_example1_active:
     st.info(
         "💡 **Active Demo Scenario: Example 1 (European Commercial Benchmark - Seville, Spain | EUR)** — "
         "A cohesive profile is active across Tab 1 (Consumption), Tab 2 (Contract Data), and Tab 3 (Solar PV & Integration). "
-        "You can toggle or inspect this scenario anytime in the sidebar."
+        "You can toggle or inspect this scenario anytime in the sidebar.",
+        icon=":material/lightbulb:"
     )
 
 # --------------------------------------------------------------------------
 # 4. Top-Level Tab Navigation
 # --------------------------------------------------------------------------
 tab_consumption, tab_contract, tab_solar = st.tabs([
-    "1. Consumption",
-    "2. Contract Data",
-    "3. Solar PV Generation"
+    ":material/analytics: 1. Consumption",
+    ":material/description: 2. Contract Data",
+    ":material/solar_power: 3. Solar PV Generation"
 ])
 
 # TAB 1: Consumption

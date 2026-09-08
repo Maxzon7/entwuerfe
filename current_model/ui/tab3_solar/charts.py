@@ -381,3 +381,163 @@ def create_technology_comparison_figure(tech_items: List[Any]) -> go.Figure:
 
     return fig
 
+
+def create_solar_capex_donut_figure(
+    fin_metrics: Any,
+    currency: str = "EUR"
+) -> go.Figure:
+    """
+    Constructs an interactive donut chart illustrating the itemized initial CAPEX breakdown
+    (Modules, Inverter, Substructure, Electrical Installation, Fixed Fees).
+    """
+    fig = go.Figure()
+
+    labels = []
+    values = []
+    colors = []
+
+    if getattr(fin_metrics, "capex_modules", 0) > 0:
+        labels.append("PV Modules")
+        values.append(fin_metrics.capex_modules)
+        colors.append("#38BDF8")  # Sky Blue
+
+    if getattr(fin_metrics, "capex_inverter", 0) > 0:
+        labels.append("Inverter(s)")
+        values.append(fin_metrics.capex_inverter)
+        colors.append("#F59E0B")  # Amber
+
+    if getattr(fin_metrics, "capex_substructure", 0) > 0:
+        labels.append("Substructure & Mounting")
+        values.append(fin_metrics.capex_substructure)
+        colors.append("#10B981")  # Emerald
+
+    if getattr(fin_metrics, "capex_installation", 0) > 0:
+        labels.append("Installation & Grid Connect")
+        values.append(fin_metrics.capex_installation)
+        colors.append("#8B5CF6")  # Purple
+
+    if getattr(fin_metrics, "capex_fixed_fees", 0) > 0:
+        labels.append("Switchgear & Mobilization")
+        values.append(fin_metrics.capex_fixed_fees)
+        colors.append("#EC4899")  # Pink
+
+    if not values or sum(values) <= 0:
+        return fig
+
+    total_val = sum(values)
+
+    fig.add_trace(
+        go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.55,
+            marker=dict(colors=colors, line=dict(color="#0B0F19", width=2)),
+            textinfo="percent+label",
+            textposition="outside",
+            hovertemplate="<b>%{label}</b><br>Amount: <b>%{value:,.2f} " + currency + "</b><br>Share: <b>%{percent}</b><extra></extra>"
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(text=f"<b>Turn-Key CAPEX Investment Breakdown ({total_val:,.0f} {currency})</b>", font=dict(size=14, color="#F8FAFC")),
+        showlegend=False,
+        margin=dict(l=20, r=20, t=50, b=20),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=320,
+        annotations=[
+            dict(
+                text=f"<b>{total_val:,.0f}</b><br><span style='font-size:11px;color:#94A3B8;'>{currency}</span>",
+                x=0.5, y=0.5,
+                font_size=16,
+                showarrow=False
+            )
+        ]
+    )
+
+    return fig
+
+
+def create_solar_cashflow_payback_figure(
+    fin_metrics: Any,
+    currency: str = "EUR"
+) -> go.Figure:
+    """
+    Constructs a 15-year cumulative cashflow and payback timeline chart (matching the reference Excel diagram).
+    Shows the initial investment dip in Year 0 and positive cumulative cashflow crossing the break-even line.
+    """
+    fig = go.Figure()
+
+    table = getattr(fin_metrics, "cash_flow_table", [])
+    if not table:
+        return fig
+
+    years = [0] + [row["year"] for row in table]
+    cum_cf = getattr(fin_metrics, "cumulative_cash_flow", [])
+    if not cum_cf or len(cum_cf) != len(years):
+        cum_cf = [-fin_metrics.total_capex] + [row["cumulative_cash_flow"] for row in table]
+
+    annual_cf = [0.0] + [row["net_cash_flow"] for row in table]
+
+    # Zero Break-Even Line
+    fig.add_hline(
+        y=0.0,
+        line_color="#64748B",
+        line_width=1.5,
+        line_dash="dash",
+        annotation_text="Break-Even / Amortisation",
+        annotation_position="bottom right"
+    )
+
+    # Annual Net Cash Flow Bars
+    fig.add_trace(
+        go.Bar(
+            x=years[1:],
+            y=annual_cf[1:],
+            name="Annual Net Savings / Benefit",
+            marker_color="rgba(56, 189, 248, 0.4)",
+            hovertemplate="Year %{x}: <b>+%{y:,.0f} " + currency + "</b> net/year<extra></extra>"
+        )
+    )
+
+    # Cumulative Cash Flow Line
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_cf,
+            mode="lines+markers",
+            name="Cumulative Net Cash Flow",
+            line=dict(color="#10B981", width=3),
+            marker=dict(size=7, color="#10B981"),
+            hovertemplate="Year %{x}: <b>%{y:,.0f} " + currency + "</b> cumulative<extra></extra>"
+        )
+    )
+
+    # Add Payback marker if reached within horizon
+    pb = getattr(fin_metrics, "payback_period_years", None)
+    if pb is not None and pb <= len(years) - 1:
+        fig.add_vline(
+            x=pb,
+            line_color="#F59E0B",
+            line_width=2,
+            line_dash="dot",
+            annotation_text=f"Payback: {pb:.1f} Yrs",
+            annotation_position="top left"
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(text="<b>15-Year Life-Cycle Cash Flow & Amortisation Curve</b>", font=dict(size=14, color="#F8FAFC")),
+        xaxis=dict(title="Operational Year", tickmode="linear", dtick=1, gridcolor="#1E293B"),
+        yaxis=dict(title=f"Net Cumulative Cash Flow ({currency})", gridcolor="#1E293B"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+        margin=dict(l=40, r=20, t=50, b=40),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=380
+    )
+
+    return fig
+
+

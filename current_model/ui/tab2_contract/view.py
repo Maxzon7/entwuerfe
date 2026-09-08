@@ -89,8 +89,8 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
       - 2.2: Multi-Contract Comparison & Tariff Benchmark
     """
     subtab_config, subtab_compare = st.tabs([
-        "⚙️ 2.1 Contract Configuration & Assessment",
-        "⚖️ 2.2 Multi-Contract Comparison & Tariff Benchmark"
+        ":material/tune: 2.1 Contract Configuration & Assessment",
+        ":material/balance: 2.2 Multi-Contract Comparison & Tariff Benchmark"
     ])
 
     load_data, source_desc = _find_active_load_data_in_session()

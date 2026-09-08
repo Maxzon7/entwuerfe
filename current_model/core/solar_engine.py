@@ -309,12 +309,26 @@ def fetch_pvgis_tmy_data(
         tmy_hourly = data["outputs"]["tmy_hourly"]
         if len(tmy_hourly) >= 8760:
             df_h = pd.DataFrame(tmy_hourly)
+            # PVGIS timestamps are in UTC. Facility load profiles and civil times are in local standard time.
+            # Shift the hourly series by the location's standard timezone offset so noon aligns with 12:00 local time.
+            tz_offset_hours = int(round(longitude / 15.0))
+            raw_ghi = df_h["G(h)"].astype(float).values
+            raw_dni = df_h["Gb(n)"].astype(float).values
+            raw_dhi = df_h["Gd(h)"].astype(float).values
+            raw_temp = df_h["T2m"].astype(float).values
+
+            if tz_offset_hours != 0:
+                raw_ghi = np.roll(raw_ghi, tz_offset_hours)
+                raw_dni = np.roll(raw_dni, tz_offset_hours)
+                raw_dhi = np.roll(raw_dhi, tz_offset_hours)
+                raw_temp = np.roll(raw_temp, tz_offset_hours)
+
             base_times = pd.date_range("2025-01-01 00:00:00", periods=8760, freq="1h")
             df_hourly = pd.DataFrame({
-                "GHI_W_m2": df_h["G(h)"].astype(float).values,
-                "DNI_W_m2": df_h["Gb(n)"].astype(float).values,
-                "DHI_W_m2": df_h["Gd(h)"].astype(float).values,
-                "Temp_Ambient_C": df_h["T2m"].astype(float).values
+                "GHI_W_m2": raw_ghi,
+                "DNI_W_m2": raw_dni,
+                "DHI_W_m2": raw_dhi,
+                "Temp_Ambient_C": raw_temp
             }, index=base_times)
 
             target_idx = pd.date_range("2025-01-01 00:00:00", "2025-12-31 23:45:00", freq="15min")
@@ -546,8 +560,9 @@ def compute_multi_year_risk_profile(
                 gamma_abs = abs(float(config.temp_coefficient_pct_c)) / 100.0
                 f_temp = np.clip(1.0 - np.maximum(0.0, t_cell - 25.0) * gamma_abs, 0.40, 1.00)
                 p_nom = float(config.dc_capacity_kwp)
+                inv_limit = float(config.inverter_capacity_kw) if float(getattr(config, "inverter_capacity_kw", 0.0) or 0.0) > 0.0 else (p_nom / 1.175)
                 p_dc = np.maximum(0.0, p_nom * (poa / 1000.0) * f_temp * (1.0 - config.total_dc_loss_pct / 100.0))
-                p_ac = np.minimum(p_dc * (config.inverter_efficiency_pct / 100.0), config.inverter_capacity_kw)
+                p_ac = np.minimum(p_dc * (config.inverter_efficiency_pct / 100.0), inv_limit)
                 ann_kwh = float(np.sum(p_ac * 0.25))
                 yearly_results[y] = round(ann_kwh, 0)
                 valid_yields.append(ann_kwh)
@@ -565,7 +580,8 @@ def compute_multi_year_risk_profile(
         )
         poa = base_df["POA_W_m2"].to_numpy(dtype=float)
         p_nom = float(config.dc_capacity_kwp)
-        base_kwh = float(np.sum(np.minimum(p_nom * (poa / 1000.0) * 0.95 * (config.inverter_efficiency_pct / 100.0), config.inverter_capacity_kw) * 0.25))
+        inv_limit = float(config.inverter_capacity_kw) if float(getattr(config, "inverter_capacity_kw", 0.0) or 0.0) > 0.0 else (p_nom / 1.175)
+        base_kwh = float(np.sum(np.minimum(p_nom * (poa / 1000.0) * 0.95 * (config.inverter_efficiency_pct / 100.0), inv_limit) * 0.25))
         variances = [-0.042, 0.031, -0.015, 0.048, -0.051, 0.022, -0.010, 0.035, 0.008, -0.026]
         yearly_results.clear()
         valid_yields.clear()
@@ -858,7 +874,7 @@ def simulate_solar_pv_generation(
 
     # 4. Inverter AC Conversion & Inverter Clipping
     eta_inv = float(config.inverter_efficiency_pct) / 100.0
-    p_ac_max = float(config.inverter_capacity_kw)
+    p_ac_max = float(config.inverter_capacity_kw) if float(getattr(config, "inverter_capacity_kw", 0.0) or 0.0) > 0.0 else (p_nom / 1.175)
     p_ac_uncapped = p_dc * eta_inv
     p_ac = np.minimum(p_ac_uncapped, p_ac_max)
     clipping_loss = np.maximum(0.0, p_ac_uncapped - p_ac_max)

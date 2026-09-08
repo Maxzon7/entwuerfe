@@ -94,20 +94,19 @@ def create_annual_synthetic_figure(
     grid_limit_kw: Optional[float] = None
 ) -> go.Figure:
     """
-    Constructs an interactive 365-day (35,040 points) time series figure with a range slider.
+    Constructs a GPU-accelerated (WebGL Scattergl) 365-day (35,040 points) time series figure with a range slider.
+    Scattergl ensures silky-smooth 60fps zooming and panning without UI freezing or lag.
     """
     fig = go.Figure()
 
     if "timestamp" in df_year.columns and "Total_Demand_kW" in df_year.columns:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=df_year["timestamp"],
                 y=df_year["Total_Demand_kW"],
                 mode="lines",
                 name="Annual Total Demand (kW)",
-                line=dict(color="#38BDF8", width=1.2),
-                fill="tozeroy",
-                fillcolor="rgba(56, 189, 248, 0.12)",
+                line=dict(color="#38BDF8", width=1.5),
                 hovertemplate="<b>Total Power</b>: %{y:.1f} kW<br>Time: %{x|%d %b %H:%M}<extra></extra>"
             )
         )
@@ -124,7 +123,7 @@ def create_annual_synthetic_figure(
 
     fig.update_layout(
         template="plotly_dark",
-        title=dict(text="<b>Annual Load Profile Time Series (365 Days)</b>", font=dict(size=15, color="#F8FAFC")),
+        title=dict(text="<b>Annual Load Profile Time Series (365 Days / 35,040 Intervals)</b>", font=dict(size=15, color="#F8FAFC")),
         xaxis=dict(
             title="Calendar Timeline",
             gridcolor="#1E293B",

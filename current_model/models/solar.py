@@ -200,6 +200,62 @@ class TechnologyComparisonItem:
 
 
 @dataclass
+class SolarFinancialConfig:
+    """Represents financial, investment, and operational cost parameters for the Solar PV installation."""
+    is_enabled: bool = False                      # False if user chooses to leave financial data empty
+    currency: str = "EUR"                         # Currency code / symbol (e.g. EUR, USD, ARS)
+
+    # CAPEX Parameter Breakdown (DRACBV Kosten-/Berechnungs-Dashboard)
+    cost_modules_per_wp: Optional[float] = None   # €/Wp (e.g. 1.00 €/Wp)
+    cost_inverter_per_w: Optional[float] = None   # €/W AC (e.g. 0.07 €/W)
+    cost_substructure_per_wp: Optional[float] = None # €/Wp (Maschinenbau/Unterkonstruktion, e.g. 0.15 €/Wp)
+    cost_installation_per_wp: Optional[float] = None # €/Wp (Elektrische Montage & Installation, e.g. 0.35 €/Wp)
+    fixed_switchgear_cost: float = 0.0            # Zählerschrank (€)
+    fixed_travel_fee: float = 0.0                 # Einmalige Anfahrtsgebühr (€)
+    custom_additional_capex: float = 0.0          # Additional custom initial investment (€)
+
+    # Operational Parameters (OPEX & Lifecycle Assumptions)
+    annual_opex_pct: float = 1.0                  # Annual O&M, insurance & monitoring (% of CAPEX per year)
+    annual_opex_fixed: float = 0.0                # Optional fixed OPEX per year (€/a)
+    discount_rate_pct: float = 5.0                # Weighted average cost of capital / Kalkulationszins (%)
+    electricity_price_inflation_pct: float = 3.0  # Annual electricity price escalation (%)
+    feed_in_tariff_per_kwh: float = 0.06          # Export compensation rate for surplus solar power (€/kWh)
+    analysis_horizon_years: int = 15              # Life-cycle economic assessment horizon (15–25 years)
+
+
+@dataclass
+class SolarFinancialMetrics:
+    """Comprehensive standalone and lifecycle financial performance metrics for Solar PV."""
+    is_configured: bool = False
+    currency: str = "EUR"
+
+    # CAPEX Breakdown
+    capex_modules: float = 0.0
+    capex_inverter: float = 0.0
+    capex_substructure: float = 0.0
+    capex_installation: float = 0.0
+    capex_fixed_fees: float = 0.0
+    total_capex: float = 0.0
+    capex_per_kwp: float = 0.0                    # Specific investment (€/kWp)
+
+    # Operational Economics
+    annual_opex_year1: float = 0.0                # Year 1 maintenance cost
+    lifetime_total_generation_kwh: float = 0.0    # 15-year cumulative AC energy
+    lcoe_per_kwh: float = 0.0                     # Levelized Cost of Electricity (€/kWh)
+
+    # Cashflow & Trajectory (15 Years)
+    cash_flow_table: List[Dict[str, Any]] = field(default_factory=list)
+    cumulative_cash_flow: List[float] = field(default_factory=list)
+
+    # Return on Investment Indicators (when coupled with load/avoided costs or flat rate)
+    payback_period_years: Optional[float] = None
+    discounted_payback_years: Optional[float] = None
+    npv: Optional[float] = None
+    irr_pct: Optional[float] = None
+    total_lifetime_savings: float = 0.0
+
+
+@dataclass
 class SolarSimulationResult:
     """Container for complete solar PV simulation results."""
     config: SolarPVConfig
@@ -211,5 +267,7 @@ class SolarSimulationResult:
     multi_year_yields: List[Dict[str, Any]] = field(default_factory=list)  # 15-year degradation profile
     technology_comparison: List[TechnologyComparisonItem] = field(default_factory=list)
     multi_year_risk_summary: Optional[Dict[str, Any]] = None
+    financial_config: Optional[SolarFinancialConfig] = None
+    financial_metrics: Optional[SolarFinancialMetrics] = None
 
 

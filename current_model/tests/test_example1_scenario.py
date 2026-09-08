@@ -102,8 +102,8 @@ class TestExample1Scenario(unittest.TestCase):
         self.assertTrue(any("VAT" in name or "Mehrwertsteuer" in name for name in tax_names))
 
     def test_example1_solar_setup_european_benchmark(self):
-        """Verify the European solar installation in Seville, Spain with optimal South orientation."""
-        cfg, loc = get_example1_solar_setup()
+        """Verify the European solar installation in Seville, Spain with optimal South orientation and financials."""
+        cfg, loc, fin = get_example1_solar_setup()
 
         # Seville, Spain location
         self.assertIn("Seville", loc.name)
@@ -119,6 +119,13 @@ class TestExample1Scenario(unittest.TestCase):
         # South orientation in Northern Hemisphere
         self.assertEqual(cfg.tilt_deg, 30.0)
         self.assertEqual(cfg.azimuth_deg, 180.0, "Azimuth in Europe / Northern Hemisphere must be 180° for South-facing.")
+
+        # Financial parameters
+        self.assertTrue(fin.is_enabled)
+        self.assertEqual(fin.cost_modules_per_wp, 1.00)
+        self.assertEqual(fin.cost_inverter_per_w, 0.07)
+        self.assertEqual(fin.cost_substructure_per_wp, 0.15)
+        self.assertEqual(fin.cost_installation_per_wp, 0.35)
 
     def test_one_click_load_and_clear_scenario(self):
         """Verify load_example1_scenario() populates all 4 tabs consistently and clear_demo_scenario() resets."""

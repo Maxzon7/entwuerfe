@@ -33,14 +33,14 @@ def render_csv_uploader_section(key_prefix: str = "csv_inspector") -> Tuple[Opti
         st.write("")
         st.write("")
         if st.session_state.get(f"{key_prefix}_demo_loaded"):
-            if st.button("🔄 Reset / Reload Demo Data", key=f"{key_prefix}_reload_btn", use_container_width=True):
+            if st.button("Reset / Reload Demo Data", icon=":material/refresh:", key=f"{key_prefix}_reload_btn", use_container_width=True):
                 keys_to_clear = [k for k in st.session_state if k.startswith(key_prefix)]
                 for k in keys_to_clear:
                     del st.session_state[k]
                 st.session_state[f"{key_prefix}_demo_loaded"] = True
                 st.rerun()
         else:
-            if st.button("Load 15-Min Demo CSV", key=f"{key_prefix}_demo_btn", use_container_width=True):
+            if st.button("Load 15-Min Demo CSV", icon=":material/play_circle:", key=f"{key_prefix}_demo_btn", use_container_width=True):
                 keys_to_clear = [k for k in st.session_state if k.startswith(key_prefix)]
                 for k in keys_to_clear:
                     del st.session_state[k]

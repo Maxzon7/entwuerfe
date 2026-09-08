@@ -45,13 +45,15 @@ class TimeWindow:
         end_time: datetime.time = datetime.time(16, 0),
         has_peak: bool = False,
         peak_power_kw: float = 0.0,
-        peak_duration_min: int = 30
+        peak_duration_min: int = 30,
+        is_24h: bool = False
     ):
         self.start_time = start_time
         self.end_time = end_time
         self.has_peak = bool(has_peak)
         self.peak_power_kw = float(peak_power_kw)
         self.peak_duration_min = int(peak_duration_min)
+        self.is_24h = bool(is_24h)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the TimeWindow instance to a dictionary for JSON/State storage."""
@@ -60,20 +62,22 @@ class TimeWindow:
             "end_time": self.end_time.strftime("%H:%M"),
             "has_peak": self.has_peak,
             "peak_power_kw": self.peak_power_kw,
-            "peak_duration_min": self.peak_duration_min
+            "peak_duration_min": self.peak_duration_min,
+            "is_24h": self.is_24h
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TimeWindow":
         """Deserializes a dictionary back into a TimeWindow object."""
-        start_parts = [int(x) for x in data["start_time"].split(":")]
-        end_parts = [int(x) for x in data["end_time"].split(":")]
+        start_parts = [int(x) for x in data.get("start_time", "08:00").split(":")]
+        end_parts = [int(x) for x in data.get("end_time", "16:00").split(":")]
         return cls(
             start_time=datetime.time(start_parts[0], start_parts[1]),
             end_time=datetime.time(end_parts[0], end_parts[1]),
             has_peak=data.get("has_peak", False),
             peak_power_kw=data.get("peak_power_kw", 0.0),
-            peak_duration_min=data.get("peak_duration_min", 30)
+            peak_duration_min=data.get("peak_duration_min", 30),
+            is_24h=data.get("is_24h", False)
         )
 
 
@@ -94,6 +98,8 @@ class SimpleConsumer:
         active_days: Optional[List[int]] = None,
         seasonal_pattern: str = "flat",
         monthly_factors: Optional[List[float]] = None,
+        standby_power_ratio: float = 0.0,
+        is_active: bool = True,
         id: Optional[str] = None
     ):
         self.id = id if id else str(uuid.uuid4())[:8]
@@ -103,7 +109,8 @@ class SimpleConsumer:
         self.category = category
         self.count = max(1, int(count))
         self.time_windows = time_windows if time_windows is not None else []
-        self.is_active = True
+        self.is_active = bool(is_active)
+        self.standby_power_ratio = max(0.0, min(1.0, float(standby_power_ratio)))
 
         # Weekdays: 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday, 5=Saturday, 6=Sunday
         # Default: Monday to Friday [0, 1, 2, 3, 4]
@@ -131,16 +138,17 @@ class SimpleConsumer:
     def get_24h_array(self) -> np.ndarray:
         """
         Computes a 96-element array of power (kW) for 15-minute intervals across all windows.
-        Includes overnight shifts and startup peak calculations.
+        Includes overnight shifts, 24/7 continuous operation, standby off-hours power, and startup peak calculations.
         """
-        curve = np.zeros(96, dtype=float)
+        standby_kw = (self.power_kw * self.standby_power_ratio) * self.count
+        curve = np.full(96, standby_kw, dtype=float)
         if not self.is_active or not self.time_windows:
-            return curve
+            return curve if self.is_active else np.zeros(96, dtype=float)
 
         for window in self.time_windows:
             start_m = window.start_time.hour * 60 + window.start_time.minute
             end_m = window.end_time.hour * 60 + window.end_time.minute
-            is_24h = (start_m == 0 and end_m == 0 and window.start_time == window.end_time)
+            is_24h = getattr(window, "is_24h", False) or (start_m == 0 and end_m == 0 and window.start_time == window.end_time)
 
             for step in range(96):
                 slot_start = step * 15
@@ -159,7 +167,10 @@ class SimpleConsumer:
                     val = self.power_kw
                     if window.has_peak and window.peak_power_kw > self.power_kw:
                         peak_dur = window.peak_duration_min
-                        if start_m < end_m:
+                        if is_24h:
+                            if slot_start < peak_dur:
+                                val = window.peak_power_kw
+                        elif start_m < end_m:
                             if slot_start < (start_m + peak_dur):
                                 val = window.peak_power_kw
                         else:
@@ -174,10 +185,15 @@ class SimpleConsumer:
     def get_daily_array_for_weekday(self, day_of_week: int = 0, month: int = 1) -> np.ndarray:
         """
         Calculates the 96-slot array for a specific day of week (0=Mon .. 6=Sun) and month (1..12).
-        If the day of week is not in active_days, returns an all-zero array.
+        If the day of week is not in active_days, returns an all-zero or standby-only array.
         """
-        if not self.is_active or day_of_week not in self.active_days:
+        if not self.is_active:
             return np.zeros(96, dtype=float)
+
+        if day_of_week not in self.active_days:
+            # Standby load also applies on non-working days if configured
+            standby_kw = (self.power_kw * self.standby_power_ratio) * self.count
+            return np.full(96, standby_kw, dtype=float)
 
         base_curve = self.get_24h_array()
         season_factor = self.get_seasonal_factor(month)
@@ -201,6 +217,7 @@ class SimpleConsumer:
             "active_days": self.active_days,
             "seasonal_pattern": self.seasonal_pattern,
             "monthly_factors": self.monthly_factors,
+            "standby_power_ratio": self.standby_power_ratio,
             "is_active": self.is_active
         }
 
@@ -217,6 +234,7 @@ class SimpleConsumer:
             active_days=data.get("active_days", [0, 1, 2, 3, 4]),
             seasonal_pattern=data.get("seasonal_pattern", "flat"),
             monthly_factors=data.get("monthly_factors", [1.0] * 12),
+            standby_power_ratio=data.get("standby_power_ratio", 0.0),
             time_windows=windows
         )
 

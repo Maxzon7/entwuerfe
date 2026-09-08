@@ -17,7 +17,7 @@ import streamlit as st
 import folium
 from streamlit_folium import st_folium
 
-from current_model.models.solar import SolarLocation, SolarPVConfig
+from current_model.models.solar import SolarLocation, SolarPVConfig, SolarFinancialConfig
 from current_model.core.solar_engine import search_locations_open_meteo
 
 SITE_PRESETS = {
@@ -107,6 +107,13 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
                         st.session_state[state_lon_key] = chosen["lon"]
                         st.session_state[state_name_key] = chosen["display_name"]
                         st.session_state[state_elev_key] = chosen.get("elevation", 500.0)
+                        for k in [
+                            "app_tab3_form_tilt", "app_tab3_form_azimuth",
+                            "tab3_solar_form_tilt", "tab3_solar_form_azimuth",
+                            "solar_cfg_form_tilt", "solar_cfg_form_azimuth"
+                        ]:
+                            if k in st.session_state:
+                                del st.session_state[k]
                         st.rerun()
             else:
                 st.caption("No matching cities found. Try another spelling.")
@@ -125,6 +132,13 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
                 st.session_state[state_lon_key] = p_data["lon"]
                 st.session_state[state_name_key] = p_data["name"]
                 st.session_state[state_elev_key] = p_data.get("elevation", 500.0)
+                for k in [
+                    "app_tab3_form_tilt", "app_tab3_form_azimuth",
+                    "tab3_solar_form_tilt", "tab3_solar_form_azimuth",
+                    "solar_cfg_form_tilt", "solar_cfg_form_azimuth"
+                ]:
+                    if k in st.session_state:
+                        del st.session_state[k]
                 st.rerun()
 
     cur_lat = float(st.session_state[state_lat_key])
@@ -132,7 +146,7 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
     cur_name = st.session_state.get(state_name_key, f"Site ({cur_lat:.3f}, {cur_lon:.3f})")
 
     # Interactive Folium Map (Loaded on-demand inside expander to eliminate lag)
-    with st.expander("Interactive Site Map & Pin Location", expanded=False):
+    with st.expander("Interactive Site Map & Pin Location", icon=":material/map:", expanded=False):
         st.caption("Click anywhere on the map to pin exact site GPS coordinates:")
         m = folium.Map(
             location=[cur_lat, cur_lon],
@@ -238,7 +252,7 @@ def render_solar_config_form(
         else:
             cfg = current_config
     else:
-        cfg = SolarPVConfig(module_count=0, module_power_wp=450.0, inverter_capacity_kw=0.0)
+        cfg = SolarPVConfig(module_count=600, module_power_wp=450.0, inverter_capacity_kw=230.0)
 
     is_south = location.latitude < 0
     default_azimuth = 0.0 if is_south else 180.0
@@ -369,13 +383,14 @@ def render_solar_config_form(
             def_d2 = getattr(cfg, "annual_degradation_pct", 0.40)
 
         with c2:
+            default_mod_count = int(st.session_state.get(f"{key_prefix}_mod_count", getattr(cfg, "module_count", 600) or 600))
             mod_count = st.number_input(
                 "Amount of Modules (Units):",
                 min_value=0,
                 max_value=200000,
-                value=int(getattr(cfg, "module_count", 0)),
+                value=default_mod_count,
                 step=10,
-                help="Total number of physical PV panels (e.g. 80, 550, 600, 1548).",
+                help="Total number of physical PV panels (e.g. 600, 1548).",
                 key=f"{key_prefix}_mod_count"
             )
 
@@ -391,12 +406,12 @@ def render_solar_config_form(
                 key=f"{key_prefix}_mod_wp"
             )
 
-        # Dynamic Calculated DC Capacity Info Banner (Live!)
+        # Dynamic Calculated DC Capacity Info Banner
         calc_dc_kwp = round((mod_count * mod_wp) / 1000.0, 2)
         if calc_dc_kwp > 0:
             st.info(f"**Installed DC Generator Capacity:** `{calc_dc_kwp:,.2f} kWp` ({mod_count:,} Modules × {mod_wp:.0f} Wp)")
         else:
-            st.info("**Installed DC Generator Capacity:** `0.00 kWp` (Enter module count above or click 'Load Example Case')")
+            st.info("**Installed DC Generator Capacity:** `0.00 kWp` *(Tip: Enter your module count and click 'Calculate Solar PV Generation' at the bottom of this form to apply)*")
 
         # 3. Physical Dimensions & Area Requirements (Year Sheet)
         st.markdown("##### 3. Physical Dimensions & Required Area (Year Sheet)")
@@ -502,8 +517,8 @@ def render_solar_config_form(
             )
         with g3:
             # Dynamically auto-scale recommended inverter size if not manually customized
-            rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1)) if calc_dc_kwp > 0 else 0.0
-            init_inv_kw = float(getattr(cfg, "inverter_capacity_kw", 0.0))
+            rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1)) if calc_dc_kwp > 0 else 380.0
+            init_inv_kw = float(getattr(cfg, "inverter_capacity_kw", 0.0) or 0.0)
             if init_inv_kw <= 0.0 and rec_inv_kw > 0.0:
                 init_inv_kw = rec_inv_kw
             inverter_kw = st.number_input(
@@ -527,15 +542,136 @@ def render_solar_config_form(
                 key=f"{key_prefix}_inv_eff"
             )
 
+        # 5. Solar Financial & Investment Parameters (DRACBV Kosten-/Berechnungs-Dashboard)
+        st.markdown("##### 5. Solar Financial & Turn-Key Investment Costs (Optional)")
+        st.caption("Enter investment costs to calculate CAPEX breakdown, LCOE (€/kWh), and 15-year life-cycle ROI. *Leave empty/unchecked if you wish to run technical generation only.*")
+
+        existing_fin = st.session_state.get(f"{key_prefix}_fin_config") or SolarFinancialConfig()
+        is_fin_active = st.checkbox(
+            "Enable Solar Financial Assessment & Turn-Key CAPEX Calculation",
+            value=getattr(existing_fin, "is_enabled", False),
+            key=f"{key_prefix}_enable_financials",
+            help="When checked, computes itemized CAPEX (modules, inverters, substructure, installation), LCOE, and cash-flow timeline."
+        )
+
+        fin_curr = getattr(existing_fin, "currency", "EUR")
+        fin_mod_wp = getattr(existing_fin, "cost_modules_per_wp", None)
+        fin_inv_w = getattr(existing_fin, "cost_inverter_per_w", None)
+        fin_sub_wp = getattr(existing_fin, "cost_substructure_per_wp", None)
+        fin_inst_wp = getattr(existing_fin, "cost_installation_per_wp", None)
+        fin_switch = getattr(existing_fin, "fixed_switchgear_cost", 0.0)
+        fin_travel = getattr(existing_fin, "fixed_travel_fee", 0.0)
+        fin_opex = getattr(existing_fin, "annual_opex_pct", 1.0)
+        fin_infl = getattr(existing_fin, "electricity_price_inflation_pct", 3.0)
+        fin_disc = getattr(existing_fin, "discount_rate_pct", 5.0)
+        fin_feed = getattr(existing_fin, "feed_in_tariff_per_kwh", 0.06)
+
+        fc1, fc2, fc3 = st.columns(3)
+        with fc1:
+            inp_curr = st.text_input("Currency Code / Symbol:", value=fin_curr, disabled=not is_fin_active, key=f"{key_prefix}_fin_curr")
+            inp_mod_wp = st.number_input(
+                f"Solar Modules ({inp_curr}/Wp):",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(fin_mod_wp if fin_mod_wp is not None else 1.00),
+                step=0.05,
+                format="%.2f",
+                disabled=not is_fin_active,
+                help="Turn-key cost per Watt-peak for modules (e.g. 1.00 €/Wp).",
+                key=f"{key_prefix}_fin_mod_wp"
+            )
+            inp_switch = st.number_input(
+                f"Switchgear Cabinet / Zählerschrank ({inp_curr}):",
+                min_value=0.0,
+                value=float(fin_switch),
+                step=250.0,
+                disabled=not is_fin_active,
+                help="Fixed meter and switchgear cabinet fee (e.g. 2,500 €).",
+                key=f"{key_prefix}_fin_switch"
+            )
+
+        with fc2:
+            inp_inv_w = st.number_input(
+                f"Inverter AC Power ({inp_curr}/W AC):",
+                min_value=0.0,
+                max_value=2.0,
+                value=float(fin_inv_w if fin_inv_w is not None else 0.07),
+                step=0.01,
+                format="%.2f",
+                disabled=not is_fin_active,
+                help="Cost per Watt AC for inverters (e.g. 0.07 €/W = 70 €/kW).",
+                key=f"{key_prefix}_fin_inv_w"
+            )
+            inp_sub_wp = st.number_input(
+                f"Substructure / Maschinenbau ({inp_curr}/Wp):",
+                min_value=0.0,
+                max_value=5.0,
+                value=float(fin_sub_wp if fin_sub_wp is not None else 0.15),
+                step=0.01,
+                format="%.2f",
+                disabled=not is_fin_active,
+                help="Mounting racks, substructure & trackers (e.g. 0.15 €/Wp).",
+                key=f"{key_prefix}_fin_sub_wp"
+            )
+            inp_travel = st.number_input(
+                f"Mobilization / Anfahrtsgebühr ({inp_curr}):",
+                min_value=0.0,
+                value=float(fin_travel),
+                step=100.0,
+                disabled=not is_fin_active,
+                help="Fixed site mobilization & travel charge (e.g. 1,000 €).",
+                key=f"{key_prefix}_fin_travel"
+            )
+
+        with fc3:
+            inp_inst_wp = st.number_input(
+                f"Installation & AC Connect ({inp_curr}/Wp):",
+                min_value=0.0,
+                max_value=5.0,
+                value=float(fin_inst_wp if fin_inst_wp is not None else 0.35),
+                step=0.01,
+                format="%.2f",
+                disabled=not is_fin_active,
+                help="Electrical wiring, assembly and certification (e.g. 0.35 €/Wp).",
+                key=f"{key_prefix}_fin_inst_wp"
+            )
+            inp_opex = st.number_input(
+                "Annual O&M & Insurance (% of CAPEX/a):",
+                min_value=0.0,
+                max_value=10.0,
+                value=float(fin_opex),
+                step=0.1,
+                format="%.1f",
+                disabled=not is_fin_active,
+                help="Annual operational expenditure and maintenance reserve.",
+                key=f"{key_prefix}_fin_opex"
+            )
+            inp_disc = st.number_input(
+                "Discount Rate / Kalkulationszins (%):",
+                min_value=0.0,
+                max_value=20.0,
+                value=float(fin_disc),
+                step=0.5,
+                format="%.1f",
+                disabled=not is_fin_active,
+                help="Capital interest rate used for NPV and LCOE discounting.",
+                key=f"{key_prefix}_fin_disc"
+            )
+
         submitted = st.form_submit_button(
             "Calculate Solar PV Generation & Multi-Technology Comparison",
+            icon=":material/calculate:",
             type="primary",
             use_container_width=True
         )
 
     if submitted and mod_count <= 0:
-        st.warning("Please enter a module count greater than 0 before calculating, or click 'Load Example Case' above.")
-        submitted = False
+        st.error("⚠️ Sizing Required: Please enter a module count greater than 0 before calculating, or click 'Load Example Case' above.")
+
+    calc_dc = round((mod_count * mod_wp) / 1000.0, 2)
+    final_inv_kw = float(inverter_kw)
+    if final_inv_kw <= 0.0 and calc_dc > 0:
+        final_inv_kw = float(round(calc_dc / 1.175, 1))
 
     updated_config = SolarPVConfig(
         module_count=int(mod_count),
@@ -552,7 +688,7 @@ def render_solar_config_form(
         tilt_deg=float(tilt_deg),
         azimuth_deg=float(azimuth_deg),
         albedo=0.20,
-        inverter_capacity_kw=float(inverter_kw),
+        inverter_capacity_kw=float(final_inv_kw),
         inverter_efficiency_pct=float(inverter_eff),
         soiling_loss_pct=2.0,
         shading_loss_pct=1.5,
@@ -562,4 +698,20 @@ def render_solar_config_form(
         selected_weather_year=int(selected_year)
     )
 
-    return updated_config, submitted
+    fin_config = SolarFinancialConfig(
+        is_enabled=bool(is_fin_active),
+        currency=str(inp_curr or "EUR").strip(),
+        cost_modules_per_wp=float(inp_mod_wp) if is_fin_active else None,
+        cost_inverter_per_w=float(inp_inv_w) if is_fin_active else None,
+        cost_substructure_per_wp=float(inp_sub_wp) if is_fin_active else None,
+        cost_installation_per_wp=float(inp_inst_wp) if is_fin_active else None,
+        fixed_switchgear_cost=float(inp_switch) if is_fin_active else 0.0,
+        fixed_travel_fee=float(inp_travel) if is_fin_active else 0.0,
+        annual_opex_pct=float(inp_opex),
+        discount_rate_pct=float(inp_disc),
+        electricity_price_inflation_pct=float(fin_infl),
+        feed_in_tariff_per_kwh=float(fin_feed),
+        analysis_horizon_years=15
+    )
+
+    return updated_config, fin_config, submitted

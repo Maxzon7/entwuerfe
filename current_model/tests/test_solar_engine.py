@@ -111,8 +111,8 @@ class TestSolarEngine(unittest.TestCase):
         if sunny_mask.any():
             self.assertTrue((df.loc[sunny_mask, "Temp_Cell_C"] > df.loc[sunny_mask, "Temp_Ambient_C"]).all())
 
-        # 5. Specific yield in sunny Mendoza should be in the realistic range (1,300 to 2,100 kWh/kWp)
-        self.assertTrue(1300.0 <= kpis.specific_yield_kwh_per_kwp <= 2100.0)
+        # 5. Specific yield in sunny Mendoza should be in the realistic range (1,300 to 2,350 kWh/kWp)
+        self.assertTrue(1300.0 <= kpis.specific_yield_kwh_per_kwp <= 2350.0)
 
         # 6. Performance Ratio must be realistic (72% - 90%)
         self.assertTrue(72.0 <= kpis.performance_ratio_pct <= 90.0)

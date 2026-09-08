@@ -80,7 +80,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                 st.session_state["tab1_active_source"] = "synthetic"
                 st.rerun()
         with col_demo2:
-            if st.button("Navigate to Tab 1 (Consumption)", key=f"{key_prefix}_go_tab1_btn"):
+            if st.button("Navigate to Tab 1 (Consumption)", icon=":material/arrow_forward:", key=f"{key_prefix}_go_tab1_btn"):
                 st.info("Switch to Tab 1 at the top of the page to import your real meter CSV data.")
         return
 
@@ -204,7 +204,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
     with sc_sync:
         if parent_cfg is not None:
-            if st.button("Sync with Sub-Tab 3.1", key=f"{key_prefix}_sync_btn", help="Import the active PV installation parameters currently configured in Sub-Tab 3.1."):
+            if st.button("Sync with Sub-Tab 3.1", icon=":material/sync:", key=f"{key_prefix}_sync_btn", help="Import the active PV installation parameters currently configured in Sub-Tab 3.1."):
                 curr_cfg.module_count = parent_cfg.module_count
                 curr_cfg.module_power_wp = parent_cfg.module_power_wp
                 curr_cfg.dc_capacity_kwp = parent_cfg.dc_capacity_kwp
@@ -215,7 +215,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                 st.rerun()
 
     # Sizing Parameter Inputs
-    with st.expander("Sizing & Installation Parameters", expanded=True):
+    with st.expander("Sizing & Installation Parameters", icon=":material/tune:", expanded=True):
         p_col1, p_col2, p_col3, p_col4 = st.columns(4)
 
         with p_col1:
@@ -496,6 +496,65 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                     }
                 ]
                 st.dataframe(pd.DataFrame(fin_rows), use_container_width=True, hide_index=True)
+
+            # 3. 15-Year Life-Cycle Economic Evaluation & Payback (If Solar CAPEX is configured)
+            from current_model.core.solar_financial_engine import compute_solar_financial_metrics
+            from current_model.ui.tab3_solar.charts import create_solar_cashflow_payback_figure
+
+            solar_fin_cfg = st.session_state.get("solar_financial_config") or st.session_state.get("app_tab3_fin_config")
+
+            if solar_fin_cfg and solar_fin_cfg.is_enabled:
+                export_rev = kpis.surplus_generation_kwh * (solar_fin_cfg.feed_in_tariff_per_kwh or 0.06)
+                coupled_fin_metrics = compute_solar_financial_metrics(
+                    config=config,
+                    fin_config=solar_fin_cfg,
+                    annual_generation_kwh=kpis.annual_energy_kwh,
+                    annual_avoided_cost=cost_savings_gross,
+                    annual_export_revenue=export_rev
+                )
+
+                if coupled_fin_metrics.is_configured and coupled_fin_metrics.total_capex > 0:
+                    st.write("")
+                    st.markdown("##### 15-Year Investment Payback & Life-Cycle Economic Return")
+                    st.caption("Couples the turn-key solar installation investment (CAPEX) with your actual annual bill savings to project 15-year return on investment:")
+
+                    roi1, roi2, roi3, roi4 = st.columns(4)
+                    with roi1:
+                        pb_text = f"{coupled_fin_metrics.payback_period_years:.1f} Years" if coupled_fin_metrics.payback_period_years else "Over 15 Years"
+                        render_kpi_card(
+                            "Amortisation / Payback",
+                            pb_text,
+                            f"Discounted: {coupled_fin_metrics.discounted_payback_years:.1f} Yrs" if coupled_fin_metrics.discounted_payback_years else "Break-even timeline",
+                            status="ok" if coupled_fin_metrics.payback_period_years and coupled_fin_metrics.payback_period_years <= 10.0 else "default"
+                        )
+                    with roi2:
+                        render_kpi_card(
+                            "15-Year Net Benefit",
+                            f"{coupled_fin_metrics.total_lifetime_savings:,.2f} {curr}",
+                            f"Cumulative cash savings after CAPEX & OPEX",
+                            status="ok" if coupled_fin_metrics.total_lifetime_savings > 0 else "alert"
+                        )
+                    with roi3:
+                        render_kpi_card(
+                            "Net Present Value (NPV)",
+                            f"{coupled_fin_metrics.npv:,.2f} {curr}",
+                            f"Discounted at {solar_fin_cfg.discount_rate_pct:.1f}% interest"
+                        )
+                    with roi4:
+                        irr_text = f"{coupled_fin_metrics.irr_pct:.1f}%" if coupled_fin_metrics.irr_pct is not None else "N/A"
+                        render_kpi_card(
+                            "Internal Rate of Return (IRR)",
+                            irr_text,
+                            f"Capital return rate across horizon"
+                        )
+
+                    # 15-Year Life-Cycle Cashflow Chart
+                    fig_cf = create_solar_cashflow_payback_figure(coupled_fin_metrics, currency=curr)
+                    st.plotly_chart(fig_cf, use_container_width=True)
+
+                    # 15-Year Table (Matching GRID vs GRID+SOLAR Excel Sheet)
+                    with st.expander("15-Year Life-Cycle Year-by-Year Table (Cashflow, Degradation, OPEX, Savings)", icon=":material/view_timeline:", expanded=False):
+                        st.dataframe(pd.DataFrame(coupled_fin_metrics.cash_flow_table), use_container_width=True, hide_index=True)
 
         except Exception as err:
             st.warning(f"Unable to calculate financial savings against Tab 2 contract: {err}")

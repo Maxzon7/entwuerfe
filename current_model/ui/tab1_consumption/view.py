@@ -23,8 +23,8 @@ def render_tab1_consumption(key_prefix: str = "tab1") -> None:
     app_mode = st.radio(
         "Select Consumption Source:",
         options=[
-            "⚡ Synthetic Load Simulator (24h / 365-Day)",
-            "📁 CSV Real Meter Data Visualizer"
+            ":material/bolt: Synthetic Load Simulator (24h / 365-Day)",
+            ":material/upload_file: CSV Real Meter Data Visualizer"
         ],
         horizontal=True,
         key=f"{key_prefix}_mode_radio"

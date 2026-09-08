@@ -4,19 +4,21 @@ A modular, enterprise-grade simulation and analytics platform for electrical loa
 
 ---
 
-## 🎨 UI Iconography & Styling Policy (Mandatory Guidelines)
+## 🎨 UI Iconography & Visual Presentation Policy (Mandatory Guidelines)
 
 > [!IMPORTANT]
-> **Icon Standard:** To maintain a clean, professional, and subtle aesthetic, **only Font Awesome 6, Remix Icon, and Flag Icons** must be used across all components, headers, and buttons.
+> **1. Iconography Standard (Piktogramme & UI Icons):**
+> To maintain a clean, professional, and subtle aesthetic, **exclusively Streamlit's native Google Material Symbols (`:material/<icon_name>:`)** must be used across all application tabs, sub-tabs, buttons, expanders, input controls, and headings.
 > 
-> * **Prohibited:** Colorful cartoon emojis (e.g. 🍇, 🏭, 🏢, 📁, 📥, 📤, 💾) must **never** be used in user-facing controls, tables, or presets.
-> * **Vector Icons:** Use CSS classes from **Font Awesome 6** (`fa-solid fa-...`) and **Remix Icon** (`ri-...-line`).
-> * **Country Flags:** Use vector **Flag Icons** (`fi fi-<country_code>`) from `flag-icons`. Emoji country flags are permitted only as a fallback if a specific country flag is unavailable in the vector library.
+> * **Prohibited:** Colorful cartoon emojis (e.g. 🍇, 🏭, 🏢, 📁, 📥, 📤, 💾, ⚙️, ⚖️, 📌, 📋) must **never** be used in user-facing controls, tables, or presets.
+> * **Native Streamlit Material Icons:** Use the `:material/<icon_name>:` syntax directly in widgets (e.g. `icon=":material/rocket_launch:"`, `icon=":material/restart_alt:"`, `icon=":material/download:"`, `st.tabs([":material/analytics: 1. Consumption", ...])`).
+> * **Country Flags:** Use vector **Flag Icons** (`fi fi-<country_code>`) or text labels where country indicators are required.
+> 
+> **2. Charts & Diagrams Standard (Diagramme & Visualisierungen):**
+> * **Interactive Application Charts:** Use **Plotly** (`plotly.graph_objects.Figure`) exclusively for all analytical plots, timeseries, heatmaps, stacked area charts, balance bars, waterfalls, and Sankey diagrams. Static raster images (matplotlib/seaborn PNGs) are strictly prohibited.
+> * **System Architecture & Flows:** Use **Mermaid** diagrams (`flowchart TD`, `sequenceDiagram`) directly in Markdown documentation.
 
-The stylesheets are globally injected via [`ui/common/styles.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/common/styles.py):
-* Font Awesome 6: `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">`
-* Remix Icon 4: `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css">`
-* Flag Icons: `<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.2.3/css/flag-icons.min.css">`
+The stylesheets and helper icons are globally injected via [`ui/common/styles.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/common/styles.py).
 
 ---
 

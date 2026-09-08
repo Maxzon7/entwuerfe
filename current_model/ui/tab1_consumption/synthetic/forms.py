@@ -45,13 +45,14 @@ def render_add_consumer_form(consumers: List[SimpleConsumer]) -> None:
         new_windows = []
         for w_i in range(int(window_count)):
             st.markdown(f"**Operating Window {w_i + 1}:**")
+            w_24h = st.checkbox(f"24/7 Continuous Operation (Full Day)", key=f"add_24h_{w_i}")
             w_c1, w_c2 = st.columns(2)
             with w_c1:
                 default_start = datetime.time(8, 0) if w_i == 0 else datetime.time(14, 0)
-                w_start = st.time_input(f"Start Time (W{w_i+1})", value=default_start, step=900, key=f"add_start_{w_i}")
+                w_start = st.time_input(f"Start Time (W{w_i+1})", value=default_start, step=900, key=f"add_start_{w_i}", disabled=w_24h)
             with w_c2:
                 default_end = datetime.time(16, 0) if w_i == 0 else datetime.time(18, 0)
-                w_end = st.time_input(f"End Time (W{w_i+1})", value=default_end, step=900, key=f"add_end_{w_i}")
+                w_end = st.time_input(f"End Time (W{w_i+1})", value=default_end, step=900, key=f"add_end_{w_i}", disabled=w_24h)
 
             w_has_peak = st.checkbox(f"Include Startup Peak? (W{w_i+1})", key=f"add_has_peak_{w_i}")
             p_col1, p_col2 = st.columns(2)
@@ -73,16 +74,31 @@ def render_add_consumer_form(consumers: List[SimpleConsumer]) -> None:
 
             new_windows.append(
                 TimeWindow(
-                    start_time=w_start,
-                    end_time=w_end,
+                    start_time=datetime.time(0, 0) if w_24h else w_start,
+                    end_time=datetime.time(0, 0) if w_24h else w_end,
                     has_peak=w_has_peak,
                     peak_power_kw=w_peak_power if w_has_peak else new_power,
-                    peak_duration_min=w_peak_dur
+                    peak_duration_min=w_peak_dur,
+                    is_24h=w_24h
                 )
             )
 
         # Extended Options inside Form
-        with st.expander("Extended Options: Weekly Schedule & Seasonality", expanded=False):
+        with st.expander("Extended Options: Standby Load, Weekly Schedule & Seasonality", expanded=False):
+            sb_col1, sb_col2 = st.columns(2)
+            with sb_col1:
+                new_standby_pct = st.slider(
+                    "Off-Hours Standby Load (% of Power):",
+                    min_value=0,
+                    max_value=50,
+                    value=0,
+                    step=5,
+                    help="Idle power consumption when outside operating windows or on off-days.",
+                    key="add_standby_pct"
+                )
+            with sb_col2:
+                st.caption(f"Standby Power: **{(new_power * new_standby_pct / 100.0 * new_count):.2f} kW** continuous idle draw.")
+
             selected_days = st.multiselect(
                 "Active Operating Days:",
                 options=WEEKDAY_LABELS,
@@ -103,7 +119,7 @@ def render_add_consumer_form(consumers: List[SimpleConsumer]) -> None:
             )
             selected_pattern = [s[0] for s in season_options if s[1] == season_idx][0]
 
-        submitted = st.form_submit_button("Add Consumer", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Add Consumer", icon=":material/add_circle:", type="primary", use_container_width=True)
         if submitted:
             active_day_ints = [WEEKDAY_TO_INT[d] for d in selected_days] if selected_days else [0, 1, 2, 3, 4]
             new_consumer = SimpleConsumer(
@@ -112,6 +128,7 @@ def render_add_consumer_form(consumers: List[SimpleConsumer]) -> None:
                 count=new_count,
                 active_days=active_day_ints,
                 seasonal_pattern=selected_pattern,
+                standby_power_ratio=float(new_standby_pct) / 100.0,
                 time_windows=new_windows
             )
             consumers.append(new_consumer)
@@ -129,8 +146,10 @@ def render_consumer_editor(consumers: List[SimpleConsumer]) -> None:
         # Format active days string
         c_days_str = "Mo-Fr" if getattr(c, "active_days", [0, 1, 2, 3, 4]) == [0, 1, 2, 3, 4] else f"{len(getattr(c, 'active_days', []))} Days"
         c_count_str = f" x{c.count}" if getattr(c, "count", 1) > 1 else ""
+        has_24h = any(getattr(w, "is_24h", False) for w in c.time_windows)
+        win_badge = "24/7" if has_24h else f"{len(c.time_windows)} Window(s)"
 
-        with st.expander(f"{c.name} ({c.power_kw:.1f} kW{c_count_str}) — {len(c.time_windows)} Window(s) | {c_days_str}", expanded=False):
+        with st.expander(f"{c.name} ({c.power_kw:.1f} kW{c_count_str}) — {win_badge} | {c_days_str}", icon=":material/precision_manufacturing:", expanded=False):
             with st.form(key=f"edit_consumer_form_{c.id}"):
                 col_e1, col_e2, col_e3 = st.columns([4, 3, 2])
                 with col_e1:
@@ -155,24 +174,26 @@ def render_consumer_editor(consumers: List[SimpleConsumer]) -> None:
                 updated_windows = []
                 for w_idx, w in enumerate(c.time_windows):
                     st.markdown(f"**Time Window {w_idx + 1}:**")
+                    w_curr_24h = getattr(w, "is_24h", False)
+                    edit_24h = st.checkbox(f"24/7 Continuous Operation (Full Day)", value=w_curr_24h, key=f"e_24h_{c.id}_{w_idx}")
                     ew_c1, ew_c2 = st.columns(2)
                     with ew_c1:
-                        e_start = st.time_input("Start Time:", value=w.start_time, step=900, key=f"e_start_{c.id}_{w_idx}")
+                        e_start = st.time_input("Start Time:", value=w.start_time, step=900, key=f"e_start_{c.id}_{w_idx}", disabled=edit_24h)
                     with ew_c2:
-                        e_end = st.time_input("End Time:", value=w.end_time, step=900, key=f"e_end_{c.id}_{w_idx}")
+                        e_end = st.time_input("End Time:", value=w.end_time, step=900, key=f"e_end_{c.id}_{w_idx}", disabled=edit_24h)
 
-                    e_has_peak = st.checkbox("Include Startup Peak?", value=w.has_peak, key=f"e_has_peak_{c.id}_{w_idx}")
+                    e_has_peak = st.checkbox("Include Startup Peak?", value=getattr(w, "has_peak", False), key=f"e_has_peak_{c.id}_{w_idx}")
                     ep_c1, ep_c2 = st.columns(2)
                     with ep_c1:
                         e_peak_p = st.number_input(
                             "Peak Power (kW):",
                             min_value=0.0,
-                            value=float(w.peak_power_kw if w.has_peak else edit_power * 1.5),
+                            value=float(getattr(w, "peak_power_kw", edit_power * 1.5)),
                             step=1.0,
                             key=f"e_peak_p_{c.id}_{w_idx}"
                         )
                     with ep_c2:
-                        default_dur_idx = [15, 30, 45, 60].index(w.peak_duration_min) if w.peak_duration_min in [15, 30, 45, 60] else 1
+                        default_dur_idx = [15, 30, 45, 60].index(getattr(w, "peak_duration_min", 30)) if getattr(w, "peak_duration_min", 30) in [15, 30, 45, 60] else 1
                         e_peak_d = st.selectbox(
                             "Peak Duration (min):",
                             options=[15, 30, 45, 60],
@@ -182,20 +203,35 @@ def render_consumer_editor(consumers: List[SimpleConsumer]) -> None:
 
                     updated_windows.append(
                         TimeWindow(
-                            start_time=e_start,
-                            end_time=e_end,
+                            start_time=datetime.time(0, 0) if edit_24h else e_start,
+                            end_time=datetime.time(0, 0) if edit_24h else e_end,
                             has_peak=e_has_peak,
                             peak_power_kw=e_peak_p if e_has_peak else edit_power,
-                            peak_duration_min=e_peak_d
+                            peak_duration_min=e_peak_d,
+                            is_24h=edit_24h
                         )
                     )
 
-                with st.expander("Schedule & Seasonality", expanded=False):
-                    current_days = [INT_TO_WEEKDAY[d] for d in getattr(c, "active_days", [0, 1, 2, 3, 4]) if d in INT_TO_WEEKDAY]
+                # Weekly Schedule & Seasonal Variation Editors
+                with st.expander("Weekly Schedule, Standby & Seasonality", icon=":material/date_range:", expanded=False):
+                    sb_e1, sb_e2 = st.columns(2)
+                    with sb_e1:
+                        curr_sb_pct = int(getattr(c, "standby_power_ratio", 0.0) * 100)
+                        edit_standby_pct = st.slider(
+                            "Off-Hours Standby Load (%):",
+                            min_value=0,
+                            max_value=50,
+                            value=curr_sb_pct,
+                            step=5,
+                            key=f"edit_sb_{c.id}"
+                        )
+                    with sb_e2:
+                        st.caption(f"Standby Power: **{(edit_power * edit_standby_pct / 100.0 * edit_count):.2f} kW** idle draw.")
+
                     edit_days = st.multiselect(
-                        "Active Operating Days:",
+                        "Operating Days:",
                         options=WEEKDAY_LABELS,
-                        default=current_days,
+                        default=[INT_TO_WEEKDAY[d] for d in getattr(c, "active_days", [0, 1, 2, 3, 4])],
                         key=f"edit_days_{c.id}"
                     )
                     pattern_keys = ["flat", "winter_heavy", "summer_heavy"]
@@ -215,9 +251,9 @@ def render_consumer_editor(consumers: List[SimpleConsumer]) -> None:
 
                 btn_c1, btn_c2 = st.columns([3, 1])
                 with btn_c1:
-                    save_submitted = st.form_submit_button("Save Changes", type="primary", use_container_width=True)
+                    save_submitted = st.form_submit_button("Save Changes", icon=":material/save:", type="primary", use_container_width=True)
                 with btn_c2:
-                    delete_submitted = st.form_submit_button("Delete", use_container_width=True)
+                    delete_submitted = st.form_submit_button("Delete", icon=":material/delete:", use_container_width=True)
 
                 if save_submitted:
                     c.name = edit_name
@@ -226,6 +262,7 @@ def render_consumer_editor(consumers: List[SimpleConsumer]) -> None:
                     c.count = int(edit_count)
                     c.active_days = [WEEKDAY_TO_INT[d] for d in edit_days] if edit_days else [0, 1, 2, 3, 4]
                     c.seasonal_pattern = pattern_map.get(edit_pattern, "flat")
+                    c.standby_power_ratio = float(edit_standby_pct) / 100.0
                     c.time_windows = updated_windows
                     st.success(f"Saved {c.name}")
                     st.rerun()

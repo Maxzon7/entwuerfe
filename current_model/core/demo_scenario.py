@@ -21,7 +21,13 @@ import streamlit as st
 
 from current_model.models.load_component import SimpleConsumer, TimeWindow
 from current_model.models.contract import Contract
-from current_model.models.solar import SolarLocation, SolarPVConfig, SolarSimulationResult
+from current_model.models.solar import (
+    SolarLocation,
+    SolarPVConfig,
+    SolarSimulationResult,
+    SolarFinancialConfig,
+    SolarFinancialMetrics
+)
 from current_model.core.synthetic_engine import aggregate_synthetic_year, aggregate_synthetic_24h
 from current_model.core.solar_engine import simulate_solar_pv_generation
 from current_model.ui.common.session_utils import find_active_load_data_in_session, find_active_contract_in_session
@@ -133,13 +139,20 @@ def get_example1_contract() -> Contract:
     )
 
 
-def get_example1_solar_setup() -> Tuple[SolarPVConfig, SolarLocation]:
+def get_example1_solar_setup() -> Tuple[SolarPVConfig, SolarLocation, SolarFinancialConfig]:
     """
-    Returns the European PV configuration and location for Example 1:
+    Returns the European PV configuration, location, and turn-key investment financials for Example 1:
     - Location: Seville Commercial Park, Spain (37.3891° N, -5.9845° W, elevation 18m)
     - System: 1,548 TOPCon modules à 450 Wp = 696.6 kWp DC
     - Inverter: 590 kW AC (optimal DC/AC oversizing ratio 1.18)
     - Orientation: 30° tilt, 180° azimuth (optimally South-facing in Northern hemisphere)
+    - Financials (DRACBV Kosten-/Berechnungs-Dashboard):
+        * Modules: 1.00 €/Wp
+        * Inverter: 0.07 €/W AC
+        * Substructure / Maschinenbau: 0.15 €/Wp
+        * Electrical Installation & Commissioning: 0.35 €/Wp
+        * Zählerschrank: 2,500 € | Anfahrt: 1,000 €
+        * OPEX: 1.0 %/a | Inflation: 3.0 % | Discount rate: 5.0 % | Feed-in: 0.06 €/kWh
     """
     location = SolarLocation(
         name="Seville Commercial Park, Spain",
@@ -164,7 +177,22 @@ def get_example1_solar_setup() -> Tuple[SolarPVConfig, SolarLocation]:
         dc_wiring_loss_pct=1.5,
         weather_mode="TMY"
     )
-    return config, location
+    fin_config = SolarFinancialConfig(
+        is_enabled=True,
+        currency="EUR",
+        cost_modules_per_wp=1.00,
+        cost_inverter_per_w=0.07,
+        cost_substructure_per_wp=0.15,
+        cost_installation_per_wp=0.35,
+        fixed_switchgear_cost=2500.0,
+        fixed_travel_fee=1000.0,
+        annual_opex_pct=1.0,
+        discount_rate_pct=5.0,
+        electricity_price_inflation_pct=3.0,
+        feed_in_tariff_per_kwh=0.06,
+        analysis_horizon_years=15
+    )
+    return config, location, fin_config
 
 
 def load_example1_scenario() -> None:
@@ -172,8 +200,8 @@ def load_example1_scenario() -> None:
     One-click loader: Sets up all session state variables across all 4 application components:
       1. Tab 1: 365-day annual synthetic load simulation.
       2. Tab 2: Commercial multi-tariff contract with TOU table and taxes.
-      3. Sub-Tab 3.1: 696.6 kWp TOPCon solar simulation in Seville, Spain.
-      4. Sub-Tab 3.2: Coupled 15-minute electrical load dispatch & avoided invoice savings.
+      3. Sub-Tab 3.1: 696.6 kWp TOPCon solar simulation in Seville, Spain with turn-key CAPEX breakdown.
+      4. Sub-Tab 3.2: Coupled 15-minute electrical load dispatch & avoided invoice savings with 15-year ROI.
     """
     # --------------------------------------------------------------------------
     # 1. TAB 1: Consumption Profile Modeling
@@ -209,23 +237,38 @@ def load_example1_scenario() -> None:
     # --------------------------------------------------------------------------
     # 3. TAB 3.1: Standalone Solar PV Generation (Seville, Spain)
     # --------------------------------------------------------------------------
-    solar_cfg, solar_loc = get_example1_solar_setup()
+    from current_model.core.solar_financial_engine import compute_solar_financial_metrics
+
+    solar_cfg, solar_loc, solar_fin = get_example1_solar_setup()
 
     st.session_state["app_tab3_loc_lat"] = solar_loc.latitude
     st.session_state["app_tab3_loc_lon"] = solar_loc.longitude
     st.session_state["app_tab3_loc_name"] = solar_loc.name
     st.session_state["app_tab3_loc_elev"] = solar_loc.elevation_m
     st.session_state["app_tab3_config"] = solar_cfg
+    st.session_state["app_tab3_fin_config"] = solar_fin
+    st.session_state["solar_financial_config"] = solar_fin
 
     # Pre-simulate Tab 3.1 standalone generation
     sim_res_standalone: SolarSimulationResult = simulate_solar_pv_generation(
         config=solar_cfg,
         location=solar_loc
     )
+    # Pre-calculate pure solar financial metrics
+    fin_metrics_standalone = compute_solar_financial_metrics(
+        config=solar_cfg,
+        fin_config=solar_fin,
+        annual_generation_kwh=sim_res_standalone.kpis.annual_energy_kwh,
+        multi_year_yields=sim_res_standalone.multi_year_yields
+    )
+    sim_res_standalone.financial_config = solar_fin
+    sim_res_standalone.financial_metrics = fin_metrics_standalone
+
     st.session_state["app_tab3_sim_result"] = sim_res_standalone
     st.session_state["solar_kw_15min"] = sim_res_standalone.df_timeseries["P_AC_kW"]
     st.session_state["solar_kpis"] = sim_res_standalone.kpis
     st.session_state["solar_config"] = solar_cfg
+    st.session_state["solar_financial_metrics"] = fin_metrics_standalone
 
     # Clear stale Tab 3.1 input & location widget keys
     for k in [
@@ -236,6 +279,13 @@ def load_example1_scenario() -> None:
         "app_tab3_form_azimuth",
         "app_tab3_form_weather_mode_select",
         "app_tab3_form_hist_year_select",
+        "app_tab3_form_enable_financials",
+        "app_tab3_form_fin_mod_wp",
+        "app_tab3_form_fin_inv_w",
+        "app_tab3_form_fin_sub_wp",
+        "app_tab3_form_fin_inst_wp",
+        "app_tab3_form_fin_switch",
+        "app_tab3_form_fin_travel",
         "app_tab3_loc_man_lat",
         "app_tab3_loc_man_lon",
         "app_tab3_loc_search_input",
@@ -294,6 +344,9 @@ def clear_demo_scenario() -> None:
         "solar_kw_15min",
         "solar_kpis",
         "solar_config",
+        "app_tab3_fin_config",
+        "solar_financial_config",
+        "solar_financial_metrics",
         "app_tab3_int_config",
         "app_tab3_int_sim_result",
         "solar_dispatch_result"
@@ -324,6 +377,8 @@ def get_active_model_summary() -> Dict[str, Any]:
     pv_res = st.session_state.get("app_tab3_sim_result")
     pv_cfg = st.session_state.get("app_tab3_config")
     has_solar = pv_cfg is not None and getattr(pv_cfg, "module_count", 0) > 0
+    fin_m = getattr(pv_res, "financial_metrics", None) or st.session_state.get("solar_financial_metrics")
+    has_fin = fin_m is not None and getattr(fin_m, "is_configured", False) and getattr(fin_m, "total_capex", 0) > 0
 
     return {
         "is_example1": is_example1,
@@ -336,5 +391,7 @@ def get_active_model_summary() -> Dict[str, Any]:
         "has_solar": has_solar,
         "solar_kwp": getattr(pv_cfg, "dc_capacity_kwp", 0.0) if has_solar else 0.0,
         "solar_location": st.session_state.get("app_tab3_loc_name", "Seville, Spain") if has_solar else "None",
+        "has_financials": has_fin,
+        "solar_capex": getattr(fin_m, "total_capex", 0.0) if has_fin else 0.0,
         "has_integration": "app_tab3_int_sim_result" in st.session_state
     }

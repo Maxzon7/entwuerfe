@@ -213,23 +213,71 @@ def render_contract_form(
                     else:
                         st.error("No valid contract files (.drac or .json) could be parsed from upload.")
 
-            # Dynamic Contract Switcher if multiple contracts are loaded
+            # Dynamic Contract Switcher if multiple contracts are loaded or created
             loaded_dict = st.session_state.get(loaded_contracts_dict_key, {})
-            if loaded_dict:
-                labels = list(loaded_dict.keys())
-                current_sel = st.session_state.get(f"{key_prefix}_active_contract_label", labels[0])
-                sel_idx = labels.index(current_sel) if current_sel in labels else 0
+            # Ensure current active contract is in dictionary
+            if current.name not in loaded_dict:
+                loaded_dict[current.name] = current
+                st.session_state[loaded_contracts_dict_key] = loaded_dict
 
-                selected_label = st.selectbox(
-                    "📑 Switch Active Contract:",
-                    options=labels,
-                    index=sel_idx,
-                    key=f"{key_prefix}_switch_contract_select"
-                )
-                if selected_label != st.session_state.get(f"{key_prefix}_active_contract_label"):
-                    st.session_state[f"{key_prefix}_active_contract_label"] = selected_label
-                    _sync_contract_to_state(loaded_dict[selected_label], key_prefix=key_prefix)
+            labels = list(loaded_dict.keys())
+            current_sel = st.session_state.get(f"{key_prefix}_active_contract_label", labels[0])
+            sel_idx = labels.index(current_sel) if current_sel in labels else 0
+
+            selected_label = st.selectbox(
+                "Active Contract Selection:",
+                options=labels,
+                index=sel_idx,
+                key=f"{key_prefix}_switch_contract_select"
+            )
+            if selected_label != st.session_state.get(f"{key_prefix}_active_contract_label"):
+                st.session_state[f"{key_prefix}_active_contract_label"] = selected_label
+                _sync_contract_to_state(loaded_dict[selected_label], key_prefix=key_prefix)
+                st.rerun()
+
+            # Contract Actions: Create New, Duplicate, or Delete
+            btn_act1, btn_act2, btn_act3 = st.columns(3)
+            with btn_act1:
+                if st.button("Create New Contract", icon=":material/add_circle:", key=f"{key_prefix}_new_contract_btn", use_container_width=True):
+                    new_c_name = f"Contract #{len(loaded_dict) + 1}"
+                    new_contract = Contract(
+                        name=new_c_name,
+                        currency=current.currency,
+                        base_monthly_fee=50.0,
+                        contracted_capacity_kw=current.contracted_capacity_kw,
+                        monthly_capacity_tariff=0.15,
+                        tou_rates=[{"name": "Standard Rate", "rate": 0.20, "start_time": "00:00", "end_time": "24:00"}]
+                    )
+                    loaded_dict[new_c_name] = new_contract
+                    st.session_state[loaded_contracts_dict_key] = loaded_dict
+                    st.session_state[f"{key_prefix}_active_contract_label"] = new_c_name
+                    _sync_contract_to_state(new_contract, key_prefix=key_prefix)
+                    st.success(f"Created new contract: {new_c_name}")
                     st.rerun()
+
+            with btn_act2:
+                if st.button("Duplicate Current", icon=":material/content_copy:", key=f"{key_prefix}_dup_contract_btn", use_container_width=True):
+                    dup_name = f"{current.name} (Copy)"
+                    dup_contract = Contract.from_dict(current.to_dict()) if hasattr(current, "to_dict") else Contract.from_json(current.to_json())
+                    dup_contract.name = dup_name
+                    loaded_dict[dup_name] = dup_contract
+                    st.session_state[loaded_contracts_dict_key] = loaded_dict
+                    st.session_state[f"{key_prefix}_active_contract_label"] = dup_name
+                    _sync_contract_to_state(dup_contract, key_prefix=key_prefix)
+                    st.success(f"Duplicated to: {dup_name}")
+                    st.rerun()
+
+            with btn_act3:
+                can_delete = len(loaded_dict) > 1
+                if st.button("Delete Contract", icon=":material/delete:", key=f"{key_prefix}_del_contract_btn", use_container_width=True, disabled=not can_delete):
+                    if current_sel in loaded_dict and len(loaded_dict) > 1:
+                        del loaded_dict[current_sel]
+                        st.session_state[loaded_contracts_dict_key] = loaded_dict
+                        new_first = list(loaded_dict.keys())[0]
+                        st.session_state[f"{key_prefix}_active_contract_label"] = new_first
+                        _sync_contract_to_state(loaded_dict[new_first], key_prefix=key_prefix)
+                        st.warning(f"Deleted contract: {current_sel}")
+                        st.rerun()
 
             # Preset selector
             presets = get_contract_presets()
@@ -240,8 +288,12 @@ def render_contract_form(
                 key=f"{key_prefix}_preset_select"
             )
             if selected_preset_name in presets:
-                if st.button("Apply Preset", key=f"{key_prefix}_apply_preset_btn", use_container_width=True):
-                    _sync_contract_to_state(presets[selected_preset_name], key_prefix=key_prefix)
+                if st.button("Apply Preset", icon=":material/playlist_add_check:", key=f"{key_prefix}_apply_preset_btn", use_container_width=True):
+                    preset_c = presets[selected_preset_name]
+                    loaded_dict[preset_c.name] = preset_c
+                    st.session_state[loaded_contracts_dict_key] = loaded_dict
+                    st.session_state[f"{key_prefix}_active_contract_label"] = preset_c.name
+                    _sync_contract_to_state(preset_c, key_prefix=key_prefix)
                     st.success(f"Loaded preset: {selected_preset_name}")
                     st.rerun()
 
@@ -263,6 +315,7 @@ def render_contract_form(
                 data=contract_json_data,
                 file_name=final_filename,
                 mime="application/json",
+                icon=":material/download:",
                 key=f"{key_prefix}_download_btn",
                 type="secondary",
                 use_container_width=True
@@ -351,7 +404,7 @@ def render_contract_form(
                 key=f"{key_prefix}_taxes_editor"
             )
 
-            submitted = st.form_submit_button("💾 Save Contract Configuration", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Save Contract Configuration", icon=":material/save:", type="primary", use_container_width=True)
 
         if submitted:
             # Clean, sanitize, and validate TOU rates table
