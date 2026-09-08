@@ -499,7 +499,11 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
             # 3. 15-Year Life-Cycle Economic Evaluation & Payback (If Solar CAPEX is configured)
             from current_model.core.solar_financial_engine import compute_solar_financial_metrics
-            from current_model.ui.tab3_solar.charts import create_solar_cashflow_payback_figure
+            from current_model.ui.tab3_solar.charts import (
+                create_solar_cashflow_payback_figure,
+                create_cumulative_cost_comparison_figure,
+                create_annual_running_costs_comparison_figure
+            )
 
             solar_fin_cfg = st.session_state.get("solar_financial_config") or st.session_state.get("app_tab3_fin_config")
 
@@ -510,13 +514,14 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                     fin_config=solar_fin_cfg,
                     annual_generation_kwh=kpis.annual_energy_kwh,
                     annual_avoided_cost=cost_savings_gross,
-                    annual_export_revenue=export_rev
+                    annual_export_revenue=export_rev,
+                    baseline_annual_bill=base_bill.total_gross_period
                 )
 
                 if coupled_fin_metrics.is_configured and coupled_fin_metrics.total_capex > 0:
                     st.write("")
-                    st.markdown("##### 15-Year Investment Payback & Life-Cycle Economic Return")
-                    st.caption("Couples the turn-key solar installation investment (CAPEX) with your actual annual bill savings to project 15-year return on investment:")
+                    st.markdown("##### 15-Year Life-Cycle Cost Trajectory & Amortisation Analysis")
+                    st.caption("Directly compare total cumulative expenses, annual running operating costs, and the exact investment amortisation point (Status Quo vs. With Solar PV):")
 
                     roi1, roi2, roi3, roi4 = st.columns(4)
                     with roi1:
@@ -548,13 +553,44 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                             f"Capital return rate across horizon"
                         )
 
-                    # 15-Year Life-Cycle Cashflow Chart
-                    fig_cf = create_solar_cashflow_payback_figure(coupled_fin_metrics, currency=curr)
-                    st.plotly_chart(fig_cf, use_container_width=True)
+                    # 15-Year Life-Cycle Comparison Diagrams (3 Interactive Tabs)
+                    diag_tab1, diag_tab2, diag_tab3 = st.tabs([
+                        "📈 Cumulative Total Cost & Amortisation (Status Quo vs. Mit PV)",
+                        "📊 Annual Running Costs & Operating Expenses",
+                        "💰 Net Cash Flow & Payback Curve"
+                    ])
+
+                    with diag_tab1:
+                        fig_cum = create_cumulative_cost_comparison_figure(coupled_fin_metrics, currency=curr)
+                        st.plotly_chart(fig_cum, use_container_width=True)
+
+                    with diag_tab2:
+                        fig_running = create_annual_running_costs_comparison_figure(coupled_fin_metrics, currency=curr)
+                        st.plotly_chart(fig_running, use_container_width=True)
+
+                    with diag_tab3:
+                        fig_cf = create_solar_cashflow_payback_figure(coupled_fin_metrics, currency=curr)
+                        st.plotly_chart(fig_cf, use_container_width=True)
 
                     # 15-Year Table (Matching GRID vs GRID+SOLAR Excel Sheet)
                     with st.expander("15-Year Life-Cycle Year-by-Year Table (Cashflow, Degradation, OPEX, Savings)", icon=":material/view_timeline:", expanded=False):
-                        st.dataframe(pd.DataFrame(coupled_fin_metrics.cash_flow_table), use_container_width=True, hide_index=True)
+                        detail_rows = []
+                        for row in coupled_fin_metrics.cash_flow_table:
+                            detail_rows.append({
+                                "Year": f"Year {row['year']}",
+                                "Aging / Degradation": f"{row['aging_factor'] * 100.0:.1f} %",
+                                "PV Gen (MWh)": f"{row['generation_mwh']:,.2f}",
+                                f"Status Quo Bill ({curr})": f"{row.get('status_quo_bill', 0.0):,.2f}",
+                                f"Residual Bill ({curr})": f"{row.get('residual_bill', 0.0):,.2f}",
+                                f"PV OPEX ({curr})": f"{row.get('opex_annual', 0.0):,.2f}",
+                                f"Feed-in Revenue ({curr})": f"{row.get('export_revenue', 0.0):,.2f}",
+                                f"Net Running Cost ({curr})": f"{row.get('running_cost_with_pv', row.get('net_running_cost_pv', 0.0)):,.2f}",
+                                f"Annual Net Benefit ({curr})": f"{row['net_cash_flow']:,.2f}",
+                                f"Cum. Status Quo ({curr})": f"{row.get('cum_status_quo', 0.0):,.2f}",
+                                f"Cum. With PV ({curr})": f"{row.get('cum_with_pv', 0.0):,.2f}",
+                                f"Cum. Net Benefit ({curr})": f"{row['cumulative_cash_flow']:,.2f}"
+                            })
+                        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
         except Exception as err:
             st.warning(f"Unable to calculate financial savings against Tab 2 contract: {err}")

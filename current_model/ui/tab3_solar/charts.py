@@ -541,3 +541,226 @@ def create_solar_cashflow_payback_figure(
     return fig
 
 
+def create_cumulative_cost_comparison_figure(
+    fin_metrics: Any,
+    currency: str = "EUR"
+) -> go.Figure:
+    """
+    Constructs an interactive 15-year cumulative cost comparison chart directly comparing:
+      1. Status Quo (Grid Only electricity invoice over 15 years, with inflation)
+      2. With Solar PV (CAPEX in Year 0 + cumulative residual electricity + OPEX - surplus export)
+    Highlights the exact Amortisation / Break-Even intersection point where solar becomes more profitable than grid-only.
+    """
+    fig = go.Figure()
+
+    table = getattr(fin_metrics, "cash_flow_table", [])
+    if not table:
+        return fig
+
+    years = [0] + [row["year"] for row in table]
+    cum_sq = getattr(fin_metrics, "cumulative_status_quo", [])
+    cum_pv = getattr(fin_metrics, "cumulative_with_pv", [])
+
+    if not cum_sq or len(cum_sq) != len(years):
+        cum_sq = [0.0] + [row.get("cum_status_quo", 0.0) for row in table]
+    if not cum_pv or len(cum_pv) != len(years):
+        cum_pv = [fin_metrics.total_capex] + [row.get("cum_with_pv", fin_metrics.total_capex) for row in table]
+
+    # 1. Status Quo Cumulative Line (Grid Only)
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_sq,
+            mode="lines+markers",
+            name="Status Quo (Grid Only / Ohne PV)",
+            line=dict(color="#EF4444", width=3, dash="dash"),
+            marker=dict(size=6, color="#EF4444"),
+            hovertemplate="<b>Status Quo (Ohne PV)</b><br>Year %{x}: <b>%{y:,.0f} " + currency + "</b> total spent<extra></extra>"
+        )
+    )
+
+    # 2. With Solar PV Cumulative Line (CAPEX + Residual + OPEX)
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_pv,
+            mode="lines+markers",
+            name="Mit Solar PV (CAPEX + Reststrom + OPEX)",
+            line=dict(color="#10B981", width=3.5),
+            marker=dict(size=7, color="#10B981"),
+            hovertemplate="<b>Mit Solar PV</b><br>Year %{x}: <b>%{y:,.0f} " + currency + "</b> total spent<extra></extra>"
+        )
+    )
+
+    # 3. Payback / Amortisation Intersection Marker
+    pb = getattr(fin_metrics, "payback_period_years", None)
+    if pb is not None and pb <= len(years) - 1:
+        fig.add_vline(
+            x=pb,
+            line_color="#F59E0B",
+            line_width=2.5,
+            line_dash="dot",
+            annotation_text=f"🎯 Amortisation / Break-Even: {pb:.1f} Jahre",
+            annotation_position="top left",
+            annotation_font=dict(color="#F59E0B", size=12)
+        )
+
+    # Annotation of Total 15-Year Savings
+    net_savings = getattr(fin_metrics, "total_lifetime_savings", 0.0)
+    if net_savings > 0 and len(years) > 1:
+        last_y = years[-1]
+        fig.add_annotation(
+            x=last_y,
+            y=cum_pv[-1],
+            text=f"<b>Net Savings: +{net_savings:,.0f} {currency}</b>",
+            showarrow=True,
+            arrowhead=2,
+            arrowcolor="#10B981",
+            arrowsize=1,
+            arrowwidth=2,
+            ax=-80,
+            ay=-40,
+            bgcolor="rgba(16, 185, 129, 0.2)",
+            bordercolor="#10B981",
+            borderwidth=1,
+            font=dict(color="#F8FAFC", size=11)
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=f"<b>15-Year Cumulative Cost Trajectory & Amortisation Comparison ({currency})</b>",
+            font=dict(size=14, color="#F8FAFC")
+        ),
+        xaxis=dict(
+            title="Operational Year",
+            tickmode="linear",
+            dtick=1,
+            gridcolor="#1E293B"
+        ),
+        yaxis=dict(
+            title=f"Cumulative Total Expenses ({currency})",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155"
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+            font=dict(size=11)
+        ),
+        margin=dict(l=40, r=20, t=55, b=40),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=380
+    )
+
+    return fig
+
+
+def create_annual_running_costs_comparison_figure(
+    fin_metrics: Any,
+    currency: str = "EUR"
+) -> go.Figure:
+    """
+    Constructs a 15-year annual operating & electricity invoice comparison chart showing:
+      - Status Quo Annual Electricity Bill (ohne PV)
+      - Residual Electricity Bill (mit PV)
+      - Annual PV OPEX / Maintenance (Wartung & Instandhaltung)
+      - Annual Surplus Feed-in Revenue (Einspeiseerlös)
+      - Net Annual Savings (Netto-Einsparung pro Jahr)
+    """
+    fig = go.Figure()
+
+    table = getattr(fin_metrics, "cash_flow_table", [])
+    if not table:
+        return fig
+
+    years = [f"Year {row['year']}" for row in table]
+    sq_bills = [row.get("status_quo_bill", row.get("gross_savings", 0.0) * 1.5) for row in table]
+    res_bills = [row.get("residual_bill", max(0.0, sq - row.get("gross_savings", 0.0))) for row, sq in zip(table, sq_bills)]
+    opex_vals = [row.get("opex_annual", 0.0) for row in table]
+    export_vals = [-row.get("export_revenue", 0.0) for row in table]
+    net_savings = [row.get("net_cash_flow", 0.0) for row in table]
+
+    # 1. Status Quo Annual Bill Bar
+    fig.add_trace(
+        go.Bar(
+            x=years,
+            y=sq_bills,
+            name="Status Quo Stromrechnung (ohne PV)",
+            marker_color="rgba(239, 68, 68, 0.65)",
+            hovertemplate="%{x}<br>Status Quo Bill: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
+        )
+    )
+
+    # 2. Residual Grid Bill Bar
+    fig.add_trace(
+        go.Bar(
+            x=years,
+            y=res_bills,
+            name="Reststromrechnung (mit PV)",
+            marker_color="rgba(56, 189, 248, 0.75)",
+            hovertemplate="%{x}<br>Residual Grid Bill: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
+        )
+    )
+
+    # 3. PV OPEX / Maintenance Bar
+    fig.add_trace(
+        go.Bar(
+            x=years,
+            y=opex_vals,
+            name="PV-Wartung & OPEX (Instandhaltung)",
+            marker_color="rgba(245, 158, 11, 0.8)",
+            hovertemplate="%{x}<br>Annual PV OPEX: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
+        )
+    )
+
+    # 4. Net Annual Savings Line Overlay
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=net_savings,
+            mode="lines+markers",
+            name="Jährliche Netto-Ersparnis (Vorteil)",
+            line=dict(color="#10B981", width=3),
+            marker=dict(size=6, color="#10B981"),
+            hovertemplate="%{x}<br>Net Annual Savings: <b>+%{y:,.0f} " + currency + "</b>/a<extra></extra>"
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=f"<b>15-Year Annual Running Costs & Operating Expenses ({currency}/Year)</b>",
+            font=dict(size=14, color="#F8FAFC")
+        ),
+        barmode="group",
+        xaxis=dict(
+            gridcolor="#1E293B"
+        ),
+        yaxis=dict(
+            title=f"Annual Expense / Cost ({currency}/a)",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155"
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+            font=dict(size=11)
+        ),
+        margin=dict(l=40, r=20, t=55, b=40),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=380
+    )
+
+    return fig
+
+
+

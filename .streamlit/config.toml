@@ -1,6 +1,10 @@
 [server]
 runOnSave = true
-headless = true
+headless = false
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "developer"
+showErrorDetails = true

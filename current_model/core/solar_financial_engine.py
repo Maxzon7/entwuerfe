@@ -94,10 +94,12 @@ def compute_solar_financial_metrics(
     multi_year_yields: Optional[List[Dict[str, Any]]] = None,
     annual_avoided_cost: Optional[float] = None,
     annual_export_revenue: Optional[float] = None,
-    baseline_electricity_rate: Optional[float] = None
+    baseline_electricity_rate: Optional[float] = None,
+    baseline_annual_bill: Optional[float] = None
 ) -> SolarFinancialMetrics:
     """
-    Computes complete 15-year lifecycle financial metrics, LCOE, NPV, and Payback.
+    Computes complete 15-year lifecycle financial metrics, LCOE, NPV, Payback,
+    and cumulative cost development comparison (Status Quo vs. With Solar PV).
     Handles empty/unconfigured financial parameters gracefully.
     """
     if not fin_config or not fin_config.is_enabled:
@@ -127,6 +129,12 @@ def compute_solar_financial_metrics(
     cum_cf = -total_capex
     cumulative_cash_flow.append(cum_cf)
 
+    # Track cumulative cost trajectories: Year 0
+    cumulative_status_quo: List[float] = [0.0]
+    cumulative_with_pv: List[float] = [total_capex]
+    running_status_quo = 0.0
+    running_with_pv = total_capex
+
     # Discounted LCOE summations
     discounted_costs_sum = total_capex
     discounted_energy_sum = 0.0
@@ -139,11 +147,13 @@ def compute_solar_financial_metrics(
     cum_discounted_cf = -total_capex
 
     # Default unit benefits if no direct avoided cost was supplied
-    # If baseline rate supplied, use it; else fallback to flat feed-in rate or 0.15 €/kWh
     ref_rate = baseline_electricity_rate if (baseline_electricity_rate and baseline_electricity_rate > 0) else 0.18
     feed_in = fin_config.feed_in_tariff_per_kwh or 0.06
 
     has_detailed_benefits = (annual_avoided_cost is not None and annual_avoided_cost > 0)
+    base_bill_val = baseline_annual_bill if (baseline_annual_bill is not None and baseline_annual_bill > 0) else (
+        (annual_avoided_cost * 1.5) if has_detailed_benefits else (annual_generation_kwh * ref_rate * 1.3)
+    )
 
     for y in range(1, horizon_years + 1):
         # 1. Degradation factor
@@ -159,34 +169,45 @@ def compute_solar_financial_metrics(
         # 3. OPEX with small inflation (e.g. 2% p.a. for service)
         y_opex = opex_year1 * ((1.0 + 0.02) ** (y - 1))
 
-        # 4. Energy Savings / Revenue
-        # Tariff escalates with electricity inflation
+        # 4. Energy Savings / Revenue & Cost trajectories
         tariff_factor = (1.0 + infl) ** (y - 1)
+        y_status_quo = base_bill_val * tariff_factor
+
         if has_detailed_benefits:
-            # Scale avoided costs by degradation and tariff inflation
-            y_savings = (annual_avoided_cost * f_deg * tariff_factor) + (annual_export_revenue * f_deg * tariff_factor if annual_export_revenue else 0.0)
+            y_avoided = annual_avoided_cost * f_deg * tariff_factor
+            y_export_rev = (annual_export_revenue * f_deg * tariff_factor) if annual_export_revenue else 0.0
+            y_savings = y_avoided + y_export_rev
+            y_residual = max(0.0, y_status_quo - y_avoided)
         else:
-            # Standalone estimation: 70% self-consumed @ ref_rate, 30% exported @ feed-in
             y_self_kwh = y_gen_kwh * 0.70
             y_surplus_kwh = y_gen_kwh * 0.30
-            y_savings = (y_self_kwh * (ref_rate * tariff_factor)) + (y_surplus_kwh * feed_in)
+            y_avoided = y_self_kwh * (ref_rate * tariff_factor)
+            y_export_rev = y_surplus_kwh * feed_in
+            y_savings = y_avoided + y_export_rev
+            y_residual = max(0.0, y_status_quo - y_avoided)
+
+        y_running_with_pv = y_residual + y_opex - y_export_rev
 
         # Net cashflow for year y
         net_cf = y_savings - y_opex
         discount_factor = 1.0 / ((1.0 + r) ** y)
         discounted_net_cf = net_cf * discount_factor
 
-        # Cumulative cashflows
+        # Cumulative cashflows & trajectories
         prev_cum_cf = cum_cf
         cum_cf += net_cf
         cumulative_cash_flow.append(round(cum_cf, 2))
+
+        running_status_quo += y_status_quo
+        running_with_pv += y_running_with_pv
+        cumulative_status_quo.append(round(running_status_quo, 2))
+        cumulative_with_pv.append(round(running_with_pv, 2))
 
         prev_disc_cum = cum_discounted_cf
         cum_discounted_cf += discounted_net_cf
 
         # Check simple payback
         if payback_years is None and cum_cf >= 0.0:
-            # Linear interpolation for fractional year
             fraction = (-prev_cum_cf) / net_cf if net_cf > 0 else 0.0
             payback_years = round((y - 1) + fraction, 1)
 
@@ -204,9 +225,15 @@ def compute_solar_financial_metrics(
             "aging_factor": round(f_deg, 4),
             "generation_kwh": round(y_gen_kwh, 0),
             "generation_mwh": round(y_gen_kwh / 1000.0, 2),
+            "status_quo_bill": round(y_status_quo, 2),
+            "residual_bill": round(y_residual, 2),
             "opex_annual": round(y_opex, 2),
+            "export_revenue": round(y_export_rev, 2),
+            "running_cost_with_pv": round(y_running_with_pv, 2),
             "gross_savings": round(y_savings, 2),
             "net_cash_flow": round(net_cf, 2),
+            "cum_status_quo": round(running_status_quo, 2),
+            "cum_with_pv": round(running_with_pv, 2),
             "cumulative_cash_flow": round(cum_cf, 2),
             "discounted_cash_flow": round(discounted_net_cf, 2)
         })
@@ -221,7 +248,6 @@ def compute_solar_financial_metrics(
     irr_val: Optional[float] = None
     try:
         cf_stream = [-total_capex] + [row["net_cash_flow"] for row in cash_flow_table]
-        # np.irr is deprecated in newer numpy, use npf.irr fallback or manual bisection
         irr_calc = _compute_irr(cf_stream)
         if irr_calc is not None and -0.5 < irr_calc < 2.0:
             irr_val = round(irr_calc * 100.0, 2)
@@ -245,6 +271,8 @@ def compute_solar_financial_metrics(
         lcoe_per_kwh=round(lcoe, 4),
         cash_flow_table=cash_flow_table,
         cumulative_cash_flow=cumulative_cash_flow,
+        cumulative_status_quo=cumulative_status_quo,
+        cumulative_with_pv=cumulative_with_pv,
         payback_period_years=payback_years,
         discounted_payback_years=discounted_payback_years,
         npv=round(npv, 2),

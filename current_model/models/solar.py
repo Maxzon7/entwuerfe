@@ -246,6 +246,8 @@ class SolarFinancialMetrics:
     # Cashflow & Trajectory (15 Years)
     cash_flow_table: List[Dict[str, Any]] = field(default_factory=list)
     cumulative_cash_flow: List[float] = field(default_factory=list)
+    cumulative_status_quo: List[float] = field(default_factory=list)
+    cumulative_with_pv: List[float] = field(default_factory=list)
 
     # Return on Investment Indicators (when coupled with load/avoided costs or flat rate)
     payback_period_years: Optional[float] = None

@@ -146,3 +146,51 @@ def test_gather_available_contracts_uses_clean_emoji_keys():
         assert not key.startswith(":material/"), f"Key {key} contains unparsed material icon shortcode"
         assert key.startswith("📌") or key.startswith("📄") or key.startswith("⚙️")
 
+
+def test_cumulative_cost_comparison_and_running_costs_figures():
+    """Verifies that cumulative cost trajectory and annual running cost charts are correctly generated."""
+    import plotly.graph_objects as go
+    from current_model.ui.tab3_solar.charts import (
+        create_cumulative_cost_comparison_figure,
+        create_annual_running_costs_comparison_figure
+    )
+
+    config = SolarPVConfig(module_count=1548, module_power_wp=450.0, dc_capacity_kwp=696.6)
+    fin_cfg = SolarFinancialConfig(
+        is_enabled=True,
+        currency="EUR",
+        cost_modules_per_wp=1.00,
+        cost_inverter_per_w=0.07,
+        cost_substructure_per_wp=0.15,
+        cost_installation_per_wp=0.35,
+        annual_opex_pct=1.0,
+        discount_rate_pct=5.0
+    )
+
+    metrics = compute_solar_financial_metrics(
+        config=config,
+        fin_config=fin_cfg,
+        annual_generation_kwh=1150000.0,
+        annual_avoided_cost=165000.0,
+        annual_export_revenue=15000.0,
+        baseline_annual_bill=250000.0
+    )
+
+    assert metrics.is_configured
+    assert len(metrics.cumulative_status_quo) == 16
+    assert len(metrics.cumulative_with_pv) == 16
+    assert metrics.cumulative_status_quo[0] == 0.0
+    assert metrics.cumulative_with_pv[0] == metrics.total_capex
+
+    # Over 15 years, with PV should be significantly cheaper than Status Quo
+    assert metrics.cumulative_status_quo[-1] > metrics.cumulative_with_pv[-1]
+
+    fig_cum = create_cumulative_cost_comparison_figure(metrics, currency="EUR")
+    assert isinstance(fig_cum, go.Figure)
+    assert len(fig_cum.data) >= 2
+
+    fig_annual = create_annual_running_costs_comparison_figure(metrics, currency="EUR")
+    assert isinstance(fig_annual, go.Figure)
+    assert len(fig_annual.data) >= 3
+
+
