@@ -56,6 +56,29 @@ class SolarLocation:
     elevation_m: float = 1100.0
     timezone_str: str = "America/Argentina/Mendoza"
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes SolarLocation to dictionary."""
+        return {
+            "name": self.name,
+            "latitude": float(self.latitude),
+            "longitude": float(self.longitude),
+            "elevation_m": float(self.elevation_m),
+            "timezone_str": str(self.timezone_str)
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SolarLocation":
+        """Deserializes dictionary to SolarLocation."""
+        if not data:
+            return cls()
+        return cls(
+            name=data.get("name", "Custom Location"),
+            latitude=float(data.get("latitude", -33.5133)),
+            longitude=float(data.get("longitude", -69.2561)),
+            elevation_m=float(data.get("elevation_m", 1100.0)),
+            timezone_str=data.get("timezone_str", "America/Argentina/Mendoza")
+        )
+
 
 @dataclass
 class SolarPVConfig:
@@ -115,7 +138,6 @@ class SolarPVConfig:
         else:
             self.dc_capacity_kwp = round((self.module_count * self.module_power_wp) / 1000.0, 2)
 
-
     @property
     def gross_panel_area_m2(self) -> float:
         """Net physical solar module active area in m²."""
@@ -133,6 +155,75 @@ class SolarPVConfig:
               (1.0 - self.shading_loss_pct / 100.0) * \
               (1.0 - self.dc_wiring_loss_pct / 100.0)
         return (1.0 - rem) * 100.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes SolarPVConfig to dictionary."""
+        return {
+            "module_count": int(self.module_count),
+            "module_power_wp": float(self.module_power_wp),
+            "technology_preset": str(self.technology_preset),
+            "module_technology": str(self.module_technology),
+            "temp_coefficient_pct_c": float(self.temp_coefficient_pct_c),
+            "nmot_c": float(self.nmot_c),
+            "dc_capacity_kwp": float(self.dc_capacity_kwp) if self.dc_capacity_kwp is not None else None,
+            "first_year_degradation_pct": float(self.first_year_degradation_pct),
+            "annual_degradation_pct": float(self.annual_degradation_pct),
+            "degradation_pct_a": float(self.degradation_pct_a),
+            "economic_lifetime_years": int(self.economic_lifetime_years),
+            "module_length_m": float(self.module_length_m),
+            "module_width_m": float(self.module_width_m),
+            "area_factor": float(self.area_factor),
+            "tilt_deg": float(self.tilt_deg),
+            "azimuth_deg": float(self.azimuth_deg),
+            "mounting_type": str(self.mounting_type),
+            "albedo": float(self.albedo),
+            "inverter_capacity_kw": float(self.inverter_capacity_kw),
+            "inverter_efficiency_pct": float(self.inverter_efficiency_pct),
+            "soiling_loss_pct": float(self.soiling_loss_pct),
+            "shading_loss_pct": float(self.shading_loss_pct),
+            "dc_wiring_loss_pct": float(self.dc_wiring_loss_pct),
+            "weather_mode": str(self.weather_mode),
+            "selected_weather_year": int(self.selected_weather_year),
+            "multi_year_start": int(self.multi_year_start),
+            "multi_year_end": int(self.multi_year_end),
+            "sizing_scenario": str(self.sizing_scenario)
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SolarPVConfig":
+        """Deserializes dictionary to SolarPVConfig."""
+        if not data:
+            return cls()
+        return cls(
+            module_count=int(data.get("module_count", 600)),
+            module_power_wp=float(data.get("module_power_wp", 450.0)),
+            technology_preset=data.get("technology_preset", "TOPCon"),
+            module_technology=data.get("module_technology", "N-Type TOPCon"),
+            temp_coefficient_pct_c=float(data.get("temp_coefficient_pct_c", -0.29)),
+            nmot_c=float(data.get("nmot_c", 45.0)),
+            dc_capacity_kwp=float(data.get("dc_capacity_kwp")) if data.get("dc_capacity_kwp") is not None else None,
+            first_year_degradation_pct=float(data.get("first_year_degradation_pct", 1.50)),
+            annual_degradation_pct=float(data.get("annual_degradation_pct", 0.40)),
+            degradation_pct_a=float(data.get("degradation_pct_a", 0.40)),
+            economic_lifetime_years=int(data.get("economic_lifetime_years", 15)),
+            module_length_m=float(data.get("module_length_m", 1.76)),
+            module_width_m=float(data.get("module_width_m", 1.13)),
+            area_factor=float(data.get("area_factor", 1.40)),
+            tilt_deg=float(data.get("tilt_deg", 30.0)),
+            azimuth_deg=float(data.get("azimuth_deg", 0.0)),
+            mounting_type=data.get("mounting_type", "Open-Rack (Ground/Carport)"),
+            albedo=float(data.get("albedo", 0.20)),
+            inverter_capacity_kw=float(data.get("inverter_capacity_kw", 230.0)),
+            inverter_efficiency_pct=float(data.get("inverter_efficiency_pct", 98.0)),
+            soiling_loss_pct=float(data.get("soiling_loss_pct", 2.0)),
+            shading_loss_pct=float(data.get("shading_loss_pct", 1.5)),
+            dc_wiring_loss_pct=float(data.get("dc_wiring_loss_pct", 1.5)),
+            weather_mode=data.get("weather_mode", "TMY"),
+            selected_weather_year=int(data.get("selected_weather_year", 2024)),
+            multi_year_start=int(data.get("multi_year_start", 2015)),
+            multi_year_end=int(data.get("multi_year_end", 2024)),
+            sizing_scenario=data.get("sizing_scenario", "custom")
+        )
 
 
 
@@ -221,6 +312,49 @@ class SolarFinancialConfig:
     electricity_price_inflation_pct: float = 3.0  # Annual electricity price escalation (%)
     feed_in_tariff_per_kwh: float = 0.06          # Export compensation rate for surplus solar power (€/kWh)
     analysis_horizon_years: int = 15              # Life-cycle economic assessment horizon (15–25 years)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes SolarFinancialConfig to dictionary."""
+        return {
+            "is_enabled": bool(self.is_enabled),
+            "currency": str(self.currency),
+            "cost_modules_per_wp": float(self.cost_modules_per_wp) if self.cost_modules_per_wp is not None else None,
+            "cost_inverter_per_w": float(self.cost_inverter_per_w) if self.cost_inverter_per_w is not None else None,
+            "cost_substructure_per_wp": float(self.cost_substructure_per_wp) if self.cost_substructure_per_wp is not None else None,
+            "cost_installation_per_wp": float(self.cost_installation_per_wp) if self.cost_installation_per_wp is not None else None,
+            "fixed_switchgear_cost": float(self.fixed_switchgear_cost),
+            "fixed_travel_fee": float(self.fixed_travel_fee),
+            "custom_additional_capex": float(self.custom_additional_capex),
+            "annual_opex_pct": float(self.annual_opex_pct),
+            "annual_opex_fixed": float(self.annual_opex_fixed),
+            "discount_rate_pct": float(self.discount_rate_pct),
+            "electricity_price_inflation_pct": float(self.electricity_price_inflation_pct),
+            "feed_in_tariff_per_kwh": float(self.feed_in_tariff_per_kwh),
+            "analysis_horizon_years": int(self.analysis_horizon_years)
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SolarFinancialConfig":
+        """Deserializes dictionary to SolarFinancialConfig."""
+        if not data:
+            return cls()
+        return cls(
+            is_enabled=bool(data.get("is_enabled", False)),
+            currency=str(data.get("currency", "EUR")),
+            cost_modules_per_wp=float(data.get("cost_modules_per_wp")) if data.get("cost_modules_per_wp") is not None else None,
+            cost_inverter_per_w=float(data.get("cost_inverter_per_w")) if data.get("cost_inverter_per_w") is not None else None,
+            cost_substructure_per_wp=float(data.get("cost_substructure_per_wp")) if data.get("cost_substructure_per_wp") is not None else None,
+            cost_installation_per_wp=float(data.get("cost_installation_per_wp")) if data.get("cost_installation_per_wp") is not None else None,
+            fixed_switchgear_cost=float(data.get("fixed_switchgear_cost", 0.0)),
+            fixed_travel_fee=float(data.get("fixed_travel_fee", 0.0)),
+            custom_additional_capex=float(data.get("custom_additional_capex", 0.0)),
+            annual_opex_pct=float(data.get("annual_opex_pct", 1.0)),
+            annual_opex_fixed=float(data.get("annual_opex_fixed", 0.0)),
+            discount_rate_pct=float(data.get("discount_rate_pct", 5.0)),
+            electricity_price_inflation_pct=float(data.get("electricity_price_inflation_pct", 3.0)),
+            feed_in_tariff_per_kwh=float(data.get("feed_in_tariff_per_kwh", 0.06)),
+            analysis_horizon_years=int(data.get("analysis_horizon_years", 15))
+        )
 
 
 @dataclass
