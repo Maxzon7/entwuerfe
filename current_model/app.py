@@ -31,6 +31,8 @@ from current_model.ui.tab3_solar.view import render_tab3_solar
 from current_model.ui.tab_comparison.view import render_master_comparison_dashboard
 from current_model.ui.common.sidebar_scenario_view import render_sidebar_scenario_controller
 
+from current_model.ui.common.cards import render_active_scenario_banner
+
 # 1. Page Configuration & Styling
 st.set_page_config(
     page_title="Energy Simulator & Load Profiler (DRACBV)",
@@ -50,6 +52,9 @@ with st.sidebar:
 active_project_name = st.session_state.get("active_project_name", "Energy Transition & Optimization Project")
 st.title(":material/bolt: Energy Simulator & Multi-Scenario Decision Platform")
 st.caption(f":material/folder_open: **Active Workspace Project:** {active_project_name} | Parametric 15-minute dispatch, electricity contract tariffs, and solar & storage investment assessment.")
+
+# Active Scenario Banner Indicator
+render_active_scenario_banner()
 
 # --------------------------------------------------------------------------
 # 4. Top-Level Tab Navigation

@@ -600,7 +600,7 @@ def create_cumulative_cost_comparison_figure(
             line_color="#F59E0B",
             line_width=2.5,
             line_dash="dot",
-            annotation_text=f"🎯 Amortisation / Break-Even: {pb:.1f} Jahre",
+            annotation_text=f"Amortisation / Break-Even: {pb:.1f} Yrs",
             annotation_position="top left",
             annotation_font=dict(color="#F59E0B", size=12)
         )

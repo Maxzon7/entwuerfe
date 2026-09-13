@@ -1,0 +1,459 @@
+{
+  "format": "drac_simulation_project",
+  "version": "1.0",
+  "project_name": "Vorführung: Industrie-Solar & Energiekosten-Optimierung",
+  "description": "Live-Vorführprojekt mit 1 Basis-Szenario (Status Quo) und 2 konkurrierenden Solar-Sub-Szenarien.",
+  "author": "Energieberater / Projektentwicklung",
+  "currency": "EUR",
+  "created_at": "2026-09-13T13:17:19.663158",
+  "updated_at": "2026-09-13T13:17:19.663158",
+  "active_sub_scenario_id": null,
+  "base_scenario": {
+    "name": "Status Quo (Base Scenario)",
+    "description": "Bestehende gewerbliche Liegenschaft ohne Eigenerzeugung. 100% Netzbezug ueber Mittelspannungstarif.",
+    "load_source_type": "synthetic",
+    "load_profile_name": "Gewerbe- und Industriepark (Produktion & Kuehlung)",
+    "synthetic_horizon": "Full Year (365 Days / 35,040 Steps)",
+    "consumers": [
+      {
+        "id": "39a687ed",
+        "name": "1. Process Cooling & Refrigeration Chillers",
+        "power_kw": 55.0,
+        "category": "Cooling & Cold Storage",
+        "count": 1,
+        "time_windows": [
+          {
+            "start_time": "00:00",
+            "end_time": "00:00",
+            "has_peak": true,
+            "peak_power_kw": 85.0,
+            "peak_duration_min": 240,
+            "is_24h": false
+          }
+        ],
+        "active_days": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "seasonal_pattern": "summer_heavy",
+        "monthly_factors": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "standby_power_ratio": 0.0,
+        "is_active": true
+      },
+      {
+        "id": "c9e6e050",
+        "name": "2. Automated Production & Packaging Line",
+        "power_kw": 150.0,
+        "category": "Production Machinery",
+        "count": 1,
+        "time_windows": [
+          {
+            "start_time": "07:30",
+            "end_time": "16:00",
+            "has_peak": true,
+            "peak_power_kw": 190.0,
+            "peak_duration_min": 240,
+            "is_24h": false
+          }
+        ],
+        "active_days": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "seasonal_pattern": "flat",
+        "monthly_factors": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "standby_power_ratio": 0.0,
+        "is_active": true
+      },
+      {
+        "id": "4dc19a75",
+        "name": "3. Compressed Air & Vacuum Stations",
+        "power_kw": 35.0,
+        "category": "Pneumatics & Support",
+        "count": 1,
+        "time_windows": [
+          {
+            "start_time": "07:00",
+            "end_time": "16:30",
+            "has_peak": false,
+            "peak_power_kw": 0.0,
+            "peak_duration_min": 30,
+            "is_24h": false
+          }
+        ],
+        "active_days": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "seasonal_pattern": "flat",
+        "monthly_factors": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "standby_power_ratio": 0.0,
+        "is_active": true
+      },
+      {
+        "id": "525c5d7a",
+        "name": "4. Facility Lighting & Administrative HVAC",
+        "power_kw": 20.0,
+        "category": "Building & Infrastructure",
+        "count": 1,
+        "time_windows": [
+          {
+            "start_time": "00:00",
+            "end_time": "00:00",
+            "has_peak": false,
+            "peak_power_kw": 0.0,
+            "peak_duration_min": 30,
+            "is_24h": false
+          },
+          {
+            "start_time": "07:00",
+            "end_time": "17:30",
+            "has_peak": false,
+            "peak_power_kw": 0.0,
+            "peak_duration_min": 30,
+            "is_24h": false
+          }
+        ],
+        "active_days": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "seasonal_pattern": "flat",
+        "monthly_factors": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "standby_power_ratio": 0.0,
+        "is_active": true
+      },
+      {
+        "id": "9b616ec8",
+        "name": "5. Logistics Fleet & Forklift EV Hub",
+        "power_kw": 50.0,
+        "category": "E-Mobility & Logistics",
+        "count": 1,
+        "time_windows": [
+          {
+            "start_time": "10:30",
+            "end_time": "14:30",
+            "has_peak": false,
+            "peak_power_kw": 0.0,
+            "peak_duration_min": 30,
+            "is_24h": false
+          }
+        ],
+        "active_days": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "seasonal_pattern": "flat",
+        "monthly_factors": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "standby_power_ratio": 0.0,
+        "is_active": true
+      }
+    ],
+    "holidays": [],
+    "csv_filename": null,
+    "csv_power_column": null,
+    "csv_data_records": null,
+    "base_contract": {
+      "format": "drac_contract",
+      "version": "1.0",
+      "name": "Example 1 - European Commercial Multi-Tariff",
+      "currency": "EUR",
+      "base_monthly_fee": 95.0,
+      "contracted_capacity_kw": 400.0,
+      "monthly_capacity_tariff": 14.5,
+      "demand_capacity_tariff": 2.5,
+      "max_physical_limit_kw": 750.0,
+      "peak_penalty_rate": 28.0,
+      "reactive_power_tariff": 0.032,
+      "min_power_factor": 0.92,
+      "reactive_power_allowance_pct": 33.0,
+      "tou_rates": [
+        {
+          "name": "Off-Peak (Valle / Night)",
+          "rate": 0.135,
+          "start_time": "00:00",
+          "end_time": "06:00"
+        },
+        {
+          "name": "Mid-Peak (Llano / Daytime)",
+          "rate": 0.215,
+          "start_time": "06:00",
+          "end_time": "17:00"
+        },
+        {
+          "name": "High-Peak (Punta / Evening)",
+          "rate": 0.295,
+          "start_time": "17:00",
+          "end_time": "22:00"
+        },
+        {
+          "name": "Off-Peak (Valle / Night)",
+          "rate": 0.135,
+          "start_time": "22:00",
+          "end_time": "24:00"
+        }
+      ],
+      "default_energy_rate": 0.215,
+      "weekend_is_off_peak": true,
+      "taxes_and_fees": [
+        {
+          "name": "Electricity Tax (Stromsteuer)",
+          "type": "per_kwh",
+          "value": 0.0205,
+          "description": "Statutory excise duty"
+        },
+        {
+          "name": "VAT / Mehrwertsteuer",
+          "type": "percentage",
+          "value": 19.0,
+          "description": "Value added tax"
+        }
+      ]
+    },
+    "location": {
+      "name": "Seville Commercial Park, Spain",
+      "latitude": 37.3891,
+      "longitude": -5.9845,
+      "elevation_m": 18.0,
+      "timezone_str": "America/Argentina/Mendoza"
+    },
+    "baseline_annual_kwh": 1194469.5,
+    "baseline_peak_kw": 366.5,
+    "baseline_annual_cost": 401925.02,
+    "baseline_15year_cost": 7475363.254478,
+    "baseline_payment_schedule": []
+  },
+  "sub_scenarios": [
+    {
+      "id": "sub_scen_1_eigenverbrauch",
+      "name": "Sub-Szenario 1: Eigenverbrauchs-Fokus (350 kWp)",
+      "description": "Auslegung auf maximale Eigenverbrauchsquote (SCR > 80%). Minimale Netzeinspeisung, geringster Kapitaleinsatz (CAPEX), schnelle Amortisation.",
+      "color_code": "#2563EB",
+      "is_active": true,
+      "include_solar": true,
+      "include_bess": false,
+      "include_generator": false,
+      "use_custom_grid_tariff": false,
+      "solar_config": {
+        "module_count": 778,
+        "module_power_wp": 450.0,
+        "technology_preset": "TOPCon",
+        "module_technology": "TOPCon (450 Wp - N-Type Modern Standard)",
+        "temp_coefficient_pct_c": -0.3,
+        "nmot_c": 42.0,
+        "dc_capacity_kwp": 350.1,
+        "first_year_degradation_pct": 1.5,
+        "annual_degradation_pct": 0.4,
+        "degradation_pct_a": 0.4,
+        "economic_lifetime_years": 15,
+        "module_length_m": 1.76,
+        "module_width_m": 1.13,
+        "area_factor": 1.4,
+        "tilt_deg": 30.0,
+        "azimuth_deg": 180.0,
+        "mounting_type": "Open-Rack (Ground/Carport)",
+        "albedo": 0.2,
+        "inverter_capacity_kw": 300.0,
+        "inverter_efficiency_pct": 98.5,
+        "soiling_loss_pct": 2.0,
+        "shading_loss_pct": 1.5,
+        "dc_wiring_loss_pct": 1.5,
+        "weather_mode": "TMY",
+        "selected_weather_year": 2024,
+        "multi_year_start": 2015,
+        "multi_year_end": 2024,
+        "sizing_scenario": "custom"
+      },
+      "solar_financial": {
+        "is_enabled": true,
+        "currency": "EUR",
+        "cost_modules_per_wp": 0.5,
+        "cost_inverter_per_w": 0.08,
+        "cost_substructure_per_wp": 0.15,
+        "cost_installation_per_wp": 0.32,
+        "fixed_switchgear_cost": 2500.0,
+        "fixed_travel_fee": 1000.0,
+        "custom_additional_capex": 0.0,
+        "annual_opex_pct": 1.0,
+        "annual_opex_fixed": 0.0,
+        "discount_rate_pct": 5.0,
+        "electricity_price_inflation_pct": 3.0,
+        "feed_in_tariff_per_kwh": 0.06,
+        "analysis_horizon_years": 15
+      },
+      "bess_config": null,
+      "generator_config": null,
+      "custom_contract": null,
+      "summary_kpis": {
+        "annual_generation_mwh": 687.64,
+        "self_consumption_rate_pct": 81.0,
+        "autarky_pct": 46.7,
+        "annual_savings_gross": 148610.65000000002,
+        "residual_bill_gross": 253314.37,
+        "total_capex": 367097.0,
+        "payback_years": 2.4,
+        "npv": 1469912.35,
+        "lifetime_savings": 2350186.74
+      },
+      "financial_cashflows": [],
+      "dispatch_records": null
+    },
+    {
+      "id": "sub_scen_2_max_autarkie",
+      "name": "Sub-Szenario 2: Maximalausbau Net-Zero (697 kWp)",
+      "description": "Vollflaechiger PV-Ausbau zur Maximierung der energetischen Autarkie (> 60%) und massiven Senkung der 15-Jahres-Gesamtkosten.",
+      "color_code": "#059669",
+      "is_active": true,
+      "include_solar": true,
+      "include_bess": false,
+      "include_generator": false,
+      "use_custom_grid_tariff": false,
+      "solar_config": {
+        "module_count": 1548,
+        "module_power_wp": 450.0,
+        "technology_preset": "TOPCon",
+        "module_technology": "TOPCon (450 Wp - N-Type Modern Standard)",
+        "temp_coefficient_pct_c": -0.3,
+        "nmot_c": 42.0,
+        "dc_capacity_kwp": 696.6,
+        "first_year_degradation_pct": 1.5,
+        "annual_degradation_pct": 0.4,
+        "degradation_pct_a": 0.4,
+        "economic_lifetime_years": 15,
+        "module_length_m": 1.76,
+        "module_width_m": 1.13,
+        "area_factor": 1.4,
+        "tilt_deg": 30.0,
+        "azimuth_deg": 180.0,
+        "mounting_type": "Open-Rack (Ground/Carport)",
+        "albedo": 0.2,
+        "inverter_capacity_kw": 590.0,
+        "inverter_efficiency_pct": 98.5,
+        "soiling_loss_pct": 2.0,
+        "shading_loss_pct": 1.5,
+        "dc_wiring_loss_pct": 1.5,
+        "weather_mode": "TMY",
+        "selected_weather_year": 2024,
+        "multi_year_start": 2015,
+        "multi_year_end": 2024,
+        "sizing_scenario": "custom"
+      },
+      "solar_financial": {
+        "is_enabled": true,
+        "currency": "EUR",
+        "cost_modules_per_wp": 1.0,
+        "cost_inverter_per_w": 0.07,
+        "cost_substructure_per_wp": 0.15,
+        "cost_installation_per_wp": 0.35,
+        "fixed_switchgear_cost": 2500.0,
+        "fixed_travel_fee": 1000.0,
+        "custom_additional_capex": 0.0,
+        "annual_opex_pct": 1.0,
+        "annual_opex_fixed": 0.0,
+        "discount_rate_pct": 5.0,
+        "electricity_price_inflation_pct": 3.0,
+        "feed_in_tariff_per_kwh": 0.06,
+        "analysis_horizon_years": 15
+      },
+      "bess_config": null,
+      "generator_config": null,
+      "custom_contract": null,
+      "summary_kpis": {
+        "annual_generation_mwh": 1367.02,
+        "self_consumption_rate_pct": 53.9,
+        "autarky_pct": 61.7,
+        "annual_savings_gross": 198353.09000000003,
+        "residual_bill_gross": 203571.93,
+        "total_capex": 1089700.0,
+        "payback_years": 4.7,
+        "npv": 1620349.61,
+        "lifetime_savings": 2919471.56
+      },
+      "financial_cashflows": [],
+      "dispatch_records": null
+    }
+  ]
+}

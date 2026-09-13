@@ -18,7 +18,9 @@ from typing import Optional
 import streamlit as st
 import pandas as pd
 
-from current_model.models.solar import SolarLocation, SolarPVConfig, SolarSimulationResult
+from current_model.models.solar import SolarLocation, SolarPVConfig, SolarFinancialConfig, SolarSimulationResult
+from current_model.models.scenario import ProjectContainer, SubScenario
+from current_model.core.project_io import export_project_from_session
 from current_model.core.solar_engine import simulate_solar_pv_generation
 from current_model.ui.common.cards import render_kpi_card
 from current_model.ui.tab3_solar.forms import render_solar_location_section, render_solar_config_form
@@ -27,7 +29,11 @@ from current_model.ui.tab3_solar.charts import (
     create_solar_monthly_bar_figure,
     create_solar_seasonal_daily_figure,
     create_solar_loss_waterfall_figure,
-    create_technology_comparison_figure
+    create_technology_comparison_figure,
+    create_solar_capex_donut_figure,
+    create_solar_cashflow_payback_figure,
+    create_cumulative_cost_comparison_figure,
+    create_annual_running_costs_comparison_figure
 )
 from current_model.ui.tab3_solar.integration_view import render_solar_integration_view
 
@@ -55,17 +61,67 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     """
     Renders the Excel-aligned Sub-Tab 3.1 Pure Standalone Solar PV Generation Simulator view.
     """
-    st.markdown("### Photovoltaic Solar Generation Simulator")
+    project: ProjectContainer = export_project_from_session()
+    active_sub = project.get_active_scenario()
+
+    # --------------------------------------------------------------------------
+    # 0. Status Quo (Base Benchmark) Guard
+    # --------------------------------------------------------------------------
+    if active_sub is None:
+        st.info(
+            "### :material/anchor: Status Quo (Base Benchmark) Active\n\n"
+            "The **Status Quo (Base Scenario)** represents your pure utility grid electricity baseline without on-site Solar PV or battery storage.\n\n"
+            "To configure, size, and simulate a Solar PV installation, switch to an active Sub-Scenario branch or instantiate a new branch below."
+        )
+        c_act1, c_act2, _ = st.columns([3.5, 3.5, 5])
+        with c_act1:
+            if project.sub_scenarios:
+                first_sub = project.sub_scenarios[0]
+                if st.button(f"Switch to '{first_sub.name}'", icon=":material/arrow_forward:", type="primary", use_container_width=True, key=f"{key_prefix}_switch_sub1_btn"):
+                    project.active_sub_scenario_id = first_sub.id
+                    st.session_state["project_container"] = project
+                    from current_model.core.project_io import sync_active_scenario_into_session
+                    sync_active_scenario_into_session(project, auto_execute=True)
+                    st.rerun()
+        with c_act2:
+            if st.button("Instantiate New Solar PV Branch", icon=":material/add_circle:", use_container_width=True, key=f"{key_prefix}_instantiate_new_btn"):
+                new_sub = SubScenario(
+                    name=f"Sub-Scenario {len(project.sub_scenarios) + 1}: Solar PV",
+                    color_code="#2563EB",
+                    include_solar=True,
+                    solar_config=SolarPVConfig(
+                        module_count=778,
+                        module_power_wp=450.0,
+                        technology_preset="TOPCon",
+                        module_technology="TOPCon (450 Wp - N-Type Modern Standard)",
+                        inverter_capacity_kw=300.0,
+                        tilt_deg=28.0,
+                        azimuth_deg=0.0,
+                        weather_mode="TMY"
+                    )
+                )
+                project.add_sub_scenario(new_sub)
+                project.active_sub_scenario_id = new_sub.id
+                st.session_state["project_container"] = project
+                from current_model.core.project_io import sync_active_scenario_into_session
+                sync_active_scenario_into_session(project, auto_execute=True)
+                st.rerun()
+        return
+
+    # --------------------------------------------------------------------------
+    # Sub-Scenario Active Configuration
+    # --------------------------------------------------------------------------
+    st.markdown(f"### Photovoltaic Solar Generation Simulator")
     st.caption(
-        "Calculate exact electrical solar power (kW) and energy yield (kWh / MWh) based on "
-        "15-minute radiation data, panel count × wattage, cell technologies, mounting area, and inverter efficiency."
+        f"Active Branch: **{active_sub.name}** | Calculate exact electrical solar power (kW) and energy yield (kWh / MWh) based on "
+        f"15-minute radiation data, panel count × wattage, cell technologies, mounting area, and inverter efficiency."
     )
 
     state_cfg_key = f"{key_prefix}_config"
     state_res_key = f"{key_prefix}_sim_result"
 
-    # Action Toolbar: Load Example Case / Clear Form
-    act_col1, act_col2, _ = st.columns([3.5, 2.5, 6])
+    # Action Toolbar: Load Benchmark Case / Reset Form / Apply to Scenario
+    act_col1, act_col2, act_col3 = st.columns([3.5, 2.5, 4])
     with act_col1:
         if st.button(
             "Load Example Case (Mendoza Benchmark)",
@@ -136,20 +192,30 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     location: SolarLocation = render_solar_location_section(key_prefix=f"{key_prefix}_loc")
 
     # 2. Technical PV Configuration Form (Input Panel)
-    current_cfg: Optional[SolarPVConfig] = st.session_state.get(state_cfg_key)
+    current_cfg: Optional[SolarPVConfig] = st.session_state.get(state_cfg_key) or active_sub.solar_config
     if current_cfg is not None and (not hasattr(current_cfg, "technology_preset") or not hasattr(current_cfg, "weather_mode")):
         current_cfg = None
         if state_res_key in st.session_state:
             del st.session_state[state_res_key]
 
+    current_fin: Optional[SolarFinancialConfig] = st.session_state.get(f"{key_prefix}_fin_config") or active_sub.solar_financial or st.session_state.get("solar_financial_config")
+
     config, fin_config, submitted = render_solar_config_form(
         location=location,
         current_config=current_cfg,
+        current_fin_config=current_fin,
         key_prefix=f"{key_prefix}_form"
     )
 
     st.session_state[state_cfg_key] = config
     st.session_state[f"{key_prefix}_fin_config"] = fin_config
+    st.session_state["solar_financial_config"] = fin_config
+
+    # Auto-save changes to active sub-scenario container
+    active_sub.solar_config = config
+    active_sub.solar_financial = fin_config
+    active_sub.include_solar = (config.module_count > 0)
+    st.session_state["project_container"] = project
 
     # 3. Physical Simulation Execution & Caching
     auto_trigger = st.session_state.pop(f"{key_prefix}_trigger_calc", False)
@@ -191,13 +257,12 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
 
     valid_sizing = config.module_count > 0 and (config.dc_capacity_kwp or 0) > 0
     from current_model.core.solar_financial_engine import compute_solar_financial_metrics
-    from current_model.ui.tab3_solar.charts import create_solar_capex_donut_figure, create_solar_cashflow_payback_figure
 
     if submitted and not valid_sizing:
-        st.error("⚠️ Sizing Required: Please enter a module count greater than 0 in Section 2 above to calculate solar generation.")
+        st.error("Sizing Required: Please enter a module count greater than 0 in Section 2 above to calculate solar generation.", icon=":material/warning:")
 
-    need_full_simulation = (submitted or auto_trigger) and valid_sizing and (physical_config_changed or cached_res is None)
-    need_financial_recalc = (submitted or auto_trigger or financial_config_changed) and valid_sizing and not need_full_simulation and cached_res is not None
+    need_full_simulation = valid_sizing and (submitted or auto_trigger or physical_config_changed or cached_res is None)
+    need_financial_recalc = valid_sizing and not need_full_simulation and (financial_config_changed or (cached_res is not None and cached_res.financial_metrics is None and fin_config and fin_config.is_enabled))
 
     if need_full_simulation:
         with st.spinner("Calculating 15-minute physical solar PV generation & technology comparison..."):
@@ -226,7 +291,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 financial_config_changed = False
                 cached_res = sim_result
             except Exception as err:
-                st.error(f"Solar Simulation Error: {err}")
+                st.error(f"Solar Simulation Error: {err}", icon=":material/error:")
                 return
 
     elif need_financial_recalc:
@@ -251,73 +316,78 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
         st.info(
             "**No solar simulation calculated yet.**\n\n"
             "Enter your installation parameters above and click **'Calculate Solar PV Generation & Multi-Technology Comparison'**, "
-            "or click **'Load Example Case (Mendoza Benchmark)'** to load the preconfigured reference scenario."
+            "or click **'Load Example Case (Mendoza Benchmark)'** to load the preconfigured reference scenario.",
+            icon=":material/info:"
         )
         return
 
     if physical_config_changed and valid_sizing:
-        st.warning("Solar physical configuration was changed above. Click **'Calculate Solar PV Generation & Multi-Technology Comparison'** to refresh the results.")
+        st.warning("Solar physical configuration was changed above. Click **'Calculate Solar PV Generation & Multi-Technology Comparison'** to refresh the results.", icon=":material/warning:")
 
     sim_res: SolarSimulationResult = st.session_state[state_res_key]
 
-    # Dynamically evaluate financial metrics if user toggled on financials on existing simulation
-    if fin_config and fin_config.is_enabled and (sim_res.financial_metrics is None or not sim_res.financial_metrics.is_configured):
-        sim_res.financial_config = fin_config
-        sim_res.financial_metrics = compute_solar_financial_metrics(
-            config=config,
-            fin_config=fin_config,
-            annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
-            multi_year_yields=sim_res.multi_year_yields
-        )
-    elif fin_config and not fin_config.is_enabled:
-        sim_res.financial_metrics = None
+    # Dynamically evaluate financial metrics if user enabled financials on existing simulation
+    if submitted:
+        if fin_config and fin_config.is_enabled:
+            sim_res.financial_config = fin_config
+            sim_res.financial_metrics = compute_solar_financial_metrics(
+                config=config,
+                fin_config=fin_config,
+                annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
+                multi_year_yields=sim_res.multi_year_yields
+            )
+        else:
+            sim_res.financial_config = fin_config
+            sim_res.financial_metrics = None
+    else:
+        # On tab switch / passive rerun: compute financials if enabled and not yet present, or preserve existing
+        if fin_config and fin_config.is_enabled and (sim_res.financial_metrics is None or not sim_res.financial_metrics.is_configured):
+            sim_res.financial_config = fin_config
+            sim_res.financial_metrics = compute_solar_financial_metrics(
+                config=config,
+                fin_config=fin_config,
+                annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
+                multi_year_yields=sim_res.multi_year_yields
+            )
+        elif sim_res.financial_metrics is not None and sim_res.financial_metrics.is_configured:
+            # Preserve active financial config from simulation result
+            fin_config = sim_res.financial_config or fin_config
 
     kpis = sim_res.kpis
     df_ts = sim_res.df_timeseries
 
-    # Save to global session state for downstream use
+    # Save to global session state for downstream use & tab comparison
     st.session_state["solar_kw_15min"] = df_ts["P_AC_kW"]
     st.session_state["solar_kpis"] = kpis
     st.session_state["solar_config"] = config
     st.session_state["solar_financial_config"] = fin_config
     st.session_state["solar_financial_metrics"] = sim_res.financial_metrics
 
+    # Sync with active project sub-scenario
+    project = st.session_state.get("active_project")
+    if project and project.active_sub_scenario_id:
+        sub = project.get_sub_scenario(project.active_sub_scenario_id)
+        if sub:
+            sub.solar_config = config
+            sub.solar_kpis = kpis
+
     st.divider()
 
     # --------------------------------------------------------------------------
-    # View Filter Toolbar (Technical Electricity Generation vs. Financial Costs)
+    # Results Sub-Tabs Navigation (Clean Material Tabs)
     # --------------------------------------------------------------------------
-    col_v1, col_v2 = st.columns([6.5, 3.5])
-    with col_v1:
-        view_options = [
-            "⚡ Electricity Generation & Technical Yield",
-            "💶 Solar Financial & Turn-Key Investment Costs"
-        ]
-        active_views = st.pills(
-            "Select Display Views (Click to toggle on / off):",
-            options=view_options,
-            default=view_options,
-            selection_mode="multi",
-            key=f"{key_prefix}_active_views"
-        )
-    with col_v2:
-        st.write("")
-        st.caption("Toggle views with a single click: Show pure technical generation, pure financial investment costs, or both side-by-side.")
-
-    show_technical = "⚡ Electricity Generation & Technical Yield" in (active_views or [])
-    show_financial = "💶 Solar Financial & Turn-Key Investment Costs" in (active_views or [])
-
-    if not show_technical and not show_financial:
-        st.info("💡 Both display views are currently hidden. Click on **'⚡ Electricity Generation & Technical Yield'** or **'💶 Solar Financial & Turn-Key Investment Costs'** above to display the analysis.")
-        return
+    tab_yield, tab_finance = st.tabs([
+        ":material/bolt: Electricity Generation & Technical Yield",
+        ":material/payments: Solar Financial & Turn-Key CAPEX Assessment"
+    ])
 
     # ==========================================================================
     # SECTION A: TECHNICAL SOLAR PV GENERATION & ELECTRICAL METRICS
     # ==========================================================================
-    if show_technical:
+    with tab_yield:
         # Active Weather Data Foundation Status
         weather_source = getattr(kpis, "weather_data_source", "PVGIS-ERA5 Typical Meteorological Year (TMY)")
-        st.info(f"Active Weather Data Foundation: **{weather_source}** | 35,040 Time Steps (15-Minute Grid)")
+        st.info(f"Active Weather Data Foundation: **{weather_source}** | 35,040 Time Steps (15-Minute Grid)", icon=":material/info:")
 
         # 3. Core Electrical Generation KPIs & Area Metrics
         st.subheader("3. Annual Electricity Generation & System Metrics")
@@ -468,13 +538,24 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     # ==========================================================================
     # SECTION B: PURE SOLAR FINANCIALS & TURN-KEY INVESTMENT COSTS
     # ==========================================================================
-    if show_financial:
-        st.subheader("Solar Turn-Key Investment Costs & CAPEX Breakdown")
+    with tab_finance:
         fin_m = sim_res.financial_metrics
+        if (fin_m is None or not fin_m.is_configured or fin_m.total_capex <= 0) and fin_config and fin_config.is_enabled:
+            fin_m = compute_solar_financial_metrics(
+                config=config,
+                fin_config=fin_config,
+                annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
+                multi_year_yields=sim_res.multi_year_yields
+            )
+            sim_res.financial_config = fin_config
+            sim_res.financial_metrics = fin_m
+
         if fin_m and fin_m.is_configured and fin_m.total_capex > 0:
             f_curr = fin_m.currency
+            st.subheader("Solar Turn-Key Investment Costs & CAPEX Breakdown")
             st.caption(f"Turn-key solar plant investment breakdown (DRACBV Kosten-/Berechnungs-Dashboard) and standalone electricity generation costs (LCOE):")
 
+            # 1. Primary CAPEX & LCOE KPIs
             fk1, fk2, fk3, fk4 = st.columns(4)
             with fk1:
                 render_kpi_card(
@@ -502,7 +583,40 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                     f"Year 1 O&M reserve ({fin_config.annual_opex_pct:.1f}% p.a.)"
                 )
 
-            # CAPEX Itemized Breakdown Table & Donut Chart
+            # 2. Secondary Financial Return & Life-Cycle KPIs
+            st.write("")
+            fk5, fk6, fk7, fk8 = st.columns(4)
+            with fk5:
+                pb_text = f"{fin_m.payback_period_years:.1f} Years" if fin_m.payback_period_years else "Over 15 Years"
+                render_kpi_card(
+                    "Amortisation / Payback",
+                    pb_text,
+                    f"Discounted: {fin_m.discounted_payback_years:.1f} Yrs" if fin_m.discounted_payback_years else "Break-even timeline",
+                    status="ok" if fin_m.payback_period_years and fin_m.payback_period_years <= 10.0 else "default"
+                )
+            with fk6:
+                render_kpi_card(
+                    "15-Year Net Benefit",
+                    f"{fin_m.total_lifetime_savings:,.2f} {f_curr}",
+                    f"Cumulative cash benefit after CAPEX & OPEX",
+                    status="ok" if fin_m.total_lifetime_savings > 0 else "alert"
+                )
+            with fk7:
+                render_kpi_card(
+                    "Net Present Value (NPV)",
+                    f"{fin_m.npv:,.2f} {f_curr}",
+                    f"Discounted at {fin_config.discount_rate_pct:.1f}% interest"
+                )
+            with fk8:
+                irr_text = f"{fin_m.irr_pct:.1f}%" if fin_m.irr_pct is not None else "N/A"
+                render_kpi_card(
+                    "Internal Rate of Return (IRR)",
+                    irr_text,
+                    f"Capital return rate across horizon"
+                )
+
+            # 3. CAPEX Itemized Breakdown Table & Donut Chart
+            st.write("")
             col_c_tbl, col_c_pie = st.columns([6, 5])
             with col_c_tbl:
                 st.markdown("##### Turn-Key Itemized Cost Table")
@@ -556,11 +670,53 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 fig_donut = create_solar_capex_donut_figure(fin_m, currency=f_curr)
                 st.plotly_chart(fig_donut, use_container_width=True)
 
-            st.caption("ℹ️ *Note: For comparative analysis showing how these solar costs offset your electricity bill compared to the Status Quo without solar, see Sub-Tab 3.2 (Solar & Consumption Integration).*")
+            # 4. 15-Year Life-Cycle Trajectory & Amortisation Curves
+            st.write("")
+            st.markdown("##### 15-Year Life-Cycle Cost Trajectory & Amortisation Analysis")
+            st.caption("Directly compare total cumulative expenses, annual running operating costs, and the exact investment amortisation point:")
+
+            cf_tab1, cf_tab2, cf_tab3 = st.tabs([
+                ":material/show_chart: Cumulative Total Cost & Amortisation (Status Quo vs. Mit PV)",
+                ":material/bar_chart: Annual Running Costs & Operating Expenses",
+                ":material/payments: Net Cash Flow & Payback Curve"
+            ])
+
+            with cf_tab1:
+                fig_cum = create_cumulative_cost_comparison_figure(fin_m, currency=f_curr)
+                st.plotly_chart(fig_cum, use_container_width=True)
+
+            with cf_tab2:
+                fig_running = create_annual_running_costs_comparison_figure(fin_m, currency=f_curr)
+                st.plotly_chart(fig_running, use_container_width=True)
+
+            with cf_tab3:
+                fig_cf = create_solar_cashflow_payback_figure(fin_m, currency=f_curr)
+                st.plotly_chart(fig_cf, use_container_width=True)
+
+            # 5. 15-Year Life-Cycle Year-by-Year Table
+            with st.expander("15-Year Life-Cycle Year-by-Year Table (Cashflow, Degradation, OPEX, Savings)", icon=":material/view_timeline:", expanded=False):
+                detail_rows = []
+                for row in fin_m.cash_flow_table:
+                    detail_rows.append({
+                        "Year": f"Year {row['year']}",
+                        "Aging Factor": f"{row['aging_factor'] * 100.0:.2f} %",
+                        "Generation (MWh)": f"{row['generation_mwh']:,.2f}",
+                        f"Status Quo Bill ({f_curr})": f"{row['status_quo_bill']:,.2f}",
+                        f"Residual Bill ({f_curr})": f"{row['residual_bill']:,.2f}",
+                        f"OPEX ({f_curr})": f"{row['opex_annual']:,.2f}",
+                        f"Export Rev ({f_curr})": f"{row['export_revenue']:,.2f}",
+                        f"Net Cashflow ({f_curr})": f"{row['net_cash_flow']:+,.2f}",
+                        f"Cumulative Net CF ({f_curr})": f"{row['cumulative_cash_flow']:+,.2f}",
+                        f"Discounted CF ({f_curr})": f"{row['discounted_cash_flow']:+,.2f}"
+                    })
+                st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
+            st.caption(":material/info: *Note: For coupled facility load analysis showing how these solar costs offset your actual electricity tariff invoices compared to the Status Quo without solar, see Sub-Tab 3.2 (Solar & Consumption Integration).*")
         else:
             st.info(
-                "💡 **Solar Financial Assessment is currently disabled.**\n\n"
+                "**Solar Financial Assessment is currently disabled.**\n\n"
                 "To calculate and display turn-key CAPEX breakdown, specific investment per kWp, and LCOE (€/kWh), "
-                "check **'Enable Solar Financial Assessment & Turn-Key CAPEX Calculation'** in Section 5 above."
+                "check **'Enable Solar Financial Assessment & Turn-Key CAPEX Calculation'** in Section 5 above and click **'Calculate Solar PV Generation & Multi-Technology Comparison'**.",
+                icon=":material/info:"
             )
 

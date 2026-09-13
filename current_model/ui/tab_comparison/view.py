@@ -6,11 +6,19 @@ Master Scenario Comparison & Decision Dashboard (current_model/ui/tab_comparison
 Description:
 ------------
 Main entry point for the Executive Decision & Multi-Scenario Comparison Dashboard:
-  - KPI Leaderboard Table ranking all Sub-Scenarios against the Status Quo.
-  - Multi-Scenario 15-Year Cumulative Cost Trajectory Curves (Break-Even Intersection).
-  - CAPEX vs. OPEX Capital Shift Visualizations.
-  - Scenario Management Controls (Rename, Duplicate, Delete).
-  - Granular and Full Project Export Pipelines.
+  - Sub-Tab 4.1: Financial Benchmarks & Amortisation
+      * Top Financial KPI Summary Cards (Best TCO, Fastest Payback, Solar Autarky).
+      * Scenario Architecture & Parameter Delta Matrix (Baseline vs Interventions).
+      * Scenario Ranking Leaderboard Table.
+      * 15-Year Multi-Scenario Cumulative Cost Curves (Synchronized with Tab 3.1 & Break-Even Annotations).
+      * CAPEX vs. OPEX Capital Shift Visualizations.
+      * Autarky & Payback Trade-off Benchmark.
+      * Scenario Quick Management & Full Project Export.
+  - Sub-Tab 4.2: Electrical Energy & Power Balance
+      * Top Electrical & Power KPI Cards (Demand, Clean Generation, Peak Shaving, CO2 Offsets).
+      * Multi-Scenario Electrical Flow Comparison Table (Generation, Direct Cons, Residual Grid, Export).
+      * Grouped Multi-Scenario Annual Energy Balance Bar Chart (MWh).
+      * Peak Demand Shaving (kW) & Clean Energy Carbon Offsets (Tons CO2/a) Dual Figure.
 """
 
 from typing import List, Dict, Any, Optional
@@ -19,28 +27,59 @@ import pandas as pd
 import numpy as np
 
 from current_model.models.scenario import BaseScenario, SubScenario, ProjectContainer
+from current_model.models.solar import SolarFinancialConfig
 from current_model.core.project_io import export_project_from_session, export_project_json
+from current_model.core.solar_financial_engine import compute_solar_financial_metrics
 from current_model.ui.tab_comparison.charts import (
     create_multi_scenario_cumulative_cost_figure,
     create_capex_opex_breakdown_figure,
-    create_autarky_payback_figure
+    create_autarky_payback_figure,
+    create_multi_scenario_energy_balance_figure,
+    create_multi_scenario_peak_and_co2_figure
 )
 from current_model.ui.common.cards import render_kpi_card
+from current_model.ui.common.session_utils import find_active_load_data_in_session
 
 
 def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[str, Any]]:
     """
     Constructs normalized analytical comparison records across all configured sub-scenarios
-    and the base scenario.
+    and the base scenario, linking exact financial metrics and electrical energy flows.
     """
     records: List[Dict[str, Any]] = []
     currency = project.currency or "EUR"
 
-    # Status Quo Baseline Reference
-    base_annual_cost = project.base_scenario.baseline_annual_cost or 160000.0
-    base_15y_tco = project.base_scenario.baseline_15year_cost or (base_annual_cost * 18.5989) # ~3% inflation factor
+    # 1. Baseline Load Discovery & Power Metrics
+    df_load, load_desc, p_col = find_active_load_data_in_session()
+    if df_load is not None and not df_load.empty and p_col in df_load.columns:
+        base_total_kwh = float(df_load[p_col].sum() * 0.25)
+        base_peak_kw = float(df_load[p_col].max())
+    else:
+        base_total_kwh = float(project.base_scenario.baseline_annual_kwh) if project.base_scenario.baseline_annual_kwh > 0 else 1412000.0
+        base_peak_kw = float(project.base_scenario.baseline_peak_kw) if project.base_scenario.baseline_peak_kw > 0 else 380.0
+
+    base_total_mwh = base_total_kwh / 1000.0
+
+    # 2. Status Quo Baseline Reference Cost
+    base_annual_cost = project.base_scenario.baseline_annual_cost
+    if not base_annual_cost or base_annual_cost <= 0:
+        active_bill = st.session_state.get("active_bill_breakdown") or st.session_state.get("app_tab2_breakdown")
+        if active_bill and hasattr(active_bill, "total_gross_period") and active_bill.total_gross_period > 0:
+            factor = (365.0 / active_bill.duration_days) if getattr(active_bill, "duration_days", 0) > 0 else 1.0
+            base_annual_cost = active_bill.total_gross_period * factor
+        else:
+            base_annual_cost = 344141.21
+
+    base_15y_tco = base_annual_cost * 18.5989  # ~3% annual inflation factor over 15 years
     
-    # 1. Base Scenario Row
+    # Base Status Quo 15-year cumulative trajectory series
+    base_cum_series = [0.0]
+    cum_tracker = 0.0
+    for y in range(1, 16):
+        cum_tracker += base_annual_cost * ((1.0 + 0.03) ** (y - 1))
+        base_cum_series.append(round(cum_tracker, 2))
+
+    # 1. Base Scenario Row (Status Quo)
     records.append({
         "id": "base",
         "rank": "Ref",
@@ -49,54 +88,154 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         "capex": 0.0,
         "capex_str": f"0 {currency}",
         "annual_opex": base_annual_cost,
+        "total_15y_opex": base_15y_tco,
         "total_15y_tco": base_15y_tco,
         "tco_str": f"{base_15y_tco:,.0f} {currency}",
         "payback_years": 0.0,
-        "payback_str": "Baseline",
+        "payback_str": "Baseline Reference",
         "npv": 0.0,
         "npv_str": "-",
+        "net_savings": 0.0,
+        "net_savings_str": "-",
         "autarky_pct": 0.0,
         "autarky_str": "0.0 %",
         "self_consumption_pct": 0.0,
         "self_consumption_str": "-",
+        "total_load_mwh": round(base_total_mwh, 1),
+        "generation_mwh": 0.0,
+        "direct_consumption_mwh": 0.0,
+        "residual_grid_mwh": round(base_total_mwh, 1),
+        "surplus_export_mwh": 0.0,
+        "baseline_peak_kw": round(base_peak_kw, 1),
+        "residual_peak_kw": round(base_peak_kw, 1),
         "shaved_peak_kw": 0.0,
+        "co2_avoided_tons": 0.0,
+        "cumulative_costs": base_cum_series,
+        "baseline_costs": base_cum_series,
         "color": "#94A3B8"
     })
 
-    # Check if active solar exists in session to enrich sub-scenarios
+    # Active solar simulation / dispatch in session
     sim_res = st.session_state.get("app_tab3_sim_result")
     int_res = st.session_state.get("app_tab3_int_sim_result") or st.session_state.get("solar_dispatch_result")
+    active_fin_m = st.session_state.get("solar_financial_metrics")
+    active_sub_id = project.active_sub_scenario_id
 
     for idx, sub in enumerate(project.sub_scenarios):
-        # Extract or compute KPIs
-        capex = 0.0
-        if sub.solar_financial and sub.solar_financial.is_enabled and sub.solar_config:
-            capex += getattr(sub.solar_financial, "total_capex", 0.0) or (sub.solar_config.dc_capacity_kwp * 1200.0)
-        elif sub.include_solar and sub.solar_config:
-            capex += sub.solar_config.dc_capacity_kwp * 1200.0
+        # 1. Solar Capacity & Generation Sizing
+        kwp = 0.0
+        annual_gen_kwh = 0.0
+        if sub.include_solar and sub.solar_config:
+            kwp = sub.solar_config.dc_capacity_kwp
+            if active_sub_id == sub.id and sim_res is not None and getattr(sim_res, "kpis", None):
+                annual_gen_kwh = sim_res.kpis.annual_energy_kwh
+            else:
+                annual_gen_kwh = kwp * 1582.0  # standard high-yield benchmark yield (kWh/kWp)
 
-        if sub.include_bess and sub.bess_config:
-            capex += sub.bess_config.total_capex
+        gen_mwh = annual_gen_kwh / 1000.0
 
-        if sub.include_generator and sub.generator_config:
-            capex += sub.generator_config.capital_cost
-
-        # Autarky & Self-Consumption
+        # 2. Coupled Electrical Energy & Power Balance
         autarky = 0.0
         self_cons = 0.0
-        if int_res and sub.include_solar:
-            autarky = getattr(int_res.kpis, "solar_fraction_autarky_pct", 65.0)
-            self_cons = getattr(int_res.kpis, "self_consumption_rate_pct", 62.0)
-        elif sub.include_solar:
-            autarky = 55.0
-            self_cons = 60.0
+        peak_shaved = 0.0
 
-        # 15-Year TCO & Payback Estimation
-        annual_avoided_cost = (base_annual_cost * (autarky / 100.0))
-        residual_annual_cost = max(0.0, base_annual_cost - annual_avoided_cost + (capex * 0.01))
-        tco_15y = capex + (residual_annual_cost * 18.5989)
-        payback = capex / max(1.0, annual_avoided_cost) if annual_avoided_cost > 0 else 0.0
-        npv = (annual_avoided_cost * 10.3796) - capex # 15-year present value annuity factor at 5%
+        if sub.include_solar and kwp > 0:
+            if active_sub_id == sub.id and int_res and hasattr(int_res, "kpis") and getattr(int_res.kpis, "solar_fraction_autarky_pct", 0.0) > 0:
+                autarky = getattr(int_res.kpis, "solar_fraction_autarky_pct", 34.0)
+                self_cons = getattr(int_res.kpis, "self_consumption_rate_pct", 98.0)
+                direct_kwh = getattr(int_res.kpis, "direct_consumption_kwh", annual_gen_kwh * 0.8)
+                surplus_kwh = getattr(int_res.kpis, "surplus_generation_kwh", max(0.0, annual_gen_kwh - direct_kwh))
+                residual_kwh = getattr(int_res.kpis, "residual_load_kwh", max(0.0, base_total_kwh - direct_kwh))
+                if "P_Residual_kW" in int_res.df_timeseries.columns:
+                    p_orig = float(int_res.df_timeseries["P_Load_kW"].max()) if "P_Load_kW" in int_res.df_timeseries.columns else base_peak_kw
+                    p_res = float(int_res.df_timeseries["P_Residual_kW"].max())
+                    peak_shaved = max(0.0, p_orig - p_res)
+            else:
+                solar_fraction = min(1.5, annual_gen_kwh / max(1.0, base_total_kwh))
+                if solar_fraction <= 0.4:
+                    self_cons = 98.2
+                    autarky = round(solar_fraction * self_cons, 1)
+                elif solar_fraction <= 0.8:
+                    self_cons = round(98.2 - (solar_fraction - 0.4) * 45.0, 1)
+                    autarky = round(solar_fraction * self_cons, 1)
+                else:
+                    self_cons = round(max(35.0, 80.0 - (solar_fraction - 0.8) * 55.0), 1)
+                    autarky = round(min(85.0, solar_fraction * self_cons), 1)
+
+                direct_kwh = annual_gen_kwh * (self_cons / 100.0)
+                surplus_kwh = max(0.0, annual_gen_kwh - direct_kwh)
+                residual_kwh = max(0.0, base_total_kwh - direct_kwh)
+                peak_shaved = round(min(base_peak_kw * 0.35, kwp * 0.15), 1)
+        else:
+            direct_kwh = 0.0
+            surplus_kwh = 0.0
+            residual_kwh = base_total_kwh
+            peak_shaved = 50.0 if (sub.include_bess or sub.include_generator) else 0.0
+
+        direct_mwh = direct_kwh / 1000.0
+        residual_mwh = residual_kwh / 1000.0
+        surplus_mwh = surplus_kwh / 1000.0
+        res_peak_kw = max(0.0, base_peak_kw - peak_shaved)
+        co2_tons = round(direct_kwh * 0.000400, 1)  # 400 g CO2/kWh clean energy offset
+
+        # 3. 15-Year Financial & Amortisation Modeling (Matching Tab 3.1)
+        if sub.include_solar and sub.solar_config:
+            fin_cfg = sub.solar_financial if (sub.solar_financial and sub.solar_financial.is_enabled) else SolarFinancialConfig(
+                is_enabled=True,
+                currency=currency,
+                cost_modules_per_wp=0.22,
+                cost_inverter_per_w=0.08,
+                cost_substructure_per_wp=0.12,
+                cost_installation_per_wp=0.20,
+                fixed_switchgear_cost=1500.0,
+                fixed_travel_fee=1500.0,
+                annual_opex_pct=1.0,
+                discount_rate_pct=5.0,
+                electricity_price_inflation_pct=3.0,
+                feed_in_tariff_per_kwh=0.08
+            )
+
+            if active_sub_id == sub.id and active_fin_m is not None and active_fin_m.is_configured and active_fin_m.total_capex > 0:
+                fin_m = active_fin_m
+            else:
+                fin_m = compute_solar_financial_metrics(
+                    config=sub.solar_config,
+                    fin_config=fin_cfg,
+                    annual_generation_kwh=annual_gen_kwh,
+                    multi_year_yields=sim_res.multi_year_yields if (active_sub_id == sub.id and sim_res) else None
+                )
+
+            capex = fin_m.total_capex
+            if sub.include_bess and sub.bess_config:
+                capex += sub.bess_config.total_capex
+            if sub.include_generator and sub.generator_config:
+                capex += sub.generator_config.capital_cost
+
+            payback = fin_m.payback_period_years or 0.0
+            npv = fin_m.npv
+            net_savings = fin_m.total_lifetime_savings
+            cum_costs = fin_m.cumulative_with_pv
+            base_costs = fin_m.cumulative_status_quo
+            opex_y1 = fin_m.annual_opex_year1
+            tco_15y = cum_costs[-1] if cum_costs else (capex + opex_y1 * 18.5989)
+            cash_table = fin_m.cash_flow_table
+        else:
+            capex = 0.0
+            if sub.include_bess and sub.bess_config:
+                capex += sub.bess_config.total_capex
+            if sub.include_generator and sub.generator_config:
+                capex += sub.generator_config.capital_cost
+
+            annual_benefit = 15000.0 if capex > 0 else 0.0
+            residual_annual_cost = base_annual_cost - annual_benefit
+            tco_15y = capex + (residual_annual_cost * 18.5989)
+            payback = capex / max(1.0, annual_benefit) if annual_benefit > 0 else 0.0
+            npv = (annual_benefit * 10.3796) - capex
+            net_savings = base_15y_tco - tco_15y
+            cum_costs = [capex + (residual_annual_cost * ((1.03) ** y)) for y in range(16)]
+            base_costs = base_cum_series
+            opex_y1 = residual_annual_cost
+            cash_table = []
 
         records.append({
             "id": sub.id,
@@ -105,22 +244,166 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             "tech_mix": sub.technology_mix_label,
             "capex": capex,
             "capex_str": f"{capex:,.0f} {currency}",
-            "annual_opex": residual_annual_cost,
+            "annual_opex": opex_y1,
+            "total_15y_opex": tco_15y - capex,
             "total_15y_tco": tco_15y,
             "tco_str": f"{tco_15y:,.0f} {currency}",
-            "payback_years": round(payback, 1),
+            "payback_years": round(payback, 1) if payback else 0.0,
             "payback_str": f"{payback:.1f} Yrs" if payback > 0 else "-",
             "npv": npv,
             "npv_str": f"{npv:,.0f} {currency}",
+            "net_savings": net_savings,
+            "net_savings_str": f"+{net_savings:,.0f} {currency}" if net_savings > 0 else f"{net_savings:,.0f} {currency}",
             "autarky_pct": round(autarky, 1),
             "autarky_str": f"{autarky:.1f} %",
             "self_consumption_pct": round(self_cons, 1),
             "self_consumption_str": f"{self_cons:.1f} %" if self_cons > 0 else "-",
-            "shaved_peak_kw": 50.0 if (sub.include_bess or sub.include_generator) else 0.0,
+            "total_load_mwh": round(base_total_mwh, 1),
+            "generation_mwh": round(gen_mwh, 1),
+            "direct_consumption_mwh": round(direct_mwh, 1),
+            "residual_grid_mwh": round(residual_mwh, 1),
+            "surplus_export_mwh": round(surplus_mwh, 1),
+            "baseline_peak_kw": round(base_peak_kw, 1),
+            "residual_peak_kw": round(res_peak_kw, 1),
+            "shaved_peak_kw": round(peak_shaved, 1),
+            "co2_avoided_tons": round(co2_tons, 1),
+            "cumulative_costs": cum_costs,
+            "baseline_costs": base_costs,
+            "cash_flow_table": cash_table,
             "color": sub.color_code
         })
 
     return records
+
+
+def _build_scenario_delta_matrix(project: ProjectContainer, records: List[Dict[str, Any]]) -> pd.DataFrame:
+    """
+    Constructs a detailed side-by-side architecture & parameter delta matrix
+    highlighting baseline-inherited constants versus scenario-specific technical & financial interventions.
+    """
+    currency = project.currency or "EUR"
+    base_rec = next((r for r in records if r["id"] == "base"), records[0] if records else {})
+    sub_recs = [r for r in records if r["id"] != "base"]
+
+    # Identify load description
+    load_desc = f"{project.base_scenario.load_profile_name}"
+    if project.base_scenario.consumers:
+        load_desc += f" ({len(project.base_scenario.consumers)} Consumers)"
+
+    # Contract description
+    c_name = project.base_scenario.base_contract.name if project.base_scenario.base_contract else "Standard Tariff Contract"
+
+    rows = [
+        {
+            "Parameter / Architecture Layer": "1. Facility Load Profile",
+            "Status Quo (Baseline)": load_desc,
+            "Inheritance & Delta Status": ":material/check_circle: Inherited (100% Identical)"
+        },
+        {
+            "Parameter / Architecture Layer": "2. Electricity Supply Contract",
+            "Status Quo (Baseline)": f"{c_name} ({currency})",
+            "Inheritance & Delta Status": ":material/check_circle: Inherited (100% Identical)"
+        },
+        {
+            "Parameter / Architecture Layer": "3. Solar PV Peak Capacity (DC)",
+            "Status Quo (Baseline)": "0.0 kWp (Grid Only)",
+            "Inheritance & Delta Status": ":material/tune: Configured Branch"
+        },
+        {
+            "Parameter / Architecture Layer": "4. Inverter Rating (AC)",
+            "Status Quo (Baseline)": "-",
+            "Inheritance & Delta Status": ":material/tune: Specific Sizing"
+        },
+        {
+            "Parameter / Architecture Layer": "5. Cell Technology & Module Count",
+            "Status Quo (Baseline)": "-",
+            "Inheritance & Delta Status": ":material/tune: Hardware Architecture"
+        },
+        {
+            "Parameter / Architecture Layer": "6. Turn-Key Investment (CAPEX)",
+            "Status Quo (Baseline)": f"0 {currency}",
+            "Inheritance & Delta Status": ":material/payments: Initial Capital"
+        },
+        {
+            "Parameter / Architecture Layer": "7. Solar Coverage / Autarky Degree",
+            "Status Quo (Baseline)": "0.0 %",
+            "Inheritance & Delta Status": ":material/bolt: Energy Autarky"
+        },
+        {
+            "Parameter / Architecture Layer": "8. Direct Self-Consumption Rate",
+            "Status Quo (Baseline)": "-",
+            "Inheritance & Delta Status": ":material/pie_chart: On-Site Utilization"
+        },
+        {
+            "Parameter / Architecture Layer": "9. Annual Residual Electricity Bill",
+            "Status Quo (Baseline)": f"{base_rec.get('annual_opex', 0):,.0f} {currency}",
+            "Inheritance & Delta Status": ":material/trending_down: Operational Expense"
+        },
+        {
+            "Parameter / Architecture Layer": "10. Net Annual Financial Benefit",
+            "Status Quo (Baseline)": f"0 {currency}",
+            "Inheritance & Delta Status": ":material/trending_up: Recurring Cashflow"
+        },
+        {
+            "Parameter / Architecture Layer": "11. Simple Capital Payback (ROI)",
+            "Status Quo (Baseline)": "Baseline Reference",
+            "Inheritance & Delta Status": ":material/timer: Amortisation Speed"
+        },
+        {
+            "Parameter / Architecture Layer": "12. 15-Year Life-Cycle Total Cost (TCO)",
+            "Status Quo (Baseline)": f"{base_rec.get('total_15y_tco', 0):,.0f} {currency}",
+            "Inheritance & Delta Status": ":material/savings: Life-Cycle TCO"
+        }
+    ]
+
+    # Populate columns for each sub-scenario
+    for s_idx, sub in enumerate(project.sub_scenarios):
+        col_name = f"Branch #{s_idx+1}: {sub.name}"
+        s_rec = next((r for r in sub_recs if r["id"] == sub.id), {})
+
+        # Load & Contract (Inherited)
+        rows[0][col_name] = load_desc
+        rows[1][col_name] = f"{c_name} ({currency})"
+
+        # Solar PV Capacity
+        kwp = sub.solar_config.dc_capacity_kwp if (sub.include_solar and sub.solar_config) else 0.0
+        rows[2][col_name] = f"{kwp:.1f} kWp" if kwp > 0 else "0.0 kWp (None)"
+
+        # Inverter
+        inv_kw = sub.solar_config.inverter_capacity_kw if (sub.include_solar and sub.solar_config) else 0.0
+        rows[3][col_name] = f"{inv_kw:,.0f} kW AC" if inv_kw > 0 else "-"
+
+        # Tech & Module Count
+        if sub.include_solar and sub.solar_config:
+            tech_lbl = getattr(sub.solar_config, "technology_preset", "TOPCon")
+            mod_cnt = getattr(sub.solar_config, "module_count", 0)
+            rows[4][col_name] = f"{tech_lbl} ({mod_cnt:,} modules)"
+        else:
+            rows[4][col_name] = "-"
+
+        # CAPEX
+        rows[5][col_name] = s_rec.get("capex_str", f"0 {currency}")
+
+        # Autarky
+        rows[6][col_name] = s_rec.get("autarky_str", "0.0 %")
+
+        # Self-Consumption
+        rows[7][col_name] = s_rec.get("self_consumption_str", "-")
+
+        # Residual Bill
+        rows[8][col_name] = f"{s_rec.get('annual_opex', 0):,.0f} {currency}"
+
+        # Net Annual Benefit
+        annual_benefit = max(0.0, base_rec.get("annual_opex", 0) - s_rec.get("annual_opex", 0))
+        rows[9][col_name] = f"+{annual_benefit:,.0f} {currency}/a" if annual_benefit > 0 else f"0 {currency}"
+
+        # Payback
+        rows[10][col_name] = s_rec.get("payback_str", "-")
+
+        # 15y TCO
+        rows[11][col_name] = s_rec.get("tco_str", f"0 {currency}")
+
+    return pd.DataFrame(rows)
 
 
 def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> None:
@@ -128,180 +411,318 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
     Renders the Master Scenario Comparison & Executive Decision Dashboard.
     """
     st.markdown("## :material/leaderboard: Master Scenario Comparison & Ranking Dashboard")
-    st.caption("Benchmark all branchable Sub-Scenarios against the Status Quo baseline across 15-year TCO, CAPEX, Autarky, and Payback horizons.")
+    st.caption("Benchmark all branchable Sub-Scenarios against the Status Quo baseline across 15-year TCO, CAPEX, Electrical Flows, and Autarky.")
 
     project: ProjectContainer = export_project_from_session()
     records = _build_scenario_evaluation_records(project)
     currency = project.currency or "EUR"
-
-    # --------------------------------------------------------------------------
-    # 1. Top Analytical KPI Summary Cards
-    # --------------------------------------------------------------------------
+    base_rec = records[0] if records else {}
+    base_annual_cost = base_rec.get("annual_opex", 344141.21)
     sub_records = [r for r in records if r["id"] != "base"]
-    best_tco = min(sub_records, key=lambda x: x["total_15y_tco"]) if sub_records else None
-    best_payback = min([r for r in sub_records if r["payback_years"] > 0], key=lambda x: x["payback_years"], default=None)
-    best_autarky = max(sub_records, key=lambda x: x["autarky_pct"]) if sub_records else None
-
-    kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
-    with kpi_col1:
-        render_kpi_card(
-            title="Active Scenario Branches",
-            value=f"{len(project.sub_scenarios)} Sub-Scenarios",
-            subtext="Immutable Base Scenario benchmark active",
-            status="default"
-        )
-    with kpi_col2:
-        val_str = best_tco["tco_str"] if best_tco else "N/A"
-        sub_str = f"Best TCO: {best_tco['name']}" if best_tco else "No sub-scenarios configured"
-        render_kpi_card(
-            title="Lowest 15-Yr Total Cost (TCO)",
-            value=val_str,
-            subtext=sub_str,
-            status="ok" if best_tco else "default"
-        )
-    with kpi_col3:
-        val_str = best_payback["payback_str"] if best_payback else "N/A"
-        sub_str = f"Fastest ROI: {best_payback['name']}" if best_payback else "Configure solar or BESS"
-        render_kpi_card(
-            title="Fastest Amortization",
-            value=val_str,
-            subtext=sub_str,
-            status="ok" if best_payback else "default"
-        )
-    with kpi_col4:
-        val_str = best_autarky["autarky_str"] if best_autarky else "0.0 %"
-        sub_str = f"Leader: {best_autarky['name']}" if best_autarky else "Grid dependent"
-        render_kpi_card(
-            title="Highest Solar Autarky",
-            value=val_str,
-            subtext=sub_str,
-            status="ok" if best_autarky else "default"
-        )
-
-    st.divider()
 
     # --------------------------------------------------------------------------
-    # 2. Master Comparison Leaderboard Table
+    # Top Level Sub-Tabs Navigation (Financial vs. Electrical)
     # --------------------------------------------------------------------------
-    st.markdown("### :material/table_chart: Scenario Ranking Leaderboard")
-    st.caption("Objective performance ranking comparing turn-key investments against 15-year cumulative liabilities.")
-
-    df_display = pd.DataFrame([
-        {
-            "Rank": r["rank"],
-            "Scenario Name": r["name"],
-            "Technology Mix": r["tech_mix"],
-            "Turn-Key CAPEX": r["capex_str"],
-            "15-Yr Total Cost": r["tco_str"],
-            "Payback": r["payback_str"],
-            "Net Present Value (NPV)": r["npv_str"],
-            "Solar Autarky": r["autarky_str"],
-            "Self-Consumption": r["self_consumption_str"]
-        }
-        for r in records
+    tab_fin, tab_elec = st.tabs([
+        ":material/payments: Financial Benchmarks & Amortisation",
+        ":material/bolt: Electrical Energy & Power Balance"
     ])
 
-    st.dataframe(
-        df_display,
-        use_container_width=True,
-        hide_index=True
-    )
+    # ==========================================================================
+    # SUB-TAB 1: FINANCIAL BENCHMARKS & AMORTISATION
+    # ==========================================================================
+    with tab_fin:
+        # Top Financial KPI Summary Cards
+        best_tco = min(sub_records, key=lambda x: x["total_15y_tco"]) if sub_records else None
+        best_payback = min([r for r in sub_records if r["payback_years"] > 0], key=lambda x: x["payback_years"], default=None)
+        best_savings = max(sub_records, key=lambda x: x["net_savings"]) if sub_records else None
 
-    st.divider()
-
-    # --------------------------------------------------------------------------
-    # 3. Interactive Multi-Scenario Charts
-    # --------------------------------------------------------------------------
-    chart_tab1, chart_tab2, chart_tab3 = st.tabs([
-        ":material/trending_up: 15-Year Cumulative Cost Curves (Break-Even)",
-        ":material/bar_chart: CAPEX vs. OPEX Capital Balance",
-        ":material/energy_savings_leaf: Autarky & Payback Benchmark"
-    ])
-
-    with chart_tab1:
-        st.caption("Break-even trajectory: The intersection point where cumulative investment curves cross below the Status Quo utility line marks the amortization year.")
-        fig_curves = create_multi_scenario_cumulative_cost_figure(sub_records, currency=currency)
-        st.plotly_chart(fig_curves, use_container_width=True)
-
-    with chart_tab2:
-        st.caption("Visualizes the structural shift from recurring operational expenditure (utility electricity bills) into capitalized assets.")
-        if sub_records:
-            fig_bar = create_capex_opex_breakdown_figure(sub_records, currency=currency)
-            st.plotly_chart(fig_bar, use_container_width=True)
-        else:
-            st.info("Create and activate sub-scenarios in the sidebar to inspect CAPEX/OPEX breakdowns.")
-
-    with chart_tab3:
-        st.caption("Trade-off comparison: Demonstrates achieved clean energy independence (%) relative to capital payback duration (Years).")
-        if sub_records:
-            fig_aut = create_autarky_payback_figure(sub_records)
-            st.plotly_chart(fig_aut, use_container_width=True)
-        else:
-            st.info("Create and activate sub-scenarios in the sidebar to inspect Autarky benchmarks.")
-
-    st.divider()
-
-    # --------------------------------------------------------------------------
-    # 4. Scenario Management & Client Deliverables
-    # --------------------------------------------------------------------------
-    st.markdown("### :material/settings: Scenario Management & Reporting")
-    col_m1, col_m2 = st.columns([1, 1])
-
-    with col_m1:
-        st.markdown("#### :material/edit_note: Scenario Quick Edit")
-        if project.sub_scenarios:
-            edit_sub_options = {s.id: s.name for s in project.sub_scenarios}
-            selected_edit_id = st.selectbox(
-                "Select Branch to Manage:",
-                options=list(edit_sub_options.keys()),
-                format_func=lambda x: edit_sub_options[x],
-                key="tab6_select_sub_manage"
+        kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+        with kpi_col1:
+            render_kpi_card(
+                title="Active Scenario Branches",
+                value=f"{len(project.sub_scenarios)} Sub-Scenarios",
+                subtext="Status Quo Baseline active",
+                status="default"
             )
-            target_sub = project.get_sub_scenario(selected_edit_id)
-            if target_sub:
-                rename_inp = st.text_input("Rename Branch:", value=target_sub.name, key="tab6_rename_sub_input")
-                c_act1, c_act2, c_act3 = st.columns(3)
-                with c_act1:
-                    if st.button("Save Name", icon=":material/check:", key="tab6_save_name_btn", use_container_width=True):
-                        target_sub.name = rename_inp.strip() or target_sub.name
-                        st.session_state["project_container"] = project
-                        st.rerun()
-                with c_act2:
-                    if st.button("Clone Branch", icon=":material/content_copy:", key="tab6_clone_btn", use_container_width=True):
-                        project.duplicate_sub_scenario(target_sub.id)
-                        st.session_state["project_container"] = project
-                        st.rerun()
-                with c_act3:
-                    if st.button("Delete Branch", icon=":material/delete:", key="tab6_del_btn", type="secondary", use_container_width=True):
-                        project.delete_sub_scenario(target_sub.id)
-                        st.session_state["project_container"] = project
-                        st.rerun()
-        else:
-            st.info("No sub-scenarios available to manage. Create a new branch in the sidebar.")
+        with kpi_col2:
+            val_str = best_tco["tco_str"] if best_tco else "N/A"
+            sub_str = f"Best TCO: {best_tco['name']}" if best_tco else "No sub-scenarios configured"
+            render_kpi_card(
+                title="Lowest 15-Yr Total Cost (TCO)",
+                value=val_str,
+                subtext=sub_str,
+                status="ok" if best_tco else "default"
+            )
+        with kpi_col3:
+            val_str = best_payback["payback_str"] if best_payback else "N/A"
+            sub_str = f"Fastest ROI: {best_payback['name']}" if best_payback else "Configure solar or BESS"
+            render_kpi_card(
+                title="Fastest Amortization",
+                value=val_str,
+                subtext=sub_str,
+                status="ok" if best_payback else "default"
+            )
+        with kpi_col4:
+            val_str = best_savings["net_savings_str"] if best_savings else f"0 {currency}"
+            sub_str = f"Leader: {best_savings['name']}" if best_savings else "Grid dependent"
+            render_kpi_card(
+                title="Max 15-Year Net Savings",
+                value=val_str,
+                subtext=sub_str,
+                status="ok" if best_savings and best_savings["net_savings"] > 0 else "default"
+            )
 
-    with col_m2:
-        st.markdown("#### :material/file_download: Client Audit & Data Export")
-        st.caption("Export full audit-ready project packages or summary tables.")
-        
-        # Download Leaderboard CSV
-        csv_leaderboard = df_display.to_csv(index=False)
-        st.download_button(
-            label="Export Comparison Table (CSV)",
-            data=csv_leaderboard,
-            file_name="DRACBV_Scenario_Comparison_Leaderboard.csv",
-            mime="text/csv",
-            icon=":material/download:",
-            use_container_width=True
-        )
+        st.divider()
 
-        # Download Complete Project
-        proj_json = export_project_json(project)
-        st.download_button(
-            label="Download Complete Project Snapshot (.dracproj)",
-            data=proj_json,
-            file_name=f"{project.project_name.replace(' ', '_')}.dracproj",
-            mime="application/json",
-            icon=":material/folder_zip:",
+        # Scenario Architecture & Delta Matrix
+        st.markdown("### :material/compare_arrows: Scenario Architecture & Parameter Delta Matrix")
+        st.caption("Side-by-side technical and economic parameter matrix highlighting baseline-inherited constants versus scenario-specific interventions.")
+
+        df_delta = _build_scenario_delta_matrix(project, records)
+        st.dataframe(
+            df_delta,
             use_container_width=True,
-            type="primary"
+            hide_index=True
         )
+
+        st.divider()
+
+        # Master Comparison Leaderboard Table
+        st.markdown("### :material/table_chart: Scenario Ranking Leaderboard")
+        st.caption("Objective performance ranking comparing turn-key investments against 15-year cumulative liabilities.")
+
+        df_display = pd.DataFrame([
+            {
+                "Rank": r["rank"],
+                "Scenario Name": r["name"],
+                "Technology Mix": r["tech_mix"],
+                "Turn-Key CAPEX": r["capex_str"],
+                "15-Yr Total Cost": r["tco_str"],
+                "15-Yr Net Savings": r["net_savings_str"],
+                "Payback": r["payback_str"],
+                "Net Present Value (NPV)": r["npv_str"],
+                "Solar Autarky": r["autarky_str"],
+                "Self-Consumption": r["self_consumption_str"]
+            }
+            for r in records
+        ])
+
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.divider()
+
+        # Interactive Multi-Scenario Financial Charts
+        chart_tab1, chart_tab2, chart_tab3 = st.tabs([
+            ":material/trending_up: 15-Year Cumulative Cost Curves (Break-Even)",
+            ":material/bar_chart: CAPEX vs. OPEX Capital Balance",
+            ":material/energy_savings_leaf: Autarky & Payback Benchmark"
+        ])
+
+        with chart_tab1:
+            st.caption("Break-even trajectory: Intersection point where cumulative investment curves cross below the Status Quo utility line marks the amortization year.")
+            fig_curves = create_multi_scenario_cumulative_cost_figure(
+                scenarios_data=sub_records,
+                base_annual_cost=base_annual_cost,
+                baseline_series=base_rec.get("cumulative_costs"),
+                currency=currency
+            )
+            st.plotly_chart(fig_curves, use_container_width=True)
+
+        with chart_tab2:
+            st.caption("Visualizes the structural shift from recurring operational expenditure (utility electricity bills) into capitalized assets.")
+            fig_bar = create_capex_opex_breakdown_figure(records, currency=currency)
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        with chart_tab3:
+            st.caption("Trade-off comparison: Demonstrates achieved clean energy independence (%) relative to capital payback duration (Years).")
+            if sub_records:
+                fig_aut = create_autarky_payback_figure(sub_records)
+                st.plotly_chart(fig_aut, use_container_width=True)
+            else:
+                st.info("Create and activate sub-scenarios in the sidebar to inspect Autarky benchmarks.")
+
+        # 15-Year Life-Cycle Detail Table per Scenario
+        with st.expander("15-Year Life-Cycle Cashflow Projection Table (Leading Sub-Scenario)", icon=":material/view_timeline:", expanded=False):
+            lead_sub = sub_records[0] if sub_records else None
+            if lead_sub and lead_sub.get("cash_flow_table"):
+                dt_rows = []
+                for row in lead_sub["cash_flow_table"]:
+                    dt_rows.append({
+                        "Year": f"Year {row['year']}",
+                        "Aging Factor": f"{row['aging_factor'] * 100.0:.2f} %",
+                        "Generation (MWh)": f"{row['generation_mwh']:,.2f}",
+                        f"Status Quo Bill ({currency})": f"{row['status_quo_bill']:,.2f}",
+                        f"Residual Bill ({currency})": f"{row['residual_bill']:,.2f}",
+                        f"OPEX ({currency})": f"{row['opex_annual']:,.2f}",
+                        f"Export Rev ({currency})": f"{row['export_revenue']:,.2f}",
+                        f"Net Cashflow ({currency})": f"{row['net_cash_flow']:+,.2f}",
+                        f"Cumulative Net CF ({currency})": f"{row['cumulative_cash_flow']:+,.2f}",
+                        f"Discounted CF ({currency})": f"{row['discounted_cash_flow']:+,.2f}"
+                    })
+                st.dataframe(pd.DataFrame(dt_rows), use_container_width=True, hide_index=True)
+            else:
+                st.info("Configure and calculate solar generation on sub-scenarios to inspect itemized cashflow tables.")
+
+        st.divider()
+
+        # Scenario Management & Client Deliverables
+        st.markdown("### :material/settings: Scenario Management & Reporting")
+        col_m1, col_m2 = st.columns([1, 1])
+
+        with col_m1:
+            st.markdown("#### :material/edit_note: Scenario Quick Edit")
+            if project.sub_scenarios:
+                edit_sub_options = {s.id: s.name for s in project.sub_scenarios}
+                selected_edit_id = st.selectbox(
+                    "Select Branch to Manage:",
+                    options=list(edit_sub_options.keys()),
+                    format_func=lambda x: edit_sub_options[x],
+                    key="tab6_select_sub_manage"
+                )
+                target_sub = project.get_sub_scenario(selected_edit_id)
+                if target_sub:
+                    rename_inp = st.text_input("Rename Branch:", value=target_sub.name, key="tab6_rename_sub_input")
+                    c_act1, c_act2, c_act3 = st.columns(3)
+                    with c_act1:
+                        if st.button("Save Name", icon=":material/check:", key="tab6_save_name_btn", use_container_width=True):
+                            target_sub.name = rename_inp.strip() or target_sub.name
+                            st.session_state["project_container"] = project
+                            st.rerun()
+                    with c_act2:
+                        if st.button("Clone Branch", icon=":material/content_copy:", key="tab6_clone_btn", use_container_width=True):
+                            project.duplicate_sub_scenario(target_sub.id)
+                            st.session_state["project_container"] = project
+                            st.rerun()
+                    with c_act3:
+                        if st.button("Delete Branch", icon=":material/delete:", key="tab6_del_btn", type="secondary", use_container_width=True):
+                            project.delete_sub_scenario(target_sub.id)
+                            st.session_state["project_container"] = project
+                            st.rerun()
+            else:
+                st.info("No sub-scenarios available to manage. Create a new branch in the sidebar.")
+
+        with col_m2:
+            st.markdown("#### :material/file_download: Client Audit & Data Export")
+            st.caption("Export full audit-ready project packages or summary tables.")
+            
+            # Download Leaderboard CSV
+            csv_leaderboard = df_display.to_csv(index=False)
+            st.download_button(
+                label="Export Comparison Table (CSV)",
+                data=csv_leaderboard,
+                file_name="DRACBV_Scenario_Comparison_Leaderboard.csv",
+                mime="text/csv",
+                icon=":material/download:",
+                use_container_width=True
+            )
+
+            # Download Complete Project
+            proj_json = export_project_json(project)
+            st.download_button(
+                label="Download Complete Project Snapshot (.dracproj)",
+                data=proj_json,
+                file_name=f"{project.project_name.replace(' ', '_')}.dracproj",
+                mime="application/json",
+                icon=":material/folder_zip:",
+                use_container_width=True,
+                type="primary"
+            )
+
+    # ==========================================================================
+    # SUB-TAB 2: ELECTRICAL ENERGY & POWER BALANCE
+    # ==========================================================================
+    with tab_elec:
+        # 1. Top Electrical & Power KPI Summary Cards
+        max_gen = max(records, key=lambda x: x["generation_mwh"]) if records else None
+        best_autarky = max(sub_records, key=lambda x: x["autarky_pct"]) if sub_records else None
+        max_shave = max(records, key=lambda x: x["shaved_peak_kw"]) if records else None
+        max_co2 = max(records, key=lambda x: x["co2_avoided_tons"]) if records else None
+
+        ek1, ek2, ek3, ek4 = st.columns(4)
+        with ek1:
+            render_kpi_card(
+                title="Facility Baseline Demand",
+                value=f"{base_rec.get('total_load_mwh', 0):,.1f} MWh/a",
+                subtext=f"Peak: {base_rec.get('baseline_peak_kw', 0):,.1f} kW",
+                status="default"
+            )
+        with ek2:
+            val_str = f"{max_gen['generation_mwh']:,.1f} MWh/a" if (max_gen and max_gen['generation_mwh'] > 0) else "0.0 MWh/a"
+            sub_str = f"Leader: {max_gen['name']}" if (max_gen and max_gen['generation_mwh'] > 0) else "No solar generation active"
+            render_kpi_card(
+                title="Highest Clean Generation",
+                value=val_str,
+                subtext=sub_str,
+                status="ok" if (max_gen and max_gen['generation_mwh'] > 0) else "default"
+            )
+        with ek3:
+            val_str = f"-{max_shave['shaved_peak_kw']:.1f} kW" if (max_shave and max_shave['shaved_peak_kw'] > 0) else "0.0 kW"
+            sub_str = f"Leader: {max_shave['name']}" if (max_shave and max_shave['shaved_peak_kw'] > 0) else "Grid baseline peak"
+            render_kpi_card(
+                title="Maximum Peak Shaving",
+                value=val_str,
+                subtext=sub_str,
+                status="ok" if (max_shave and max_shave['shaved_peak_kw'] > 0) else "default"
+            )
+        with ek4:
+            val_str = f"{max_co2['co2_avoided_tons']:,.1f} t CO₂/a" if (max_co2 and max_co2['co2_avoided_tons'] > 0) else "0.0 t CO₂/a"
+            sub_str = f"Offset: {max_co2['name']}" if (max_co2 and max_co2['co2_avoided_tons'] > 0) else "Utility grid emissions"
+            render_kpi_card(
+                title="Maximum Carbon Offset",
+                value=val_str,
+                subtext=sub_str,
+                status="ok" if (max_co2 and max_co2['co2_avoided_tons'] > 0) else "default"
+            )
+
+        st.divider()
+
+        # 2. Multi-Scenario Electrical Flow Comparison Table
+        st.markdown("### :material/table_rows: Multi-Scenario Electrical Flow Comparison Table")
+        st.caption("Comprehensive physical energy balance comparing annual MWh generation, on-site utilization, residual grid imports, and carbon mitigation:")
+
+        df_elec = pd.DataFrame([
+            {
+                "Rank": r["rank"],
+                "Scenario Name": r["name"],
+                "Tech Mix": r["tech_mix"],
+                "Total Demand (MWh)": f"{r['total_load_mwh']:,.1f}",
+                "Solar Gen (MWh)": f"{r['generation_mwh']:,.1f}" if r['generation_mwh'] > 0 else "-",
+                "Direct Cons (MWh)": f"{r['direct_consumption_mwh']:,.1f}" if r['direct_consumption_mwh'] > 0 else "-",
+                "Self-Cons (%)": r["self_consumption_str"],
+                "Residual Grid (MWh)": f"{r['residual_grid_mwh']:,.1f}",
+                "Surplus Export (MWh)": f"{r['surplus_export_mwh']:,.1f}" if r['surplus_export_mwh'] > 0 else "-",
+                "Autarky (%)": r["autarky_str"],
+                "Peak Shaved (kW)": f"-{r['shaved_peak_kw']:.1f} kW" if r['shaved_peak_kw'] > 0 else "-",
+                "CO₂ Offset (t/a)": f"{r['co2_avoided_tons']:,.1f} t" if r['co2_avoided_tons'] > 0 else "-"
+            }
+            for r in records
+        ])
+
+        st.dataframe(
+            df_elec,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.divider()
+
+        # 3. Interactive Electrical Charts
+        e_tab1, e_tab2 = st.tabs([
+            ":material/bar_chart: Grouped Annual Energy Balance (MWh)",
+            ":material/grid_view: Peak Demand Shaving & Environmental Impact"
+        ])
+
+        with e_tab1:
+            st.caption("Direct side-by-side comparison of annual electricity generation, self-consumption, residual grid imports, and surplus exports:")
+            fig_energy = create_multi_scenario_energy_balance_figure(records)
+            st.plotly_chart(fig_energy, use_container_width=True)
+
+        with e_tab2:
+            st.caption("Power grid integration metrics: Peak demand load reduction (kW) and annual clean energy decarbonisation:")
+            fig_peak_co2 = create_multi_scenario_peak_and_co2_figure(records)
+            st.plotly_chart(fig_peak_co2, use_container_width=True)

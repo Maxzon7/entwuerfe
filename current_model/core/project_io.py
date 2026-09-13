@@ -133,7 +133,7 @@ def export_project_from_session(
             solar_config=solar_cfg,
             solar_financial=solar_fin
         )
-        project.add_sub_scenario(sub_default)
+        project.sub_scenarios.append(sub_default)
 
     st.session_state["project_container"] = project
     return project
@@ -264,27 +264,93 @@ def load_project_into_session(project: ProjectContainer, auto_execute: bool = Tr
         st.session_state["app_tab3_loc_elev"] = base.location.elevation_m
 
     # 4. Restore Active Sub-Scenario Configurations in Tabs
-    active_sub = project.get_active_scenario()
-    if active_sub:
-        if active_sub.solar_config:
-            st.session_state["app_tab3_config"] = active_sub.solar_config
-            st.session_state["solar_config"] = active_sub.solar_config
-        if active_sub.solar_financial:
-            st.session_state["app_tab3_fin_config"] = active_sub.solar_financial
-            st.session_state["solar_financial_config"] = active_sub.solar_financial
+    sync_active_scenario_into_session(project, auto_execute=auto_execute)
 
-        # Clear stale Tab 3 input form keys
+    st.session_state["example1_active"] = False
+
+
+def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: bool = True) -> None:
+    """
+    Synchronizes the active scenario (Status Quo vs SubScenario) into Streamlit session state.
+    Clears input widget caches so form values strictly reflect the active scenario branch.
+    """
+    st.session_state["project_container"] = project
+    active_sub = project.get_active_scenario()
+    base = project.base_scenario
+
+    # Comprehensive list of Tab 3 form widget keys to purge on scenario switch
+    form_keys_to_clear = [
+        "app_tab3_form_mod_count",
+        "app_tab3_form_mod_wp",
+        "app_tab3_form_tech_choice",
+        "app_tab3_form_inv_kw",
+        "app_tab3_form_inv_eff",
+        "app_tab3_form_tilt",
+        "app_tab3_form_azimuth",
+        "app_tab3_form_weather_mode_select",
+        "app_tab3_form_hist_year_select",
+        "app_tab3_form_enable_financials",
+        "app_tab3_form_fin_curr",
+        "app_tab3_form_fin_mod_wp",
+        "app_tab3_form_fin_inv_w",
+        "app_tab3_form_fin_sub_wp",
+        "app_tab3_form_fin_inst_wp",
+        "app_tab3_form_fin_switch",
+        "app_tab3_form_fin_travel",
+        "app_tab3_form_fin_opex",
+        "app_tab3_form_fin_disc",
+        "app_tab3_form_fin_infl",
+        "app_tab3_form_fin_feed",
+        "tab3_form_mod_count",
+        "tab3_form_tech_choice",
+        "tab3_form_inv_kw",
+        "tab3_form_tilt",
+        "tab3_form_azimuth",
+        "solar_cfg_mod_count",
+        "solar_cfg_mod_wp",
+        "solar_cfg_tech_choice"
+    ]
+    for k in form_keys_to_clear:
+        if k in st.session_state:
+            del st.session_state[k]
+
+    if active_sub is None:
+        # Status Quo is active: Pure baseline without solar PV simulation state
         for k in [
-            "app_tab3_form_mod_count",
-            "app_tab3_form_tech_choice",
-            "app_tab3_form_inv_kw",
-            "app_tab3_form_tilt",
-            "app_tab3_form_azimuth"
+            "app_tab3_sim_result",
+            "app_tab3_int_sim_result",
+            "solar_kw_15min",
+            "solar_kpis",
+            "solar_dispatch_result",
+            "solar_financial_metrics",
+            "app_tab3_config",
+            "solar_config",
+            "app_tab3_fin_config",
+            "solar_financial_config"
         ]:
             if k in st.session_state:
                 del st.session_state[k]
+    else:
+        # SubScenario is active: Populate specific solar and financial configs
+        if active_sub.solar_config:
+            st.session_state["app_tab3_config"] = active_sub.solar_config
+            st.session_state["solar_config"] = active_sub.solar_config
+        else:
+            if "app_tab3_config" in st.session_state:
+                del st.session_state["app_tab3_config"]
+            if "solar_config" in st.session_state:
+                del st.session_state["solar_config"]
 
-        # Trigger auto-simulation for active solar system if requested
+        if active_sub.solar_financial:
+            st.session_state["app_tab3_fin_config"] = active_sub.solar_financial
+            st.session_state["solar_financial_config"] = active_sub.solar_financial
+        else:
+            if "app_tab3_fin_config" in st.session_state:
+                del st.session_state["app_tab3_fin_config"]
+            if "solar_financial_config" in st.session_state:
+                del st.session_state["solar_financial_config"]
+
+        # Run automated physical and financial simulation for active sub-scenario
         if auto_execute and active_sub.include_solar and active_sub.solar_config and base.location:
             sim_res: SolarSimulationResult = simulate_solar_pv_generation(
                 config=active_sub.solar_config,
@@ -305,9 +371,12 @@ def load_project_into_session(project: ProjectContainer, auto_execute: bool = Tr
             st.session_state["solar_kw_15min"] = sim_res.df_timeseries["P_AC_kW"]
             st.session_state["solar_kpis"] = sim_res.kpis
 
-            # Coupled dispatch
-            df_load_active = st.session_state.get("app_tab1_synthetic_active_df") or st.session_state.get("active_csv_df")
-            if df_load_active is not None and not df_load_active.empty:
+            # Coupled dispatch with baseline load
+            df_load_active = st.session_state.get("app_tab1_synthetic_active_df")
+            if df_load_active is None or not isinstance(df_load_active, pd.DataFrame):
+                df_load_active = st.session_state.get("active_csv_df")
+
+            if df_load_active is not None and isinstance(df_load_active, pd.DataFrame) and not df_load_active.empty:
                 sim_res_coupled = simulate_solar_pv_generation(
                     config=active_sub.solar_config,
                     location=base.location,
@@ -316,4 +385,3 @@ def load_project_into_session(project: ProjectContainer, auto_execute: bool = Tr
                 st.session_state["app_tab3_int_sim_result"] = sim_res_coupled
                 st.session_state["solar_dispatch_result"] = sim_res_coupled
 
-    st.session_state["example1_active"] = False

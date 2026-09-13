@@ -117,6 +117,16 @@ def render_tab2_contract(key_prefix: str = "tab2") -> Contract:
 
             # Compute complete full duration financial breakdown
             full_breakdown: FinancialCostBreakdown = compute_financial_bill(load_data=load_data, contract=contract)
+            st.session_state["active_bill_breakdown"] = full_breakdown
+            if "project_container" in st.session_state:
+                proj = st.session_state["project_container"]
+                if proj and hasattr(proj, "base_scenario"):
+                    dur = getattr(full_breakdown, "duration_days", 365)
+                    factor = (365.0 / dur) if dur > 0 else 1.0
+                    ann_cost = full_breakdown.total_gross_period * factor
+                    proj.base_scenario.baseline_annual_cost = ann_cost
+                    proj.base_scenario.baseline_15year_cost = ann_cost * 18.5989
+
             curr = getattr(contract, "currency", "ARS")
 
             # 4. Period Filter Selector (Full Duration vs. Single Month Inspection)

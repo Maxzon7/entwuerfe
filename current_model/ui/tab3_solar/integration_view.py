@@ -555,9 +555,9 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
                     # 15-Year Life-Cycle Comparison Diagrams (3 Interactive Tabs)
                     diag_tab1, diag_tab2, diag_tab3 = st.tabs([
-                        "📈 Cumulative Total Cost & Amortisation (Status Quo vs. Mit PV)",
-                        "📊 Annual Running Costs & Operating Expenses",
-                        "💰 Net Cash Flow & Payback Curve"
+                        ":material/show_chart: Cumulative Total Cost & Amortisation (Status Quo vs. Mit PV)",
+                        ":material/bar_chart: Annual Running Costs & Operating Expenses",
+                        ":material/payments: Net Cash Flow & Payback Curve"
                     ])
 
                     with diag_tab1:

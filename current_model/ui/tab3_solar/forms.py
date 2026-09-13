@@ -231,8 +231,9 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
 def render_solar_config_form(
     location: SolarLocation,
     current_config: Optional[SolarPVConfig] = None,
+    current_fin_config: Optional[SolarFinancialConfig] = None,
     key_prefix: str = "solar_cfg"
-) -> Tuple[SolarPVConfig, bool]:
+) -> Tuple[SolarPVConfig, SolarFinancialConfig, bool]:
     """
     Renders the Excel-aligned technical PV specification form (Input Panel & Year Sheet)
     with live reactive updating for module count, wattage, area requirements, and inverter rating.
@@ -546,7 +547,13 @@ def render_solar_config_form(
         st.markdown("##### 5. Solar Financial & Turn-Key Investment Costs (Optional)")
         st.caption("Enter investment costs to calculate CAPEX breakdown, LCOE (€/kWh), and 15-year life-cycle ROI. *Leave empty/unchecked if you wish to run technical generation only.*")
 
-        existing_fin = st.session_state.get(f"{key_prefix}_fin_config") or SolarFinancialConfig()
+        existing_fin = (
+            current_fin_config or 
+            st.session_state.get(f"{key_prefix}_fin_config") or 
+            st.session_state.get("solar_financial_config") or 
+            st.session_state.get("app_tab3_fin_config") or 
+            SolarFinancialConfig()
+        )
         is_fin_active = st.checkbox(
             "Enable Solar Financial Assessment & Turn-Key CAPEX Calculation",
             value=getattr(existing_fin, "is_enabled", False),
@@ -568,7 +575,7 @@ def render_solar_config_form(
 
         fc1, fc2, fc3 = st.columns(3)
         with fc1:
-            inp_curr = st.text_input("Currency Code / Symbol:", value=fin_curr, disabled=not is_fin_active, key=f"{key_prefix}_fin_curr")
+            inp_curr = st.text_input("Currency Code / Symbol:", value=fin_curr, key=f"{key_prefix}_fin_curr")
             inp_mod_wp = st.number_input(
                 f"Solar Modules ({inp_curr}/Wp):",
                 min_value=0.0,
@@ -576,7 +583,6 @@ def render_solar_config_form(
                 value=float(fin_mod_wp if fin_mod_wp is not None else 1.00),
                 step=0.05,
                 format="%.2f",
-                disabled=not is_fin_active,
                 help="Turn-key cost per Watt-peak for modules (e.g. 1.00 €/Wp).",
                 key=f"{key_prefix}_fin_mod_wp"
             )
@@ -585,7 +591,6 @@ def render_solar_config_form(
                 min_value=0.0,
                 value=float(fin_switch),
                 step=250.0,
-                disabled=not is_fin_active,
                 help="Fixed meter and switchgear cabinet fee (e.g. 2,500 €).",
                 key=f"{key_prefix}_fin_switch"
             )
@@ -598,7 +603,6 @@ def render_solar_config_form(
                 value=float(fin_inv_w if fin_inv_w is not None else 0.07),
                 step=0.01,
                 format="%.2f",
-                disabled=not is_fin_active,
                 help="Cost per Watt AC for inverters (e.g. 0.07 €/W = 70 €/kW).",
                 key=f"{key_prefix}_fin_inv_w"
             )
@@ -609,7 +613,6 @@ def render_solar_config_form(
                 value=float(fin_sub_wp if fin_sub_wp is not None else 0.15),
                 step=0.01,
                 format="%.2f",
-                disabled=not is_fin_active,
                 help="Mounting racks, substructure & trackers (e.g. 0.15 €/Wp).",
                 key=f"{key_prefix}_fin_sub_wp"
             )
@@ -618,7 +621,6 @@ def render_solar_config_form(
                 min_value=0.0,
                 value=float(fin_travel),
                 step=100.0,
-                disabled=not is_fin_active,
                 help="Fixed site mobilization & travel charge (e.g. 1,000 €).",
                 key=f"{key_prefix}_fin_travel"
             )
@@ -631,7 +633,6 @@ def render_solar_config_form(
                 value=float(fin_inst_wp if fin_inst_wp is not None else 0.35),
                 step=0.01,
                 format="%.2f",
-                disabled=not is_fin_active,
                 help="Electrical wiring, assembly and certification (e.g. 0.35 €/Wp).",
                 key=f"{key_prefix}_fin_inst_wp"
             )
@@ -642,7 +643,6 @@ def render_solar_config_form(
                 value=float(fin_opex),
                 step=0.1,
                 format="%.1f",
-                disabled=not is_fin_active,
                 help="Annual operational expenditure and maintenance reserve.",
                 key=f"{key_prefix}_fin_opex"
             )
@@ -653,7 +653,6 @@ def render_solar_config_form(
                 value=float(fin_disc),
                 step=0.5,
                 format="%.1f",
-                disabled=not is_fin_active,
                 help="Capital interest rate used for NPV and LCOE discounting.",
                 key=f"{key_prefix}_fin_disc"
             )
@@ -666,7 +665,7 @@ def render_solar_config_form(
         )
 
     if submitted and mod_count <= 0:
-        st.error("⚠️ Sizing Required: Please enter a module count greater than 0 before calculating, or click 'Load Example Case' above.")
+        st.error("Sizing Required: Please enter a module count greater than 0 before calculating, or click 'Load Example Case' above.", icon=":material/warning:")
 
     calc_dc = round((mod_count * mod_wp) / 1000.0, 2)
     final_inv_kw = float(inverter_kw)

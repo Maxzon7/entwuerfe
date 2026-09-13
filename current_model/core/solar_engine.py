@@ -272,7 +272,7 @@ def fetch_pvgis_tmy_data(
     tilt_deg: float = 30.0,
     azimuth_deg: float = 0.0,
     albedo: float = 0.20,
-    timeout_sec: int = 12
+    timeout_sec: int = 4
 ) -> Tuple[pd.DataFrame, str]:
     """
     Fetches the official PVGIS-ERA5 Typical Meteorological Year (TMY) dataset
@@ -375,7 +375,8 @@ def fetch_pvgis_tmy_data(
         tilt_deg=tilt_deg,
         azimuth_deg=azimuth_deg,
         albedo=albedo,
-        year=2024
+        year=2024,
+        timeout_sec=3
     )
 
 
@@ -386,7 +387,7 @@ def fetch_open_meteo_solar_data(
     azimuth_deg: float = 0.0,
     albedo: float = 0.20,
     year: int = 2024,
-    timeout_sec: int = 8
+    timeout_sec: int = 3
 ) -> Tuple[pd.DataFrame, str]:
     """
     Fetches historical radiation and temperature series from Open-Meteo API and harmonizes

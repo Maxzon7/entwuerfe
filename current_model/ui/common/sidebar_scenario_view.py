@@ -71,13 +71,13 @@ def render_sidebar_scenario_controller() -> None:
         help="Select which scenario branch to inspect, configure, or optimize in the workspace tabs."
     )
 
-    selected_id = scenario_id_map[selected_label]
-    if selected_id != project.active_sub_scenario_id:
-        if selected_id == "base":
-            project.active_sub_scenario_id = None
-        else:
-            project.active_sub_scenario_id = selected_id
+    selected_id = scenario_id_map.get(selected_label, "base")
+    current_active_id = project.active_sub_scenario_id if project.active_sub_scenario_id else "base"
+    if selected_id != current_active_id:
+        project.active_sub_scenario_id = None if selected_id == "base" else selected_id
         st.session_state["project_container"] = project
+        from current_model.core.project_io import sync_active_scenario_into_session
+        sync_active_scenario_into_session(project, auto_execute=True)
         st.rerun()
 
     # --------------------------------------------------------------------------
@@ -103,10 +103,14 @@ def render_sidebar_scenario_controller() -> None:
             if st.button("Instantiate Branch", icon=":material/check:", type="primary", use_container_width=True):
                 new_sub = SubScenario(
                     name=new_name.strip() or f"Sub-Scenario {len(project.sub_scenarios) + 1}",
-                    color_code=clean_color
+                    color_code=clean_color,
+                    include_solar=False
                 )
                 project.add_sub_scenario(new_sub)
+                project.active_sub_scenario_id = new_sub.id
                 st.session_state["project_container"] = project
+                from current_model.core.project_io import sync_active_scenario_into_session
+                sync_active_scenario_into_session(project, auto_execute=True)
                 st.rerun()
 
     with btn_col2:
@@ -117,11 +121,17 @@ def render_sidebar_scenario_controller() -> None:
                     st.caption(f"Managing: **{active_sub.name}**")
                     if st.button("Duplicate Branch", icon=":material/content_copy:", use_container_width=True):
                         cloned = project.duplicate_sub_scenario(active_sub.id, f"{active_sub.name} (Clone)")
+                        project.active_sub_scenario_id = cloned.id
                         st.session_state["project_container"] = project
+                        from current_model.core.project_io import sync_active_scenario_into_session
+                        sync_active_scenario_into_session(project, auto_execute=True)
                         st.rerun()
                     if st.button("Delete Branch", icon=":material/delete:", type="secondary", use_container_width=True):
                         project.delete_sub_scenario(active_sub.id)
+                        project.active_sub_scenario_id = project.sub_scenarios[0].id if project.sub_scenarios else None
                         st.session_state["project_container"] = project
+                        from current_model.core.project_io import sync_active_scenario_into_session
+                        sync_active_scenario_into_session(project, auto_execute=True)
                         st.rerun()
         else:
             st.button("Base Anchor", icon=":material/lock:", disabled=True, use_container_width=True, help="Status Quo is the immutable anchor.")
