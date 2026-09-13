@@ -6,11 +6,12 @@ Master Scenario Comparison & Decision Dashboard (current_model/ui/tab_comparison
 Description:
 ------------
 Main entry point for the Executive Decision & Multi-Scenario Comparison Dashboard:
+  - Visual Active Scenario Architecture Cards (Status Quo + All Sub-Scenarios with instant branch switching).
   - Sub-Tab 4.1: Financial Benchmarks & Amortisation
       * Top Financial KPI Summary Cards (Best TCO, Fastest Payback, Solar Autarky).
       * Scenario Architecture & Parameter Delta Matrix (Baseline vs Interventions).
       * Scenario Ranking Leaderboard Table.
-      * 15-Year Multi-Scenario Cumulative Cost Curves (Synchronized with Tab 3.1 & Break-Even Annotations).
+      * 15-Year Multi-Scenario Cumulative Cost Curves (Scope-adaptive: Facility TCO vs. Standalone Solar PV).
       * CAPEX vs. OPEX Capital Shift Visualizations.
       * Autarky & Payback Trade-off Benchmark.
       * Scenario Quick Management & Full Project Export.
@@ -28,7 +29,7 @@ import numpy as np
 
 from current_model.models.scenario import BaseScenario, SubScenario, ProjectContainer
 from current_model.models.solar import SolarFinancialConfig
-from current_model.core.project_io import export_project_from_session, export_project_json
+from current_model.core.project_io import export_project_from_session, export_project_json, sync_active_scenario_into_session
 from current_model.core.solar_financial_engine import compute_solar_financial_metrics
 from current_model.ui.tab_comparison.charts import (
     create_multi_scenario_cumulative_cost_figure,
@@ -44,7 +45,7 @@ from current_model.ui.common.session_utils import find_active_load_data_in_sessi
 def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[str, Any]]:
     """
     Constructs normalized analytical comparison records across all configured sub-scenarios
-    and the base scenario, linking exact financial metrics and electrical energy flows.
+    and the base scenario, linking exact financial metrics (Facility & Solar scopes) and electrical energy flows.
     """
     records: List[Dict[str, Any]] = []
     currency = project.currency or "EUR"
@@ -60,7 +61,7 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
 
     base_total_mwh = base_total_kwh / 1000.0
 
-    # 2. Status Quo Baseline Reference Cost
+    # 2. Status Quo Baseline Reference Cost (Facility Scope)
     base_annual_cost = project.base_scenario.baseline_annual_cost
     if not base_annual_cost or base_annual_cost <= 0:
         active_bill = st.session_state.get("active_bill_breakdown") or st.session_state.get("app_tab2_breakdown")
@@ -70,14 +71,22 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         else:
             base_annual_cost = 344141.21
 
-    base_15y_tco = base_annual_cost * 18.5989  # ~3% annual inflation factor over 15 years
+    base_15y_facility_tco = base_annual_cost * 18.5989  # ~3% annual inflation factor over 15 years
     
-    # Base Status Quo 15-year cumulative trajectory series
-    base_cum_series = [0.0]
+    # Facility Status Quo 15-year cumulative trajectory series (0 -> 4.75M)
+    fac_cum_series = [0.0]
     cum_tracker = 0.0
     for y in range(1, 16):
         cum_tracker += base_annual_cost * ((1.0 + 0.03) ** (y - 1))
-        base_cum_series.append(round(cum_tracker, 2))
+        fac_cum_series.append(round(cum_tracker, 2))
+
+    # Standalone Solar Status Quo 15-year series (0 -> ~2.09M)
+    solar_base_annual = 112762.96
+    solar_cum_series = [0.0]
+    sol_cum_tracker = 0.0
+    for y in range(1, 16):
+        sol_cum_tracker += solar_base_annual * ((1.0 + 0.03) ** (y - 1))
+        solar_cum_series.append(round(sol_cum_tracker, 2))
 
     # 1. Base Scenario Row (Status Quo)
     records.append({
@@ -88,9 +97,9 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         "capex": 0.0,
         "capex_str": f"0 {currency}",
         "annual_opex": base_annual_cost,
-        "total_15y_opex": base_15y_tco,
-        "total_15y_tco": base_15y_tco,
-        "tco_str": f"{base_15y_tco:,.0f} {currency}",
+        "total_15y_opex": base_15y_facility_tco,
+        "total_15y_tco": base_15y_facility_tco,
+        "tco_str": f"{base_15y_facility_tco:,.0f} {currency}",
         "payback_years": 0.0,
         "payback_str": "Baseline Reference",
         "npv": 0.0,
@@ -110,8 +119,12 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         "residual_peak_kw": round(base_peak_kw, 1),
         "shaved_peak_kw": 0.0,
         "co2_avoided_tons": 0.0,
-        "cumulative_costs": base_cum_series,
-        "baseline_costs": base_cum_series,
+        "facility_cum_costs": fac_cum_series,
+        "facility_base_costs": fac_cum_series,
+        "solar_cum_costs": solar_cum_series,
+        "solar_base_costs": solar_cum_series,
+        "cumulative_costs": fac_cum_series,
+        "baseline_costs": fac_cum_series,
         "color": "#94A3B8"
     })
 
@@ -178,7 +191,7 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         res_peak_kw = max(0.0, base_peak_kw - peak_shaved)
         co2_tons = round(direct_kwh * 0.000400, 1)  # 400 g CO2/kWh clean energy offset
 
-        # 3. 15-Year Financial & Amortisation Modeling (Matching Tab 3.1)
+        # 3. 15-Year Financial & Amortisation Modeling (Matching Tab 3.1 & Facility TCO)
         if sub.include_solar and sub.solar_config:
             fin_cfg = sub.solar_financial if (sub.solar_financial and sub.solar_financial.is_enabled) else SolarFinancialConfig(
                 is_enabled=True,
@@ -195,30 +208,43 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
                 feed_in_tariff_per_kwh=0.08
             )
 
-            if active_sub_id == sub.id and active_fin_m is not None and active_fin_m.is_configured and active_fin_m.total_capex > 0:
-                fin_m = active_fin_m
-            else:
-                fin_m = compute_solar_financial_metrics(
-                    config=sub.solar_config,
-                    fin_config=fin_cfg,
-                    annual_generation_kwh=annual_gen_kwh,
-                    multi_year_yields=sim_res.multi_year_yields if (active_sub_id == sub.id and sim_res) else None
-                )
+            # Facility-Coupled Engine
+            fin_m_fac = compute_solar_financial_metrics(
+                config=sub.solar_config,
+                fin_config=fin_cfg,
+                annual_generation_kwh=annual_gen_kwh,
+                annual_avoided_cost=direct_kwh * 0.18,
+                annual_export_revenue=surplus_kwh * (fin_cfg.feed_in_tariff_per_kwh or 0.08),
+                baseline_electricity_rate=0.18,
+                baseline_annual_bill=base_annual_cost,
+                multi_year_yields=sim_res.multi_year_yields if (active_sub_id == sub.id and sim_res) else None
+            )
 
-            capex = fin_m.total_capex
+            # Standalone Solar PV Engine (Matching Tab 3.1 100%)
+            fin_m_sol = compute_solar_financial_metrics(
+                config=sub.solar_config,
+                fin_config=fin_cfg,
+                annual_generation_kwh=annual_gen_kwh,
+                multi_year_yields=sim_res.multi_year_yields if (active_sub_id == sub.id and sim_res) else None
+            )
+
+            capex = fin_m_fac.total_capex
             if sub.include_bess and sub.bess_config:
                 capex += sub.bess_config.total_capex
             if sub.include_generator and sub.generator_config:
                 capex += sub.generator_config.capital_cost
 
-            payback = fin_m.payback_period_years or 0.0
-            npv = fin_m.npv
-            net_savings = fin_m.total_lifetime_savings
-            cum_costs = fin_m.cumulative_with_pv
-            base_costs = fin_m.cumulative_status_quo
-            opex_y1 = fin_m.annual_opex_year1
-            tco_15y = cum_costs[-1] if cum_costs else (capex + opex_y1 * 18.5989)
-            cash_table = fin_m.cash_flow_table
+            payback = fin_m_fac.payback_period_years or 0.0
+            npv = fin_m_fac.npv
+            net_savings = fin_m_fac.total_lifetime_savings
+            cum_costs_fac = fin_m_fac.cumulative_with_pv
+            base_costs_fac = fin_m_fac.cumulative_status_quo
+            cum_costs_sol = fin_m_sol.cumulative_with_pv
+            base_costs_sol = fin_m_sol.cumulative_status_quo
+
+            opex_y1 = fin_m_fac.annual_opex_year1
+            tco_15y = cum_costs_fac[-1] if cum_costs_fac else (capex + opex_y1 * 18.5989)
+            cash_table = fin_m_fac.cash_flow_table
         else:
             capex = 0.0
             if sub.include_bess and sub.bess_config:
@@ -231,9 +257,11 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             tco_15y = capex + (residual_annual_cost * 18.5989)
             payback = capex / max(1.0, annual_benefit) if annual_benefit > 0 else 0.0
             npv = (annual_benefit * 10.3796) - capex
-            net_savings = base_15y_tco - tco_15y
-            cum_costs = [capex + (residual_annual_cost * ((1.03) ** y)) for y in range(16)]
-            base_costs = base_cum_series
+            net_savings = base_15y_facility_tco - tco_15y
+            cum_costs_fac = [capex + (residual_annual_cost * ((1.03) ** y)) for y in range(16)]
+            base_costs_fac = fac_cum_series
+            cum_costs_sol = cum_costs_fac
+            base_costs_sol = solar_cum_series
             opex_y1 = residual_annual_cost
             cash_table = []
 
@@ -267,13 +295,103 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             "residual_peak_kw": round(res_peak_kw, 1),
             "shaved_peak_kw": round(peak_shaved, 1),
             "co2_avoided_tons": round(co2_tons, 1),
-            "cumulative_costs": cum_costs,
-            "baseline_costs": base_costs,
+            "facility_cum_costs": cum_costs_fac,
+            "facility_base_costs": base_costs_fac,
+            "solar_cum_costs": cum_costs_sol,
+            "solar_base_costs": base_costs_sol,
+            "cumulative_costs": cum_costs_fac,
+            "baseline_costs": base_costs_fac,
             "cash_flow_table": cash_table,
             "color": sub.color_code
         })
 
     return records
+
+
+def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[str, Any]], key_prefix: str = "app_comparison") -> None:
+    """
+    Renders visual architecture summary cards for the baseline and every branch scenario,
+    showing active state, hardware modules, key metrics, and an instant branch switch button.
+    """
+    st.markdown("### :material/dashboard: Active Scenario Architecture & Branch Overview")
+    st.caption("Visual status of all modeled scenarios, configured hardware technologies, and active workspace branch:")
+
+    cols = st.columns(max(1, len(records)))
+    active_sub_id = project.active_sub_scenario_id
+
+    for idx, (col, r) in enumerate(zip(cols, records)):
+        with col:
+            sc_id = r["id"]
+            is_active = (sc_id == "base" and active_sub_id is None) or (sc_id == active_sub_id)
+            accent_color = "#10B981" if is_active else r.get("color", "#94A3B8")
+            border_css = f"2px solid {accent_color}" if is_active else "1px solid rgba(51, 65, 85, 0.7)"
+            bg_css = "rgba(16, 185, 129, 0.08)" if is_active else "rgba(15, 23, 42, 0.65)"
+
+            active_badge = f"<span style='background:#10B981; color:#042F2E; padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;'>ACTIVE WORKSPACE BRANCH</span>" if is_active else f"<span style='background:#334155; color:#94A3B8; padding:3px 8px; border-radius:4px; font-size:0.75rem;'>COMPARISON BRANCH</span>"
+
+            sub_obj = project.get_sub_scenario(sc_id) if sc_id != "base" else None
+
+            # Hardware specs
+            if sc_id == "base":
+                pv_desc = "None (Grid Only)"
+                bess_desc = "None"
+                gen_desc = "None"
+                c_name = project.base_scenario.base_contract.name if project.base_scenario.base_contract else "Standard Contract"
+                contract_desc = f"{c_name}"
+            else:
+                if sub_obj and sub_obj.include_solar and sub_obj.solar_config:
+                    tech = getattr(sub_obj.solar_config, "technology_preset", "TOPCon")
+                    pv_desc = f"{sub_obj.solar_config.dc_capacity_kwp:,.1f} kWp ({tech})"
+                else:
+                    pv_desc = "None"
+
+                if sub_obj and sub_obj.include_bess and sub_obj.bess_config:
+                    bess_desc = f"{sub_obj.bess_config.capacity_kwh:,.0f} kWh"
+                else:
+                    bess_desc = "None"
+
+                if sub_obj and sub_obj.include_generator and sub_obj.generator_config:
+                    gen_desc = f"{sub_obj.generator_config.rated_power_kw:,.0f} kW"
+                else:
+                    gen_desc = "None"
+
+                contract_desc = "Inherited Baseline"
+
+            st.markdown(
+                f"""
+                <div style="background:{bg_css}; border:{border_css}; border-radius:8px; padding:12px; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-weight:700; font-size:0.95rem; color:#F8FAFC;">{r['name']}</span>
+                    </div>
+                    <div style="margin-bottom:8px;">{active_badge}</div>
+                    <div style="font-size:0.8rem; color:#CBD5E1; line-height:1.6; margin-bottom:10px;">
+                        <div><b>Solar PV:</b> {pv_desc}</div>
+                        <div><b>Storage (BESS):</b> {bess_desc}</div>
+                        <div><b>Backup Genset:</b> {gen_desc}</div>
+                        <div><b>Contract:</b> {contract_desc}</div>
+                    </div>
+                    <div style="background:rgba(0,0,0,0.3); border-radius:6px; padding:8px; font-size:0.78rem; color:#E2E8F0; display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:8px;">
+                        <div><span style="color:#94A3B8;">CAPEX:</span> <b>{r['capex_str']}</b></div>
+                        <div><span style="color:#94A3B8;">Autarky:</span> <b>{r['autarky_str']}</b></div>
+                        <div><span style="color:#94A3B8;">Payback:</span> <b>{r['payback_str']}</b></div>
+                        <div><span style="color:#94A3B8;">15y Net:</span> <b>{r['net_savings_str']}</b></div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if is_active:
+                st.button(":material/check_circle: Active in Workspace", key=f"{key_prefix}_act_btn_{sc_id}", disabled=True, use_container_width=True)
+            else:
+                btn_lbl = "Activate Status Quo" if sc_id == "base" else f"Switch to Branch #{idx}"
+                if st.button(f":material/near_me: {btn_lbl}", key=f"{key_prefix}_sw_btn_{sc_id}", use_container_width=True):
+                    if sc_id == "base":
+                        project.active_sub_scenario_id = None
+                    else:
+                        project.active_sub_scenario_id = sc_id
+                    sync_active_scenario_into_session(project, auto_execute=True)
+                    st.rerun()
 
 
 def _build_scenario_delta_matrix(project: ProjectContainer, records: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -421,6 +539,13 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
     sub_records = [r for r in records if r["id"] != "base"]
 
     # --------------------------------------------------------------------------
+    # Visual Architecture & Branch Overview Cards
+    # --------------------------------------------------------------------------
+    _render_scenario_visual_cards(project, records, key_prefix=key_prefix)
+
+    st.divider()
+
+    # --------------------------------------------------------------------------
     # Top Level Sub-Tabs Navigation (Financial vs. Electrical)
     # --------------------------------------------------------------------------
     tab_fin, tab_elec = st.tabs([
@@ -525,11 +650,22 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
 
         with chart_tab1:
             st.caption("Break-even trajectory: Intersection point where cumulative investment curves cross below the Status Quo utility line marks the amortization year.")
+            
+            c_scope = st.radio(
+                "Trajectory Analysis Scope:",
+                options=["Facility Total TCO (All Utility Billing Included)", "Solar PV Investment Scope (Direct Match with Tab 3.1)"],
+                horizontal=True,
+                key=f"{key_prefix}_traj_scope_radio"
+            )
+            mode_key = "facility" if "Facility" in c_scope else "solar"
+            base_s = base_rec.get(f"{mode_key}_cum_costs") or base_rec.get("cumulative_costs")
+
             fig_curves = create_multi_scenario_cumulative_cost_figure(
                 scenarios_data=sub_records,
-                base_annual_cost=base_annual_cost,
-                baseline_series=base_rec.get("cumulative_costs"),
-                currency=currency
+                base_annual_cost=base_annual_cost if mode_key == "facility" else 112762.96,
+                baseline_series=base_s,
+                currency=currency,
+                scope_mode=mode_key
             )
             st.plotly_chart(fig_curves, use_container_width=True)
 

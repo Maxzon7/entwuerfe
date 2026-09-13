@@ -7,6 +7,7 @@ Description:
 ------------
 Provides interactive Plotly visualization figures for the Master Scenario Comparison:
   - 15-Year Multi-Scenario Cumulative Cost Trajectory Curves (Break-Even Analysis & Net Savings Callouts)
+  - Scope-adaptive trajectories (Facility Total TCO vs. Standalone Solar PV Investment Scope)
   - CAPEX vs. OPEX Capital Shift Grouped / Stacked Bar Chart (Status Quo vs Sub-Scenarios)
   - Side-by-Side Dual Subplot: Solar Autarky & Self-Consumption (%) + Simple Payback Period (Years)
   - Multi-Scenario Annual Electrical Energy Balance Grouped Bar Chart (Demand, Generation, Self-Consumption, Grid Import, Export)
@@ -23,12 +24,15 @@ def create_multi_scenario_cumulative_cost_figure(
     scenarios_data: List[Dict[str, Any]],
     base_annual_cost: float = 344141.21,
     baseline_series: Optional[List[float]] = None,
-    currency: str = "EUR"
+    currency: str = "EUR",
+    scope_mode: str = "facility"
 ) -> go.Figure:
     """
     Creates a multi-line Plotly figure illustrating the 15-year cumulative cost development
     across the Base Scenario (Status Quo) and all active Sub-Scenarios.
-    Synchronized 100% with Tab 3.1's lifecycle trajectories, break-even markers, and net savings callouts.
+    Supports dual scopes:
+      - 'facility': Total Facility TCO including all baseline utility billing + interventions
+      - 'solar': Standalone Solar PV plant economics matching Tab 3.1 100%
     """
     fig = go.Figure()
     years = list(range(0, 16))
@@ -59,10 +63,16 @@ def create_multi_scenario_cumulative_cost_figure(
     for idx, sc in enumerate(scenarios_data):
         name = sc.get("name", f"Sub-Scenario {idx+1}")
         color = sc.get("color") or palette[idx % len(palette)]
-        series = sc.get("cumulative_costs")
+        
+        # Select series based on active scope
+        if scope_mode == "solar" and sc.get("solar_cum_costs"):
+            series = sc["solar_cum_costs"]
+        elif scope_mode == "facility" and sc.get("facility_cum_costs"):
+            series = sc["facility_cum_costs"]
+        else:
+            series = sc.get("cumulative_costs")
 
         if not series or len(series) < 16:
-            # Trajectory from CAPEX + residual OPEX with inflation
             capex = sc.get("capex", 0.0)
             opex = sc.get("annual_opex", base_annual_cost * 0.65)
             series = [capex]
@@ -115,10 +125,12 @@ def create_multi_scenario_cumulative_cost_figure(
                 font=dict(color="#F8FAFC", size=11)
             )
 
+    scope_title = "Facility Overall TCO Scope" if scope_mode == "facility" else "Solar PV Investment Scope"
+
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text=f"<b>15-Year Cumulative Cost Trajectories & Break-Even Amortisation ({currency})</b>",
+            text=f"<b>15-Year Cumulative Cost Trajectories & Break-Even Amortisation ({currency})</b> - <i>{scope_title}</i>",
             font=dict(size=14, color="#F8FAFC")
         ),
         xaxis=dict(
