@@ -81,7 +81,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                     project.active_sub_scenario_id = first_sub.id
                     st.session_state["project_container"] = project
                     from current_model.core.project_io import sync_active_scenario_into_session
-                    sync_active_scenario_into_session(project, auto_execute=True)
+                    sync_active_scenario_into_session(project, auto_execute=False)
                     st.rerun()
         with c_act2:
             if st.button("Instantiate New Solar PV Branch", icon=":material/add_circle:", use_container_width=True, key=f"{key_prefix}_instantiate_new_btn"):
@@ -104,7 +104,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 project.active_sub_scenario_id = new_sub.id
                 st.session_state["project_container"] = project
                 from current_model.core.project_io import sync_active_scenario_into_session
-                sync_active_scenario_into_session(project, auto_execute=True)
+                sync_active_scenario_into_session(project, auto_execute=False)
                 st.rerun()
         return
 
@@ -261,8 +261,8 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     if submitted and not valid_sizing:
         st.error("Sizing Required: Please enter a module count greater than 0 in Section 2 above to calculate solar generation.", icon=":material/warning:")
 
-    need_full_simulation = valid_sizing and (submitted or auto_trigger or physical_config_changed or cached_res is None)
-    need_financial_recalc = valid_sizing and not need_full_simulation and (financial_config_changed or (cached_res is not None and cached_res.financial_metrics is None and fin_config and fin_config.is_enabled))
+    need_full_simulation = valid_sizing and (submitted or auto_trigger)
+    need_financial_recalc = valid_sizing and not need_full_simulation and submitted and (financial_config_changed or (cached_res is not None and cached_res.financial_metrics is None and fin_config and fin_config.is_enabled))
 
     if need_full_simulation:
         with st.spinner("Calculating 15-minute physical solar PV generation & technology comparison..."):
@@ -314,15 +314,15 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     if state_res_key not in st.session_state:
         st.divider()
         st.info(
-            "**No solar simulation calculated yet.**\n\n"
-            "Enter your installation parameters above and click **'Calculate Solar PV Generation & Multi-Technology Comparison'**, "
-            "or click **'Load Example Case (Mendoza Benchmark)'** to load the preconfigured reference scenario.",
+            "**Ready to Simulate Solar PV Generation**\n\n"
+            "Review or adjust your solar system specifications and financial parameters above, then click "
+            "**:material/calculate: Calculate Solar PV Generation & Multi-Technology Comparison** to compute the 15-minute physical generation profile, KPIs, and technology comparison.",
             icon=":material/info:"
         )
         return
 
     if physical_config_changed and valid_sizing:
-        st.warning("Solar physical configuration was changed above. Click **'Calculate Solar PV Generation & Multi-Technology Comparison'** to refresh the results.", icon=":material/warning:")
+        st.warning("Solar configuration parameters were modified above. Click **'Calculate Solar PV Generation & Multi-Technology Comparison'** to recompute the physical simulation.", icon=":material/warning:")
 
     sim_res: SolarSimulationResult = st.session_state[state_res_key]
 

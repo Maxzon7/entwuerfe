@@ -805,6 +805,20 @@ def compute_solar_load_dispatch(
     }
 
 
+def get_load_power_column_name(load_df: pd.DataFrame) -> str:
+    """
+    Robustly identifies the total electrical power demand column in a load dataframe.
+    Prioritizes known standard power column names before falling back to numeric power columns.
+    """
+    for c in ["Total_Demand_kW", "Power_kW", "kW", "Active_Power_kW", "P_Load_kW", "Gesamt_kW", "Leistung_kW", "Leistung (kW)", "power", "Power", "active_power"]:
+        if c in load_df.columns:
+            return c
+    numeric_cols = [c for c in load_df.select_dtypes(include=[np.number]).columns if not any(x in str(c).lower() for x in ["time", "date", "datum", "uhrzeit", "jahr", "monat", "tag", "stunde", "unnamed", "index", "id"])]
+    if numeric_cols:
+        return numeric_cols[-1]
+    return load_df.columns[-1]
+
+
 def simulate_solar_pv_generation(
     config: SolarPVConfig,
     location: SolarLocation,
@@ -887,12 +901,13 @@ def simulate_solar_pv_generation(
     # 5. Electrical Load Dispatch Coupling (if load data exists)
     p_solar_arr = df["P_AC_kW"].to_numpy(dtype=float)
     if load_df is not None and not load_df.empty:
-        p_load_col = "Total_Demand_kW" if "Total_Demand_kW" in load_df.columns else load_df.columns[1]
+        p_load_col = get_load_power_column_name(load_df)
         raw_load_arr = load_df[p_load_col].to_numpy(dtype=float)
+        raw_load_arr = np.nan_to_num(raw_load_arr, nan=0.0)
 
         if len(raw_load_arr) == len(p_solar_arr):
             p_load_aligned = raw_load_arr
-        elif len(raw_load_arr) < len(p_solar_arr):
+        elif len(raw_load_arr) < len(p_solar_arr) and len(raw_load_arr) > 0:
             reps = int(math.ceil(len(p_solar_arr) / len(raw_load_arr)))
             p_load_aligned = np.tile(raw_load_arr, reps)[:len(p_solar_arr)]
         else:

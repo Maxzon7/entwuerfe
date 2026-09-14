@@ -39,7 +39,7 @@ from current_model.ui.tab_comparison.charts import (
     create_multi_scenario_peak_and_co2_figure
 )
 from current_model.ui.common.cards import render_kpi_card
-from current_model.ui.common.session_utils import find_active_load_data_in_session
+from current_model.ui.common.session_utils import find_active_load_data_in_session, get_load_profile_summary
 
 
 def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[str, Any]]:
@@ -50,11 +50,14 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
     records: List[Dict[str, Any]] = []
     currency = project.currency or "EUR"
 
-    # 1. Baseline Load Discovery & Power Metrics
+    # 1. Baseline Load Discovery & Power Metrics (Annualized to 365 Days)
     df_load, load_desc, p_col = find_active_load_data_in_session()
     if df_load is not None and not df_load.empty and p_col in df_load.columns:
-        base_total_kwh = float(df_load[p_col].sum() * 0.25)
-        base_peak_kw = float(df_load[p_col].max())
+        load_summary = get_load_profile_summary(df_load, p_col)
+        duration_days = float(load_summary.get("duration_days", 365.0) or 365.0)
+        annual_factor = (365.0 / duration_days) if (0.1 < duration_days < 360.0) else 1.0
+        base_total_kwh = float(load_summary.get("total_kwh", 0.0)) * annual_factor
+        base_peak_kw = float(load_summary.get("peak_kw", 0.0))
     else:
         base_total_kwh = float(project.base_scenario.baseline_annual_kwh) if project.base_scenario.baseline_annual_kwh > 0 else 1412000.0
         base_peak_kw = float(project.base_scenario.baseline_peak_kw) if project.base_scenario.baseline_peak_kw > 0 else 380.0
@@ -153,32 +156,49 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         peak_shaved = 0.0
 
         if sub.include_solar and kwp > 0:
-            if active_sub_id == sub.id and int_res and hasattr(int_res, "kpis") and getattr(int_res.kpis, "solar_fraction_autarky_pct", 0.0) > 0:
-                autarky = getattr(int_res.kpis, "solar_fraction_autarky_pct", 34.0)
-                self_cons = getattr(int_res.kpis, "self_consumption_rate_pct", 98.0)
-                direct_kwh = getattr(int_res.kpis, "direct_consumption_kwh", annual_gen_kwh * 0.8)
-                surplus_kwh = getattr(int_res.kpis, "surplus_generation_kwh", max(0.0, annual_gen_kwh - direct_kwh))
-                residual_kwh = getattr(int_res.kpis, "residual_load_kwh", max(0.0, base_total_kwh - direct_kwh))
+            # Check if active sub-scenario has an exact coupled dispatch result matching current sizing
+            has_valid_int = (
+                active_sub_id == sub.id and 
+                int_res is not None and 
+                hasattr(int_res, "kpis") and 
+                getattr(int_res, "config", None) is not None and
+                int_res.config.module_count == (sub.solar_config.module_count if sub.solar_config else 0) and
+                getattr(int_res.kpis, "total_load_kwh", 0.0) > 0 and
+                abs(getattr(int_res.kpis, "total_load_kwh", 0.0) - base_total_kwh) / max(1.0, base_total_kwh) < 0.25
+            )
+
+            if has_valid_int:
+                direct_kwh = float(getattr(int_res.kpis, "direct_consumption_kwh", 0.0))
+                direct_kwh = min(direct_kwh, annual_gen_kwh, base_total_kwh)
+                surplus_kwh = max(0.0, annual_gen_kwh - direct_kwh)
+                residual_kwh = max(0.0, base_total_kwh - direct_kwh)
+                autarky = round((direct_kwh / max(1.0, base_total_kwh)) * 100.0, 1)
+                self_cons = round((direct_kwh / max(1.0, annual_gen_kwh)) * 100.0, 1)
                 if "P_Residual_kW" in int_res.df_timeseries.columns:
                     p_orig = float(int_res.df_timeseries["P_Load_kW"].max()) if "P_Load_kW" in int_res.df_timeseries.columns else base_peak_kw
                     p_res = float(int_res.df_timeseries["P_Residual_kW"].max())
                     peak_shaved = max(0.0, p_orig - p_res)
             else:
-                solar_fraction = min(1.5, annual_gen_kwh / max(1.0, base_total_kwh))
+                # Rigorous physical heuristic model for commercial demand curve:
+                solar_fraction = min(2.0, annual_gen_kwh / max(1.0, base_total_kwh))
                 if solar_fraction <= 0.4:
                     self_cons = 98.2
-                    autarky = round(solar_fraction * self_cons, 1)
                 elif solar_fraction <= 0.8:
-                    self_cons = round(98.2 - (solar_fraction - 0.4) * 45.0, 1)
-                    autarky = round(solar_fraction * self_cons, 1)
+                    self_cons = max(40.0, 98.2 - (solar_fraction - 0.4) * 45.0)
                 else:
-                    self_cons = round(max(35.0, 80.0 - (solar_fraction - 0.8) * 55.0), 1)
-                    autarky = round(min(85.0, solar_fraction * self_cons), 1)
+                    self_cons = max(30.0, 80.0 - (solar_fraction - 0.8) * 55.0)
 
-                direct_kwh = annual_gen_kwh * (self_cons / 100.0)
+                direct_kwh = min(annual_gen_kwh * (self_cons / 100.0), base_total_kwh)
+                autarky = round((direct_kwh / max(1.0, base_total_kwh)) * 100.0, 1)
+                self_cons = round((direct_kwh / max(1.0, annual_gen_kwh)) * 100.0, 1)
                 surplus_kwh = max(0.0, annual_gen_kwh - direct_kwh)
                 residual_kwh = max(0.0, base_total_kwh - direct_kwh)
                 peak_shaved = round(min(base_peak_kw * 0.35, kwp * 0.15), 1)
+
+            # Strict physical energy conservation enforcement
+            direct_kwh = min(direct_kwh, base_total_kwh, annual_gen_kwh)
+            residual_kwh = max(0.0, base_total_kwh - direct_kwh)
+            surplus_kwh = max(0.0, annual_gen_kwh - direct_kwh)
         else:
             direct_kwh = 0.0
             surplus_kwh = 0.0
@@ -254,13 +274,20 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
 
             annual_benefit = 15000.0 if capex > 0 else 0.0
             residual_annual_cost = base_annual_cost - annual_benefit
-            tco_15y = capex + (residual_annual_cost * 18.5989)
-            payback = capex / max(1.0, annual_benefit) if annual_benefit > 0 else 0.0
-            npv = (annual_benefit * 10.3796) - capex
+            
+            # Proper 15-year cumulative trajectory (accumulating year over year)
+            cum_costs_fac = [capex]
+            cum_track = capex
+            for y in range(1, 16):
+                cum_track += residual_annual_cost * ((1.0 + 0.03) ** (y - 1))
+                cum_costs_fac.append(round(cum_track, 2))
+
+            tco_15y = cum_costs_fac[-1]
+            payback = (capex / annual_benefit) if annual_benefit > 0 else 0.0
+            npv = ((annual_benefit * 10.3796) - capex) if capex > 0 else 0.0
             net_savings = base_15y_facility_tco - tco_15y
-            cum_costs_fac = [capex + (residual_annual_cost * ((1.03) ** y)) for y in range(16)]
             base_costs_fac = fac_cum_series
-            cum_costs_sol = cum_costs_fac
+            cum_costs_sol = [capex] * 16 if capex > 0 else solar_cum_series
             base_costs_sol = solar_cum_series
             opex_y1 = residual_annual_cost
             cash_table = []
@@ -390,7 +417,7 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                         project.active_sub_scenario_id = None
                     else:
                         project.active_sub_scenario_id = sc_id
-                    sync_active_scenario_into_session(project, auto_execute=True)
+                    sync_active_scenario_into_session(project, auto_execute=False)
                     st.rerun()
 
 
@@ -528,8 +555,13 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
     """
     Renders the Master Scenario Comparison & Executive Decision Dashboard.
     """
-    st.markdown("## :material/leaderboard: Master Scenario Comparison & Ranking Dashboard")
-    st.caption("Benchmark all branchable Sub-Scenarios against the Status Quo baseline across 15-year TCO, CAPEX, Electrical Flows, and Autarky.")
+    t_head_col1, t_head_col2 = st.columns([7.5, 2.5])
+    with t_head_col1:
+        st.markdown("## :material/leaderboard: Master Scenario Comparison & Ranking Dashboard")
+        st.caption("Benchmark all branchable Sub-Scenarios against the Status Quo baseline across 15-year TCO, CAPEX, Electrical Flows, and Autarky.")
+    with t_head_col2:
+        if st.button("Refresh Dashboard", icon=":material/refresh:", type="primary", use_container_width=True, key=f"{key_prefix}_refresh_dash_btn", help="Re-synchronizes and re-evaluates all scenario comparisons with the latest workspace parameters."):
+            st.rerun()
 
     project: ProjectContainer = export_project_from_session()
     records = _build_scenario_evaluation_records(project)

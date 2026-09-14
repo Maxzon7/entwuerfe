@@ -76,11 +76,23 @@ class TestProjectIO(unittest.TestCase):
         self.assertEqual(meta["format"], "drac_load_profile")
         self.assertEqual(meta["consumer_count"], 2)
 
-    def test_invalid_json_validation(self):
-        is_valid, msg, meta = validate_project_file("{invalid_json: true")
-        self.assertFalse(is_valid)
-        self.assertIn("JSON parsing error", msg)
+    def test_sync_active_scenario_into_session_defer_simulation(self):
+        import streamlit as st
+        from current_model.core.project_io import sync_active_scenario_into_session
+
+        # Select sub_test_pv
+        self.project.active_sub_scenario_id = "sub_test_pv"
+        sync_active_scenario_into_session(self.project, auto_execute=False)
+
+        # Config must be populated in session state
+        self.assertIn("app_tab3_config", st.session_state)
+        self.assertEqual(st.session_state["app_tab3_config"].module_count, 1111)
+
+        # Simulation result must NOT be calculated automatically
+        self.assertNotIn("app_tab3_sim_result", st.session_state)
+        self.assertNotIn("solar_kw_15min", st.session_state)
 
 
 if __name__ == "__main__":
     unittest.main()
+

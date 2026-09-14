@@ -269,7 +269,7 @@ def load_project_into_session(project: ProjectContainer, auto_execute: bool = Tr
     st.session_state["example1_active"] = False
 
 
-def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: bool = True) -> None:
+def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: bool = False) -> None:
     """
     Synchronizes the active scenario (Status Quo vs SubScenario) into Streamlit session state.
     Clears input widget caches so form values strictly reflect the active scenario branch.

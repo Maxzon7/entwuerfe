@@ -77,7 +77,7 @@ def render_sidebar_scenario_controller() -> None:
         project.active_sub_scenario_id = None if selected_id == "base" else selected_id
         st.session_state["project_container"] = project
         from current_model.core.project_io import sync_active_scenario_into_session
-        sync_active_scenario_into_session(project, auto_execute=True)
+        sync_active_scenario_into_session(project, auto_execute=False)
         st.rerun()
 
     # --------------------------------------------------------------------------
@@ -110,7 +110,7 @@ def render_sidebar_scenario_controller() -> None:
                 project.active_sub_scenario_id = new_sub.id
                 st.session_state["project_container"] = project
                 from current_model.core.project_io import sync_active_scenario_into_session
-                sync_active_scenario_into_session(project, auto_execute=True)
+                sync_active_scenario_into_session(project, auto_execute=False)
                 st.rerun()
 
     with btn_col2:
@@ -124,14 +124,14 @@ def render_sidebar_scenario_controller() -> None:
                         project.active_sub_scenario_id = cloned.id
                         st.session_state["project_container"] = project
                         from current_model.core.project_io import sync_active_scenario_into_session
-                        sync_active_scenario_into_session(project, auto_execute=True)
+                        sync_active_scenario_into_session(project, auto_execute=False)
                         st.rerun()
                     if st.button("Delete Branch", icon=":material/delete:", type="secondary", use_container_width=True):
                         project.delete_sub_scenario(active_sub.id)
                         project.active_sub_scenario_id = project.sub_scenarios[0].id if project.sub_scenarios else None
                         st.session_state["project_container"] = project
                         from current_model.core.project_io import sync_active_scenario_into_session
-                        sync_active_scenario_into_session(project, auto_execute=True)
+                        sync_active_scenario_into_session(project, auto_execute=False)
                         st.rerun()
         else:
             st.button("Base Anchor", icon=":material/lock:", disabled=True, use_container_width=True, help="Status Quo is the immutable anchor.")

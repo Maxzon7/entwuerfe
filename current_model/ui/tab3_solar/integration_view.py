@@ -6,20 +6,28 @@ Sub-Tab 3.2: Solar & Consumption Integration View (ui/tab3_solar/integration_vie
 Description:
 ------------
 Orchestrates the coupled Solar PV and Electrical Consumption analysis (Sub-Tab 3.2):
-  - Ingests active load profile from Tab 1 (CSV real meter or 365d/24h Synthetic).
-  - Target auto-sizing toolbar: 40%, 60%, 80%, 100% Net Annual Coverage.
+  - Ingests active facility load profile from Tab 1 (CSV real meter or 365d/24h Synthetic).
+  - 3 Operating Modes:
+      1. Live Mirror from Sub-Tab 3.1 (Default, locked & synchronized with active scenario).
+      2. Smart Target Coverage Auto-Sizer (40%, 60%, 80%, 100% Net Zero & custom slider with 1-click sync).
+      3. Custom Sizing & Sensitivity Mode.
   - Interval-by-interval 15-minute electrical dispatch calculation (Direct, Surplus, Residual).
-  - Key Performance Indicators:
+  - Performance KPIs:
       * Self-Consumption Rate (SCR % / Eigenverbrauchsquote)
       * Autarky Rate / Solar Fraction (SF % / Autarkiegrad)
       * Surplus export and Residual grid purchase (kWh & MWh)
-      * Peak demand shaving (kW reduction)
-  - Interactive Plotly figures:
+      * Peak demand shaving (kW & % reduction)
+      * BESS Storage Readiness (Surplus energy ready for battery storage)
+  - 5 High-Contrast Plotly Figures:
       * 15-minute dispatch timeseries with rangeslider
-      * 12-month coupled energy balance
+      * 12-month coupled energy balance bar chart + monthly autarky %
       * Seasonal 24-hour diurnal dispatch overlay
       * Sankey energy flow diagram
-  - Financial avoided cost assessment (coupled with Tab 2 Contract, or deactivated-by-default manual rate).
+      * BESS Storage Potential & Surplus Power Duration
+  - Deep Financial & Tariff Savings Assessment:
+      * Coupled with Tab 2 Electricity Contract (Punta, Llano, Valle TOU periods)
+      * Itemized billing comparison table
+      * 15-Year Life-Cycle Cost Trajectory & Amortisation Curves (linked with Tab 3.1 CAPEX/OPEX)
 """
 
 from typing import Optional, Dict, Any, Tuple
@@ -27,14 +35,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-from current_model.models.solar import SolarLocation, SolarPVConfig, SolarSimulationResult
+from current_model.models.solar import SolarLocation, SolarPVConfig, SolarFinancialConfig, SolarSimulationResult
+from current_model.models.scenario import ProjectContainer, SubScenario
 from current_model.models.contract import Contract
+from current_model.core.project_io import export_project_from_session, sync_active_scenario_into_session
 from current_model.core.solar_engine import (
     simulate_solar_pv_generation,
     calculate_scenario_target_kwp,
     calculate_recommended_inverter_size
 )
 from current_model.core.financial_engine import compute_financial_bill
+from current_model.core.solar_financial_engine import compute_solar_financial_metrics
 from current_model.core.synthetic_engine import aggregate_synthetic_year
 from current_model.models.presets import get_industry_preset_consumers
 from current_model.ui.common.cards import render_kpi_card
@@ -47,7 +58,13 @@ from current_model.ui.tab3_solar.integration_charts import (
     create_solar_load_dispatch_figure,
     create_monthly_energy_balance_figure,
     create_seasonal_dispatch_daily_figure,
-    create_energy_flow_sankey_figure
+    create_energy_flow_sankey_figure,
+    create_bess_readiness_figure
+)
+from current_model.ui.tab3_solar.charts import (
+    create_solar_cashflow_payback_figure,
+    create_cumulative_cost_comparison_figure,
+    create_annual_running_costs_comparison_figure
 )
 
 
@@ -58,13 +75,59 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     st.subheader("Solar PV & Facility Consumption Integration")
     st.caption(
         "Couples 15-minute physical Solar PV generation with your active facility load profile. "
-        "Calculates direct self-consumption, surplus generation, residual grid import, and peak load shaving."
+        "Calculates direct self-consumption, surplus export, residual grid purchases, peak shaving, and financial bill reduction."
     )
 
+    project: ProjectContainer = export_project_from_session()
+    active_sub = project.get_active_scenario()
+
+    # --------------------------------------------------------------------------
+    # 0. Status Quo (Base Benchmark) Guard
+    # --------------------------------------------------------------------------
+    if active_sub is None:
+        st.info(
+            "### :material/anchor: Status Quo (Base Benchmark) Active\n\n"
+            "The **Status Quo (Base Scenario)** represents your pure utility grid electricity baseline without on-site Solar PV (100% Grid Import).\n\n"
+            "To simulate coupled solar self-consumption, load integration, and peak shaving, switch to an active Sub-Scenario branch or instantiate a new branch below."
+        )
+        c_act1, c_act2, _ = st.columns([3.5, 3.5, 5])
+        with c_act1:
+            if project.sub_scenarios:
+                first_sub = project.sub_scenarios[0]
+                if st.button(f"Switch to '{first_sub.name}'", icon=":material/arrow_forward:", type="primary", use_container_width=True, key=f"{key_prefix}_switch_sub1_btn"):
+                    project.active_sub_scenario_id = first_sub.id
+                    st.session_state["project_container"] = project
+                    sync_active_scenario_into_session(project, auto_execute=False)
+                    st.rerun()
+        with c_act2:
+            if st.button("Instantiate New Solar PV Branch", icon=":material/add_circle:", use_container_width=True, key=f"{key_prefix}_instantiate_new_btn"):
+                new_sub = SubScenario(
+                    name=f"Sub-Scenario {len(project.sub_scenarios) + 1}: Solar PV",
+                    color_code="#2563EB",
+                    include_solar=True,
+                    solar_config=SolarPVConfig(
+                        module_count=778,
+                        module_power_wp=450.0,
+                        technology_preset="TOPCon",
+                        module_technology="TOPCon (450 Wp - N-Type Modern Standard)",
+                        inverter_capacity_kw=300.0,
+                        tilt_deg=28.0,
+                        azimuth_deg=0.0,
+                        weather_mode="TMY"
+                    )
+                )
+                project.add_sub_scenario(new_sub)
+                project.active_sub_scenario_id = new_sub.id
+                st.session_state["project_container"] = project
+                sync_active_scenario_into_session(project, auto_execute=False)
+                st.rerun()
+        return
+
+    # --------------------------------------------------------------------------
     # 1. Active Load Discovery
+    # --------------------------------------------------------------------------
     df_load, load_desc, p_col = find_active_load_data_in_session()
 
-    # If no load is found, provide a friendly helper toolbar with sample loader
     if df_load is None or df_load.empty:
         st.info(
             "**No active consumption profile detected from Tab 1.**\n\n"
@@ -73,7 +136,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         )
         col_demo1, col_demo2, _ = st.columns([3, 3, 4])
         with col_demo1:
-            if st.button("Load 365-Day Industry Preset", key=f"{key_prefix}_load_demo_ind_btn"):
+            if st.button("Load 365-Day Industry Preset", icon=":material/bolt:", key=f"{key_prefix}_load_demo_ind_btn"):
                 consumers = get_industry_preset_consumers()
                 df_year, _, _ = aggregate_synthetic_year(consumers, year=2025)
                 st.session_state["active_synthetic_df"] = df_year
@@ -86,18 +149,20 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
     load_summary = get_load_profile_summary(df_load, power_col=p_col)
 
-    # Status Banner: Active Consumption Foundation
+    # Status Banner: Active Consumption Foundation & Active Scenario
     st.markdown(
         f"""
         <div style="background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(51, 65, 85, 0.7); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                 <div>
-                    <span style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em;">Active Facility Load Foundation</span>
-                    <div style="font-size: 1.05rem; font-weight: 600; color: #F8FAFC; margin-top: 2px;">{load_desc}</div>
+                    <span style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em;">Active Foundation</span>
+                    <div style="font-size: 1.05rem; font-weight: 600; color: #F8FAFC; margin-top: 2px;">
+                        Branch: <span style="color: #38BDF8;">{active_sub.name}</span> | Load: <span style="color: #10B981;">{load_desc}</span>
+                    </div>
                 </div>
                 <div style="text-align: right;">
-                    <span style="font-size: 0.85rem; color: #38BDF8; font-weight: 600;">{load_summary['total_mwh']:,.2f} MWh/year</span>
-                    <span style="font-size: 0.8rem; color: #64748B;"> | Peak: {load_summary['peak_kw']:,.1f} kW | {load_summary['data_points']:,} intervals</span>
+                    <span style="font-size: 0.95rem; color: #38BDF8; font-weight: 600;">{load_summary['total_mwh']:,.2f} MWh/year</span>
+                    <span style="font-size: 0.8rem; color: #94A3B8;"> | Peak: {load_summary['peak_kw']:,.1f} kW | {load_summary['data_points']:,} intervals</span>
                 </div>
             </div>
         </div>
@@ -105,176 +170,267 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         unsafe_allow_html=True
     )
 
-    # 2. Solar System Sizing & Target Net Coverage Bar
-    st.markdown("##### 1. Solar Sizing & Target Net Coverage")
-
-    # Inherit existing location from Tab 3.1 or Mendoza default
+    # Inherit location from Tab 3.1 / Session
     loc_lat = st.session_state.get("app_tab3_loc_lat", -32.8908)
     loc_lon = st.session_state.get("app_tab3_loc_lon", -68.8272)
     loc_name = st.session_state.get("app_tab3_loc_name", "Mendoza, Argentina")
     loc_elev = st.session_state.get("app_tab3_loc_elev", 746.0)
     location = SolarLocation(name=loc_name, latitude=loc_lat, longitude=loc_lon, elevation_m=loc_elev)
 
-    # Baseline specific yield estimate for sizing scenarios (~1,600 kWh/kWp for standard Mendoza benchmark)
-    estimated_spec_yield = 1600.0
+    estimated_spec_yield = 1600.0  # Mendoza baseline specific yield estimate
+
+    # Parent configuration from Sub-Tab 3.1 / Active SubScenario
+    parent_cfg: Optional[SolarPVConfig] = active_sub.solar_config or st.session_state.get("app_tab3_config") or st.session_state.get("tab3_solar_config")
+    if parent_cfg is None or getattr(parent_cfg, "module_count", 0) <= 0:
+        parent_cfg = SolarPVConfig(
+            module_count=778,
+            module_power_wp=450.0,
+            technology_preset="TOPCon",
+            module_technology="TOPCon (450 Wp - N-Type Modern Standard)",
+            inverter_capacity_kw=300.0,
+            tilt_deg=28.0,
+            azimuth_deg=0.0,
+            weather_mode="TMY"
+        )
+
+    # --------------------------------------------------------------------------
+    # 2. Operating Mode & System Sizing Toolbar
+    # --------------------------------------------------------------------------
+    st.markdown("##### 1. Solar Sizing & Integration Mode")
+
+    mode_key = f"{key_prefix}_operating_mode"
+    if mode_key not in st.session_state:
+        st.session_state[mode_key] = "Live Mirror from Sub-Tab 3.1 (Recommended)"
+
+    op_mode = st.radio(
+        "Select Sizing & Integration Mode:",
+        options=[
+            "Live Mirror from Sub-Tab 3.1 (Recommended)",
+            "Smart Target Coverage Auto-Sizer",
+            "Custom Sizing & Sensitivity"
+        ],
+        key=mode_key,
+        horizontal=True
+    )
 
     state_cfg_key = f"{key_prefix}_config"
-    parent_cfg = st.session_state.get("app_tab3_config") or st.session_state.get("tab3_solar_config")
+    curr_cfg: Optional[SolarPVConfig] = st.session_state.get(state_cfg_key)
 
-    if state_cfg_key not in st.session_state:
-        if parent_cfg is not None and getattr(parent_cfg, "module_count", 0) > 0:
-            st.session_state[state_cfg_key] = SolarPVConfig(
+    if op_mode == "Live Mirror from Sub-Tab 3.1 (Recommended)":
+        # Always synchronize completely with parent config from Sub-Tab 3.1
+        curr_cfg = SolarPVConfig(
+            module_count=parent_cfg.module_count,
+            module_power_wp=parent_cfg.module_power_wp,
+            technology_preset=parent_cfg.technology_preset,
+            module_technology=parent_cfg.module_technology,
+            inverter_capacity_kw=parent_cfg.inverter_capacity_kw,
+            tilt_deg=parent_cfg.tilt_deg,
+            azimuth_deg=parent_cfg.azimuth_deg,
+            temp_coefficient_pct_c=parent_cfg.temp_coefficient_pct_c,
+            first_year_degradation_pct=parent_cfg.first_year_degradation_pct,
+            annual_degradation_pct=parent_cfg.annual_degradation_pct,
+            weather_mode=getattr(parent_cfg, "weather_mode", "TMY"),
+            selected_weather_year=getattr(parent_cfg, "selected_weather_year", 2024),
+            sizing_scenario="Mirror 3.1"
+        )
+        st.session_state[state_cfg_key] = curr_cfg
+
+        st.info(
+            f"**Linked to Sub-Tab 3.1 Engineering System:** Using **{curr_cfg.module_count:,} modules** à {curr_cfg.module_power_wp:.0f} Wp "
+            f"({curr_cfg.dc_capacity_kwp:,.1f} kWp DC / {curr_cfg.inverter_capacity_kw:,.1f} kW AC, {curr_cfg.technology_preset}, {curr_cfg.tilt_deg:.0f}° tilt). "
+            f"Any modification in Sub-Tab 3.1 updates this coupled dispatch automatically.",
+            icon=":material/link:"
+        )
+
+    elif op_mode == "Smart Target Coverage Auto-Sizer":
+        st.caption(
+            "Auto-sizes your PV plant to generate an exact target percentage of your annual facility consumption (Tab 1). "
+            "Click a preset or drag the slider, then optionally apply the sized system back to Sub-Tab 3.1."
+        )
+
+        # Quick preset buttons
+        t_col1, t_col2, t_col3, t_col4 = st.columns(4)
+        load_kwh = load_summary.get("total_kwh", 600000.0)
+
+        target_cov_slider_key = f"{key_prefix}_target_pct_slider"
+        current_slider_val = st.session_state.get(target_cov_slider_key, 60.0)
+
+        with t_col1:
+            if st.button("40% Coverage", key=f"{key_prefix}_s40_btn", help="Target 40% of annual electricity consumption (maximizes direct self-consumption)."):
+                st.session_state[target_cov_slider_key] = 40.0
+                st.rerun()
+        with t_col2:
+            if st.button("60% Coverage", key=f"{key_prefix}_s60_btn", help="Target 60% of annual electricity consumption (balanced commercial standard)."):
+                st.session_state[target_cov_slider_key] = 60.0
+                st.rerun()
+        with t_col3:
+            if st.button("80% Coverage", key=f"{key_prefix}_s80_btn", help="Target 80% of annual electricity consumption (high autarky / self-sufficiency)."):
+                st.session_state[target_cov_slider_key] = 80.0
+                st.rerun()
+        with t_col4:
+            if st.button("100% Net Zero", key=f"{key_prefix}_s100_btn", help="Target 100% of annual electricity demand on a net annual basis."):
+                st.session_state[target_cov_slider_key] = 100.0
+                st.rerun()
+
+        target_pct = st.slider(
+            "Target Annual Net Coverage (% of Tab 1 Load):",
+            min_value=10.0,
+            max_value=200.0,
+            value=float(st.session_state.get(target_cov_slider_key, 60.0)),
+            step=5.0,
+            key=target_cov_slider_key
+        )
+
+        target_kwp = calculate_scenario_target_kwp(load_kwh, estimated_spec_yield, target_pct)
+        mod_wp = float(getattr(parent_cfg, "module_power_wp", 450.0) or 450.0)
+        calc_mod_count = max(1, int(round((target_kwp * 1000.0) / mod_wp)))
+        calc_dc_kwp = round((calc_mod_count * mod_wp) / 1000.0, 1)
+        calc_inv_kw = calculate_recommended_inverter_size(calc_dc_kwp)
+
+        curr_cfg = SolarPVConfig(
+            module_count=calc_mod_count,
+            module_power_wp=mod_wp,
+            technology_preset=getattr(parent_cfg, "technology_preset", "TOPCon"),
+            module_technology=getattr(parent_cfg, "module_technology", "TOPCon (450 Wp)"),
+            inverter_capacity_kw=calc_inv_kw,
+            tilt_deg=getattr(parent_cfg, "tilt_deg", 28.0),
+            azimuth_deg=getattr(parent_cfg, "azimuth_deg", 0.0),
+            weather_mode=getattr(parent_cfg, "weather_mode", "TMY"),
+            sizing_scenario=f"{target_pct:.0f}% Target"
+        )
+        st.session_state[state_cfg_key] = curr_cfg
+
+        # Sync back to Sub-Tab 3.1 action
+        c_sync_btn, _ = st.columns([4, 6])
+        with c_sync_btn:
+            if st.button("Apply Sizing to Sub-Tab 3.1 & Active Scenario", icon=":material/publish:", type="secondary", key=f"{key_prefix}_apply_to_31_btn"):
+                parent_cfg.module_count = curr_cfg.module_count
+                parent_cfg.module_power_wp = curr_cfg.module_power_wp
+                parent_cfg.dc_capacity_kwp = curr_cfg.dc_capacity_kwp
+                parent_cfg.inverter_capacity_kw = curr_cfg.inverter_capacity_kw
+                active_sub.solar_config = parent_cfg
+                st.session_state["project_container"] = project
+                st.session_state["app_tab3_config"] = parent_cfg
+                st.session_state["tab3_solar_config"] = parent_cfg
+                st.success(f"Successfully applied {curr_cfg.dc_capacity_kwp:,.1f} kWp ({curr_cfg.module_count:,} modules) to Sub-Tab 3.1 and '{active_sub.name}'.", icon=":material/check_circle:")
+
+    else:  # Custom Sizing & Sensitivity
+        st.caption("Manually adjust panel count, module wattage, and inverter rating to test custom sensitivity scenarios:")
+        if curr_cfg is None:
+            curr_cfg = SolarPVConfig(
                 module_count=parent_cfg.module_count,
                 module_power_wp=parent_cfg.module_power_wp,
                 technology_preset=parent_cfg.technology_preset,
                 module_technology=parent_cfg.module_technology,
                 inverter_capacity_kw=parent_cfg.inverter_capacity_kw,
                 tilt_deg=parent_cfg.tilt_deg,
-                azimuth_deg=parent_cfg.azimuth_deg,
-                weather_mode=getattr(parent_cfg, "weather_mode", "TMY")
-            )
-        else:
-            # Default to ~60% net coverage sizing or baseline 600 modules
-            load_kwh = load_summary.get("total_kwh", 0.0)
-            if load_kwh > 0:
-                target_kwp = calculate_scenario_target_kwp(load_kwh, estimated_spec_yield, 60.0)
-            else:
-                target_kwp = 270.0
-            inv_kw = calculate_recommended_inverter_size(target_kwp)
-            mod_count = max(1, int(round((target_kwp * 1000.0) / 450.0)))
-            st.session_state[state_cfg_key] = SolarPVConfig(
-                module_count=mod_count,
-                module_power_wp=450.0,
-                technology_preset="TOPCon",
-                module_technology="TOPCon (450 Wp)",
-                inverter_capacity_kw=inv_kw,
-                tilt_deg=28.0,
-                azimuth_deg=0.0
+                azimuth_deg=parent_cfg.azimuth_deg
             )
 
-    curr_cfg: SolarPVConfig = st.session_state[state_cfg_key]
-    if not hasattr(curr_cfg, "module_count") or curr_cfg.module_count <= 0:
-        curr_cfg.module_count = 600
-        curr_cfg.module_power_wp = 450.0
-        curr_cfg.dc_capacity_kwp = 270.0
-        curr_cfg.inverter_capacity_kw = 230.0
-
-    # Quick Sizing Preset Buttons (40%, 60%, 80%, 100% Net Coverage)
-    sc_col1, sc_col2, sc_col3, sc_col4, sc_sync = st.columns([2, 2, 2, 2, 3])
-
-    with sc_col1:
-        if st.button("40% Coverage", key=f"{key_prefix}_sc40_btn", help="Size system to generate 40% of annual electricity consumption (high self-consumption)."):
-            t_kwp = calculate_scenario_target_kwp(load_summary["total_kwh"], estimated_spec_yield, 40.0)
-            curr_cfg.module_power_wp = 450.0
-            curr_cfg.module_count = max(1, int(round((t_kwp * 1000.0) / 450.0)))
-            curr_cfg.dc_capacity_kwp = round(curr_cfg.module_count * 0.45, 1)
-            curr_cfg.inverter_capacity_kw = calculate_recommended_inverter_size(curr_cfg.dc_capacity_kwp)
-            curr_cfg.sizing_scenario = "40%"
-            st.rerun()
-
-    with sc_col2:
-        if st.button("60% Coverage", key=f"{key_prefix}_sc60_btn", help="Size system to generate 60% of annual electricity consumption (balanced commercial standard)."):
-            t_kwp = calculate_scenario_target_kwp(load_summary["total_kwh"], estimated_spec_yield, 60.0)
-            curr_cfg.module_power_wp = 450.0
-            curr_cfg.module_count = max(1, int(round((t_kwp * 1000.0) / 450.0)))
-            curr_cfg.dc_capacity_kwp = round(curr_cfg.module_count * 0.45, 1)
-            curr_cfg.inverter_capacity_kw = calculate_recommended_inverter_size(curr_cfg.dc_capacity_kwp)
-            curr_cfg.sizing_scenario = "60%"
-            st.rerun()
-
-    with sc_col3:
-        if st.button("80% Coverage", key=f"{key_prefix}_sc80_btn", help="Size system to generate 80% of annual electricity consumption (high autarky)."):
-            t_kwp = calculate_scenario_target_kwp(load_summary["total_kwh"], estimated_spec_yield, 80.0)
-            curr_cfg.module_power_wp = 450.0
-            curr_cfg.module_count = max(1, int(round((t_kwp * 1000.0) / 450.0)))
-            curr_cfg.dc_capacity_kwp = round(curr_cfg.module_count * 0.45, 1)
-            curr_cfg.inverter_capacity_kw = calculate_recommended_inverter_size(curr_cfg.dc_capacity_kwp)
-            curr_cfg.sizing_scenario = "80%"
-            st.rerun()
-
-    with sc_col4:
-        if st.button("100% Net Zero", key=f"{key_prefix}_sc100_btn", help="Size system to match 100% of annual energy demand on an annual net basis."):
-            t_kwp = calculate_scenario_target_kwp(load_summary["total_kwh"], estimated_spec_yield, 100.0)
-            curr_cfg.module_power_wp = 450.0
-            curr_cfg.module_count = max(1, int(round((t_kwp * 1000.0) / 450.0)))
-            curr_cfg.dc_capacity_kwp = round(curr_cfg.module_count * 0.45, 1)
-            curr_cfg.inverter_capacity_kw = calculate_recommended_inverter_size(curr_cfg.dc_capacity_kwp)
-            curr_cfg.sizing_scenario = "100%"
-            st.rerun()
-
-    with sc_sync:
-        if parent_cfg is not None:
-            if st.button("Sync with Sub-Tab 3.1", icon=":material/sync:", key=f"{key_prefix}_sync_btn", help="Import the active PV installation parameters currently configured in Sub-Tab 3.1."):
-                curr_cfg.module_count = parent_cfg.module_count
-                curr_cfg.module_power_wp = parent_cfg.module_power_wp
-                curr_cfg.dc_capacity_kwp = parent_cfg.dc_capacity_kwp
-                curr_cfg.inverter_capacity_kw = parent_cfg.inverter_capacity_kw
-                curr_cfg.technology_preset = parent_cfg.technology_preset
-                curr_cfg.tilt_deg = parent_cfg.tilt_deg
-                curr_cfg.azimuth_deg = parent_cfg.azimuth_deg
-                st.rerun()
-
-    # Sizing Parameter Inputs
-    with st.expander("Sizing & Installation Parameters", icon=":material/tune:", expanded=True):
-        p_col1, p_col2, p_col3, p_col4 = st.columns(4)
-
+        p_col1, p_col2, p_col3 = st.columns(3)
         with p_col1:
-            init_mod_count = max(1, min(20000, int(getattr(curr_cfg, "module_count", 600) or 600)))
             inp_mod_count = st.number_input(
                 "Module Count (Panels):",
                 min_value=1,
-                max_value=20000,
-                value=init_mod_count,
+                max_value=30000,
+                value=int(curr_cfg.module_count),
                 step=10,
-                key=f"{key_prefix}_mod_count_inp"
+                key=f"{key_prefix}_custom_mod_count_inp"
             )
             curr_cfg.module_count = inp_mod_count
 
         with p_col2:
-            init_wp = float(getattr(curr_cfg, "module_power_wp", 450.0) or 450.0)
-            init_wp = max(200.0, min(800.0, init_wp))
             inp_mod_wp = st.number_input(
                 "Module Wattage (Wp):",
                 min_value=200.0,
                 max_value=800.0,
-                value=init_wp,
+                value=float(curr_cfg.module_power_wp),
                 step=10.0,
-                key=f"{key_prefix}_mod_wp_inp"
+                key=f"{key_prefix}_custom_mod_wp_inp"
             )
             curr_cfg.module_power_wp = inp_mod_wp
             curr_cfg.dc_capacity_kwp = round((curr_cfg.module_count * curr_cfg.module_power_wp) / 1000.0, 1)
 
         with p_col3:
             rec_inv = calculate_recommended_inverter_size(curr_cfg.dc_capacity_kwp)
-            init_inv = float(getattr(curr_cfg, "inverter_capacity_kw", 0.0) or 0.0)
-            if init_inv < 1.0:
-                init_inv = rec_inv
-            init_inv = max(1.0, min(15000.0, init_inv))
+            init_inv = float(curr_cfg.inverter_capacity_kw) if curr_cfg.inverter_capacity_kw > 1.0 else rec_inv
             inp_inv_kw = st.number_input(
                 "Inverter Rating (kW AC):",
                 min_value=1.0,
-                max_value=15000.0,
-                value=init_inv,
+                max_value=20000.0,
+                value=float(init_inv),
                 step=10.0,
-                key=f"{key_prefix}_inv_kw_inp",
-                help=f"Standard DC/AC oversizing recommendation: {rec_inv:.1f} kW AC."
+                key=f"{key_prefix}_custom_inv_kw_inp",
+                help=f"Recommended standard inverter capacity: {rec_inv:.1f} kW AC."
             )
             curr_cfg.inverter_capacity_kw = inp_inv_kw
 
-        with p_col4:
-            st.metric("DC System Capacity", f"{curr_cfg.dc_capacity_kwp:,.1f} kWp", f"Area: {curr_cfg.required_area_m2:,.0f} m²")
+        st.session_state[state_cfg_key] = curr_cfg
 
-    # 3. Physical Dispatch Simulation Calculation
+    if curr_cfg is None or curr_cfg.module_count <= 0:
+        curr_cfg = parent_cfg
+
+    # --------------------------------------------------------------------------
+    # 3. System Architecture Specification Badge Bar
+    # --------------------------------------------------------------------------
+    dc_ac_ratio = (curr_cfg.dc_capacity_kwp / max(1.0, curr_cfg.inverter_capacity_kw))
+    st.markdown(
+        f"""
+        <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(51, 65, 85, 0.8); border-radius: 8px; padding: 10px 16px; margin-top: 8px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div>
+                    <span style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase;">System Architecture</span>
+                    <div style="font-size: 1.15rem; font-weight: 700; color: #F8FAFC;">
+                        {curr_cfg.dc_capacity_kwp:,.1f} kWp DC <span style="font-size: 0.9rem; font-weight: 400; color: #94A3B8;">({curr_cfg.module_count:,} × {curr_cfg.module_power_wp:.0f} Wp {curr_cfg.technology_preset})</span>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                    <div>
+                        <span style="font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">Inverter AC</span>
+                        <div style="font-size: 0.95rem; font-weight: 600; color: #38BDF8;">{curr_cfg.inverter_capacity_kw:,.1f} kW <span style="font-size: 0.8rem; color: #64748B;">(DC/AC: {dc_ac_ratio:.2f})</span></div>
+                    </div>
+                    <div>
+                        <span style="font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">Orientation</span>
+                        <div style="font-size: 0.95rem; font-weight: 600; color: #F8FAFC;">{curr_cfg.tilt_deg:.0f}° Tilt / {curr_cfg.azimuth_deg:.0f}° Azimuth</div>
+                    </div>
+                    <div>
+                        <span style="font-size: 0.7rem; color: #94A3B8; text-transform: uppercase;">Required Area</span>
+                        <div style="font-size: 0.95rem; font-weight: 600; color: #10B981;">{curr_cfg.required_area_m2:,.0f} m² <span style="font-size: 0.8rem; color: #64748B;">(Gross)</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # --------------------------------------------------------------------------
+    # 4. Calculation Action & Execution
+    # --------------------------------------------------------------------------
+    auto_trigger = st.session_state.pop(f"{key_prefix}_trigger_calc", False)
+    calc_btn_clicked = st.button(
+        "Calculate Coupled Solar & Consumption Dispatch",
+        icon=":material/calculate:",
+        type="primary",
+        use_container_width=True,
+        key=f"{key_prefix}_calc_dispatch_btn"
+    )
+
     state_res_key = f"{key_prefix}_sim_result"
     sim_res: Optional[SolarSimulationResult] = st.session_state.get(state_res_key)
 
-    need_calc = (sim_res is None or
-                 sim_res.config.module_count != curr_cfg.module_count or
-                 sim_res.config.module_power_wp != curr_cfg.module_power_wp or
-                 sim_res.config.inverter_capacity_kw != curr_cfg.inverter_capacity_kw)
+    config_changed = False
+    if sim_res is not None and hasattr(sim_res, "config"):
+        if (sim_res.config.module_count != curr_cfg.module_count or
+            sim_res.config.module_power_wp != curr_cfg.module_power_wp or
+            sim_res.config.inverter_capacity_kw != curr_cfg.inverter_capacity_kw or
+            sim_res.config.tilt_deg != curr_cfg.tilt_deg):
+            config_changed = True
 
-    if need_calc:
-        with st.spinner("Calculating 15-minute electrical solar-load dispatch..."):
+    should_simulate = (calc_btn_clicked or auto_trigger) and curr_cfg.module_count > 0
+
+    if should_simulate:
+        with st.spinner("Calculating 15-minute physical solar-load dispatch balance..."):
             try:
                 sim_res = simulate_solar_pv_generation(
                     config=curr_cfg,
@@ -282,9 +438,24 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                     load_df=df_load
                 )
                 st.session_state[state_res_key] = sim_res
+                config_changed = False
             except Exception as err:
-                st.error(f"Coupled Simulation Error: {err}")
+                st.error(f"Coupled Dispatch Simulation Error: {err}", icon=":material/error:")
                 return
+
+    # If no simulation result exists yet, show clean empty-state guidance
+    if sim_res is None:
+        st.divider()
+        st.info(
+            "**Ready to Compute Coupled Solar & Consumption Dispatch**\n\n"
+            "Review your system architecture above, then click **':material/calculate: Calculate Coupled Solar & Consumption Dispatch'** "
+            "to calculate 15-minute direct self-consumption, grid residual load, surplus export, and financial tariff savings.",
+            icon=":material/info:"
+        )
+        return
+
+    if config_changed:
+        st.warning("Solar configuration parameters were modified above. Click **'Calculate Coupled Solar & Consumption Dispatch'** to update dispatch analytics.", icon=":material/warning:")
 
     kpis = sim_res.kpis
     df_ts = sim_res.df_timeseries
@@ -295,7 +466,9 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
     st.divider()
 
-    # 4. Integrated Electrical Dispatch & Autarky KPIs
+    # --------------------------------------------------------------------------
+    # 5. Coupled Dispatch Performance Metrics (10 Modern Cards)
+    # --------------------------------------------------------------------------
     st.markdown("##### 2. Coupled Dispatch Performance Metrics")
 
     # Peak Shaving Analysis
@@ -305,7 +478,6 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     peak_shaved_pct = (peak_shaved_kw / p_orig_max * 100.0) if p_orig_max > 0 else 0.0
 
     k1, k2, k3, k4 = st.columns(4)
-
     with k1:
         render_kpi_card(
             "Self-Consumption Rate",
@@ -366,14 +538,17 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
     st.write("")
 
-    # 5. Interactive Dispatch Visualizations
+    # --------------------------------------------------------------------------
+    # 6. Interactive Visual Dispatch Analytics (5 Modern Tabs)
+    # --------------------------------------------------------------------------
     st.markdown("##### 3. Visual Dispatch Analysis")
 
-    chart_tab1, chart_tab2, chart_tab3, chart_tab4 = st.tabs([
-        "15-Minute Dispatch Timeseries",
-        "Monthly Energy Balance",
-        "Seasonal Diurnal Profiles",
-        "Energy Flow (Sankey)"
+    chart_tab1, chart_tab2, chart_tab3, chart_tab4, chart_tab5 = st.tabs([
+        ":material/timeline: 15-Minute Dispatch Timeseries",
+        ":material/bar_chart: Monthly Energy Balance",
+        ":material/wb_sunny: Seasonal Diurnal Profiles",
+        ":material/schema: Energy Flow (Sankey)",
+        ":material/battery_charging_full: BESS Storage Readiness"
     ])
 
     with chart_tab1:
@@ -396,27 +571,32 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         fig_sankey = create_energy_flow_sankey_figure(kpis=kpis)
         st.plotly_chart(fig_sankey, use_container_width=True)
 
+    with chart_tab5:
+        fig_bess = create_bess_readiness_figure(df=df_ts)
+        st.plotly_chart(fig_bess, use_container_width=True)
+
     st.divider()
 
-    # 6. Economic & Avoided Cost Assessment
+    # --------------------------------------------------------------------------
+    # 7. Economic & Avoided Cost Assessment (Coupled with Tab 2 Contract)
+    # --------------------------------------------------------------------------
     st.markdown("##### 4. Financial & Tariff Savings Assessment")
 
     active_contract: Optional[Contract] = find_active_contract_in_session()
 
     if active_contract is not None:
-        # Full contract evaluation
         st.caption(f"Linked Electricity Contract: **{active_contract.name}** ({active_contract.currency})")
         try:
             curr = getattr(active_contract, "currency", "EUR")
 
-            # 1. Baseline bill (Facility load before solar, aligned to the full simulation horizon)
+            # 1. Baseline bill (Facility load before solar)
             df_base = pd.DataFrame({
                 "timestamp": df_ts["timestamp"],
                 "Total_Demand_kW": df_ts["P_Load_kW"]
             })
             base_bill = compute_financial_bill(load_data=df_base, contract=active_contract)
 
-            # 2. Solar bill (Residual load after direct solar self-consumption, identical horizon)
+            # 2. Solar bill (Residual load after direct solar self-consumption)
             df_residual = pd.DataFrame({
                 "timestamp": df_ts["timestamp"],
                 "Total_Demand_kW": df_ts["P_Residual_kW"]
@@ -460,8 +640,8 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                     status="ok" if energy_savings_net >= 0 else "default"
                 )
 
-            # Comparison breakdown table
-            with st.expander("Itemized Financial Comparison: Status Quo vs. With Solar PV", expanded=False):
+            # Itemized comparison table
+            with st.expander("Itemized Financial Comparison: Status Quo vs. With Solar PV", icon=":material/table_chart:", expanded=False):
                 savings_label = f"-{cost_savings_gross:,.2f} (-{cost_savings_pct:.1f}%)" if has_savings else f"+{abs(cost_savings_gross):,.2f} (+{abs(cost_savings_pct):.1f}%)"
                 fin_rows = [
                     {
@@ -497,20 +677,13 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                 ]
                 st.dataframe(pd.DataFrame(fin_rows), use_container_width=True, hide_index=True)
 
-            # 3. 15-Year Life-Cycle Economic Evaluation & Payback (If Solar CAPEX is configured)
-            from current_model.core.solar_financial_engine import compute_solar_financial_metrics
-            from current_model.ui.tab3_solar.charts import (
-                create_solar_cashflow_payback_figure,
-                create_cumulative_cost_comparison_figure,
-                create_annual_running_costs_comparison_figure
-            )
-
-            solar_fin_cfg = st.session_state.get("solar_financial_config") or st.session_state.get("app_tab3_fin_config")
+            # 3. 15-Year Life-Cycle Trajectory (Linked to Solar Financial CAPEX in Tab 3.1)
+            solar_fin_cfg: Optional[SolarFinancialConfig] = active_sub.solar_financial or st.session_state.get("solar_financial_config") or st.session_state.get("app_tab3_fin_config")
 
             if solar_fin_cfg and solar_fin_cfg.is_enabled:
                 export_rev = kpis.surplus_generation_kwh * (solar_fin_cfg.feed_in_tariff_per_kwh or 0.06)
                 coupled_fin_metrics = compute_solar_financial_metrics(
-                    config=config,
+                    config=curr_cfg,
                     fin_config=solar_fin_cfg,
                     annual_generation_kwh=kpis.annual_energy_kwh,
                     annual_avoided_cost=cost_savings_gross,
@@ -555,7 +728,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
                     # 15-Year Life-Cycle Comparison Diagrams (3 Interactive Tabs)
                     diag_tab1, diag_tab2, diag_tab3 = st.tabs([
-                        ":material/show_chart: Cumulative Total Cost & Amortisation (Status Quo vs. Mit PV)",
+                        ":material/show_chart: Cumulative Total Cost & Amortisation (Status Quo vs. With Solar PV)",
                         ":material/bar_chart: Annual Running Costs & Operating Expenses",
                         ":material/payments: Net Cash Flow & Payback Curve"
                     ])
@@ -572,7 +745,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                         fig_cf = create_solar_cashflow_payback_figure(coupled_fin_metrics, currency=curr)
                         st.plotly_chart(fig_cf, use_container_width=True)
 
-                    # 15-Year Table (Matching GRID vs GRID+SOLAR Excel Sheet)
+                    # 15-Year Year-by-Year Table
                     with st.expander("15-Year Life-Cycle Year-by-Year Table (Cashflow, Degradation, OPEX, Savings)", icon=":material/view_timeline:", expanded=False):
                         detail_rows = []
                         for row in coupled_fin_metrics.cash_flow_table:
@@ -596,7 +769,6 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
             st.warning(f"Unable to calculate financial savings against Tab 2 contract: {err}")
 
     else:
-        # User requirement: "the unit rate field in case of lack of contract is deactivated by default"
         st.info("No active electricity contract configured in Tab 2.")
 
         enable_manual_rate = st.toggle(
