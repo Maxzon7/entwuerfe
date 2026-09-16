@@ -28,6 +28,7 @@ from current_model.ui.common.styles import apply_custom_styles
 from current_model.ui.tab1_consumption.view import render_tab1_consumption
 from current_model.ui.tab2_contract.view import render_tab2_contract
 from current_model.ui.tab3_solar.view import render_tab3_solar
+from current_model.ui.tab4_bess.view import render_tab4_bess
 from current_model.ui.tab_comparison.view import render_master_comparison_dashboard
 from current_model.ui.common.sidebar_scenario_view import render_sidebar_scenario_controller
 
@@ -59,11 +60,12 @@ render_active_scenario_banner()
 # --------------------------------------------------------------------------
 # 4. Top-Level Tab Navigation
 # --------------------------------------------------------------------------
-tab_consumption, tab_contract, tab_solar, tab_comparison = st.tabs([
+tab_consumption, tab_contract, tab_solar, tab_bess, tab_comparison = st.tabs([
     ":material/analytics: 1. Consumption",
     ":material/description: 2. Contract Data",
     ":material/solar_power: 3. Solar PV Generation",
-    ":material/leaderboard: 4. Master Scenario Comparison & Ranking"
+    ":material/battery_charging_full: 4. Battery Storage (BESS)",
+    ":material/leaderboard: 5. Master Scenario Comparison & Ranking"
 ])
 
 # TAB 1: Consumption
@@ -78,6 +80,11 @@ with tab_contract:
 with tab_solar:
     render_tab3_solar(key_prefix="app_tab3")
 
-# TAB 4: Master Scenario Comparison & Decision Dashboard
+# TAB 4: Battery Storage (BESS)
+with tab_bess:
+    render_tab4_bess(key_prefix="app_tab4_bess")
+
+# TAB 5: Master Scenario Comparison & Decision Dashboard
 with tab_comparison:
-    render_master_comparison_dashboard(key_prefix="app_tab4")
+    render_master_comparison_dashboard(key_prefix="app_tab5")
+

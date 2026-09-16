@@ -326,12 +326,14 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
             "app_tab3_config",
             "solar_config",
             "app_tab3_fin_config",
-            "solar_financial_config"
+            "solar_financial_config",
+            "app_tab4_bess_config",
+            "app_tab4_bess_sim_result"
         ]:
             if k in st.session_state:
                 del st.session_state[k]
     else:
-        # SubScenario is active: Populate specific solar and financial configs
+        # SubScenario is active: Populate specific solar, financial, and BESS configs
         if active_sub.solar_config:
             st.session_state["app_tab3_config"] = active_sub.solar_config
             st.session_state["solar_config"] = active_sub.solar_config
@@ -349,6 +351,12 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
                 del st.session_state["app_tab3_fin_config"]
             if "solar_financial_config" in st.session_state:
                 del st.session_state["solar_financial_config"]
+
+        if active_sub.bess_config:
+            st.session_state["app_tab4_bess_config"] = active_sub.bess_config
+        else:
+            if "app_tab4_bess_config" in st.session_state:
+                del st.session_state["app_tab4_bess_config"]
 
         # Run automated physical and financial simulation for active sub-scenario
         if auto_execute and active_sub.include_solar and active_sub.solar_config and base.location:
@@ -384,4 +392,21 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
                 )
                 st.session_state["app_tab3_int_sim_result"] = sim_res_coupled
                 st.session_state["solar_dispatch_result"] = sim_res_coupled
+
+        # If BESS is configured and auto_execute requested
+        if auto_execute and active_sub.include_bess and active_sub.bess_config:
+            from current_model.core.bess_engine import simulate_bess_dispatch
+            df_load_active = st.session_state.get("app_tab1_synthetic_active_df")
+            if df_load_active is None or not isinstance(df_load_active, pd.DataFrame):
+                df_load_active = st.session_state.get("active_csv_df")
+
+            if df_load_active is not None and isinstance(df_load_active, pd.DataFrame) and not df_load_active.empty:
+                g_lim = float(active_sub.bess_config.peak_shaving_threshold_kw)
+                bess_res = simulate_bess_dispatch(
+                    bess_config=active_sub.bess_config,
+                    load_df=df_load_active,
+                    grid_limit_kw=g_lim
+                )
+                st.session_state["app_tab4_bess_sim_result"] = bess_res
+
 

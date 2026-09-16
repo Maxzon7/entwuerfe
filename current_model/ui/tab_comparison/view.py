@@ -337,65 +337,153 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
 
 def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[str, Any]], key_prefix: str = "app_comparison") -> None:
     """
-    Renders visual architecture summary cards for the baseline and every branch scenario,
-    showing active state, hardware modules, key metrics, and an instant branch switch button.
+    Renders visual architecture tree hierarchy:
+      - Top Level: Root Base Benchmark Scenario (Status Quo) with inherited foundation (load & contract).
+      - Visual Branch Connector: Clear graph tree lines connecting the root node down to children.
+      - Bottom Level: Child Sub-Scenario Branches with custom technology interventions, financial ROI, and 1-click branch switching.
     """
-    st.markdown("### :material/dashboard: Active Scenario Architecture & Branch Overview")
-    st.caption("Visual status of all modeled scenarios, configured hardware technologies, and active workspace branch:")
+    st.markdown("### :material/account_tree: Scenario Hierarchy & Branching Architecture")
+    st.caption("Visual tree structure: Foundational Root Benchmark (Status Quo) on top branching into child sub-scenario configurations below:")
 
-    cols = st.columns(max(1, len(records)))
     active_sub_id = project.active_sub_scenario_id
+    base_rec = next((r for r in records if r["id"] == "base"), records[0] if records else {})
+    sub_recs = [r for r in records if r["id"] != "base"]
 
-    for idx, (col, r) in enumerate(zip(cols, records)):
+    # --------------------------------------------------------------------------
+    # 1. TOP LEVEL: ROOT BASE SCENARIO (Status Quo)
+    # --------------------------------------------------------------------------
+    is_base_active = (active_sub_id is None)
+    base_border = "2px solid #10B981" if is_base_active else "1px solid rgba(59, 130, 246, 0.6)"
+    base_bg = "rgba(16, 185, 129, 0.08)" if is_base_active else "rgba(15, 23, 42, 0.75)"
+    base_badge = (
+        "<span style='background:#10B981; color:#042F2E; padding:3px 10px; border-radius:4px; font-weight:700; font-size:0.75rem;'>ACTIVE WORKSPACE TARGET</span>"
+        if is_base_active else
+        "<span style='background:#1E3A8A; color:#93C5FD; padding:3px 10px; border-radius:4px; font-size:0.75rem; font-weight:600;'>FOUNDATIONAL BASELINE</span>"
+    )
+
+    c_name = project.base_scenario.base_contract.name if project.base_scenario.base_contract else "Standard Contract"
+    load_name = project.base_scenario.load_profile_name or "Facility Consumption"
+
+    # Centered container layout for the root node
+    col_root_pad1, col_root, col_root_pad2 = st.columns([1, 2.8, 1])
+    with col_root:
+        st.markdown(
+            f"""
+            <div style="background:{base_bg}; border:{base_border}; border-radius:10px; padding:16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-weight:800; font-size:1.05rem; color:#F8FAFC;">
+                        &#127963; {base_rec.get('name', 'Status Quo (Base Scenario)')}
+                    </span>
+                    {base_badge}
+                </div>
+                <div style="font-size:0.82rem; color:#94A3B8; margin-bottom:10px; border-bottom:1px solid rgba(51, 65, 85, 0.6); padding-bottom:8px;">
+                    Root Baseline &mdash; 100% Utility Grid Supply (0 on-site generation / 0 BESS)
+                </div>
+                <div style="font-size:0.82rem; color:#CBD5E1; line-height:1.7; margin-bottom:12px;">
+                    <div><b>Facility Load:</b> <span style="color:#F8FAFC;">{load_name} ({base_rec.get('total_load_mwh', 0):,.1f} MWh/a | Peak: {base_rec.get('baseline_peak_kw', 0):,.1f} kW)</span></div>
+                    <div><b>Supply Contract:</b> <span style="color:#F8FAFC;">{c_name} ({project.currency or 'EUR'})</span></div>
+                    <div><b>On-Site Assets:</b> <span style="color:#94A3B8;">None (Grid Only)</span></div>
+                </div>
+                <div style="background:rgba(0,0,0,0.35); border-radius:6px; padding:8px 12px; font-size:0.8rem; color:#E2E8F0; display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:12px;">
+                    <div><span style="color:#94A3B8;">Annual OPEX:</span> <b>{base_rec.get('annual_opex', 0):,.0f} {project.currency or 'EUR'}</b></div>
+                    <div><span style="color:#94A3B8;">15Y Total TCO:</span> <b>{base_rec.get('tco_str', '-')}</b></div>
+                    <div><span style="color:#94A3B8;">CAPEX:</span> <b>0 {project.currency or 'EUR'}</b></div>
+                    <div><span style="color:#94A3B8;">Autarky:</span> <b>0.0 %</b></div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        if is_base_active:
+            st.button(":material/check_circle: Active in Workspace (Base)", key=f"{key_prefix}_act_btn_base", disabled=True, use_container_width=True)
+        else:
+            if st.button(":material/anchor: Activate Status Quo Baseline", key=f"{key_prefix}_sw_btn_base", use_container_width=True):
+                project.active_sub_scenario_id = None
+                sync_active_scenario_into_session(project, auto_execute=False)
+                st.rerun()
+
+    # --------------------------------------------------------------------------
+    # 2. TREE CONNECTOR GRAPHIC (SVG / Branch Junction)
+    # --------------------------------------------------------------------------
+    num_subs = len(sub_recs)
+    branch_text = f"{num_subs} Configured Sub-Scenario {'Branch' if num_subs == 1 else 'Branches'}" if num_subs > 0 else "No Child Branches Configured"
+    st.markdown(
+        f"""
+        <div style="display:flex; flex-direction:column; align-items:center; margin: 6px 0 16px 0;">
+            <div style="width: 2px; height: 20px; background: #3B82F6;"></div>
+            <div style="background: rgba(30, 58, 138, 0.35); border: 1px solid rgba(59, 130, 246, 0.6); color: #93C5FD; border-radius: 20px; padding: 4px 16px; font-size: 0.78rem; font-weight: 600; display:flex; align-items:center; gap:8px;">
+                <span>&#10554; Inherits Load Profile & Utility Contract &mdash; {branch_text}</span>
+            </div>
+            <div style="width: 2px; height: 16px; background: #3B82F6;"></div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # --------------------------------------------------------------------------
+    # 3. BOTTOM LEVEL: CHILD SUB-SCENARIOS (Side-by-Side Columns)
+    # --------------------------------------------------------------------------
+    if not sub_recs:
+        col_empty_pad1, col_empty, col_empty_pad2 = st.columns([1, 2.5, 1])
+        with col_empty:
+            st.info(
+                "**No Sub-Scenario branches created yet.**\n\n"
+                "Use the **'+ New Branch'** button in the sidebar to fork a sub-scenario with Solar PV, Battery Storage (BESS), or Backup Gensets.",
+                icon=":material/alt_route:"
+            )
+        return
+
+    cols = st.columns(max(1, len(sub_recs)))
+    for idx, (col, r) in enumerate(zip(cols, sub_recs)):
         with col:
             sc_id = r["id"]
-            is_active = (sc_id == "base" and active_sub_id is None) or (sc_id == active_sub_id)
-            accent_color = "#10B981" if is_active else r.get("color", "#94A3B8")
-            border_css = f"2px solid {accent_color}" if is_active else "1px solid rgba(51, 65, 85, 0.7)"
+            is_active = (sc_id == active_sub_id)
+            accent_color = "#10B981" if is_active else r.get("color", "#38BDF8")
+            border_css = f"2px solid {accent_color}" if is_active else "1px solid rgba(51, 65, 85, 0.8)"
             bg_css = "rgba(16, 185, 129, 0.08)" if is_active else "rgba(15, 23, 42, 0.65)"
 
-            active_badge = f"<span style='background:#10B981; color:#042F2E; padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;'>ACTIVE WORKSPACE BRANCH</span>" if is_active else f"<span style='background:#334155; color:#94A3B8; padding:3px 8px; border-radius:4px; font-size:0.75rem;'>COMPARISON BRANCH</span>"
+            active_badge = (
+                "<span style='background:#10B981; color:#042F2E; padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;'>ACTIVE WORKSPACE BRANCH</span>"
+                if is_active else
+                "<span style='background:#334155; color:#94A3B8; padding:3px 8px; border-radius:4px; font-size:0.75rem;'>COMPARISON BRANCH</span>"
+            )
 
-            sub_obj = project.get_sub_scenario(sc_id) if sc_id != "base" else None
+            sub_obj = project.get_sub_scenario(sc_id)
 
             # Hardware specs
-            if sc_id == "base":
-                pv_desc = "None (Grid Only)"
-                bess_desc = "None"
-                gen_desc = "None"
-                c_name = project.base_scenario.base_contract.name if project.base_scenario.base_contract else "Standard Contract"
-                contract_desc = f"{c_name}"
+            if sub_obj and sub_obj.include_solar and sub_obj.solar_config:
+                tech = getattr(sub_obj.solar_config, "technology_preset", "TOPCon")
+                pv_desc = f"{sub_obj.solar_config.dc_capacity_kwp:,.1f} kWp ({tech})"
             else:
-                if sub_obj and sub_obj.include_solar and sub_obj.solar_config:
-                    tech = getattr(sub_obj.solar_config, "technology_preset", "TOPCon")
-                    pv_desc = f"{sub_obj.solar_config.dc_capacity_kwp:,.1f} kWp ({tech})"
-                else:
-                    pv_desc = "None"
+                pv_desc = "None"
 
-                if sub_obj and sub_obj.include_bess and sub_obj.bess_config:
-                    bess_desc = f"{sub_obj.bess_config.capacity_kwh:,.0f} kWh"
-                else:
-                    bess_desc = "None"
+            if sub_obj and sub_obj.include_bess and sub_obj.bess_config:
+                bess_desc = f"{sub_obj.bess_config.capacity_kwh:,.0f} kWh ({sub_obj.bess_config.max_discharge_power_kw:,.0f} kW)"
+            else:
+                bess_desc = "None"
 
-                if sub_obj and sub_obj.include_generator and sub_obj.generator_config:
-                    gen_desc = f"{sub_obj.generator_config.rated_power_kw:,.0f} kW"
-                else:
-                    gen_desc = "None"
-
-                contract_desc = "Inherited Baseline"
+            if sub_obj and sub_obj.include_generator and sub_obj.generator_config:
+                gen_desc = f"{sub_obj.generator_config.rated_power_kw:,.0f} kW"
+            else:
+                gen_desc = "None"
 
             st.markdown(
                 f"""
-                <div style="background:{bg_css}; border:{border_css}; border-radius:8px; padding:12px; margin-bottom:8px;">
+                <div style="background:{bg_css}; border:{border_css}; border-radius:8px; padding:12px; margin-bottom:8px; box-shadow: 0 4px 10px rgba(0,0,0,0.25);">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="font-weight:700; font-size:0.95rem; color:#F8FAFC;">{r['name']}</span>
+                        <span style="font-weight:700; font-size:0.95rem; color:#F8FAFC;">
+                            &#9500;&#9472; {r['name']}
+                        </span>
                     </div>
                     <div style="margin-bottom:8px;">{active_badge}</div>
+                    <div style="font-size:0.78rem; color:#64748B; margin-bottom:6px;">
+                        &#10554; Inherits: <i>{load_name}</i> & <i>{c_name}</i>
+                    </div>
                     <div style="font-size:0.8rem; color:#CBD5E1; line-height:1.6; margin-bottom:10px;">
-                        <div><b>Solar PV:</b> {pv_desc}</div>
-                        <div><b>Storage (BESS):</b> {bess_desc}</div>
-                        <div><b>Backup Genset:</b> {gen_desc}</div>
-                        <div><b>Contract:</b> {contract_desc}</div>
+                        <div><b>Solar PV:</b> <span style="color:{'#F59E0B' if pv_desc != 'None' else '#94A3B8'};">{pv_desc}</span></div>
+                        <div><b>Storage (BESS):</b> <span style="color:{'#10B981' if bess_desc != 'None' else '#94A3B8'};">{bess_desc}</span></div>
+                        <div><b>Backup Genset:</b> <span style="color:{'#EC4899' if gen_desc != 'None' else '#94A3B8'};">{gen_desc}</span></div>
                     </div>
                     <div style="background:rgba(0,0,0,0.3); border-radius:6px; padding:8px; font-size:0.78rem; color:#E2E8F0; display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:8px;">
                         <div><span style="color:#94A3B8;">CAPEX:</span> <b>{r['capex_str']}</b></div>
@@ -411,12 +499,9 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
             if is_active:
                 st.button(":material/check_circle: Active in Workspace", key=f"{key_prefix}_act_btn_{sc_id}", disabled=True, use_container_width=True)
             else:
-                btn_lbl = "Activate Status Quo" if sc_id == "base" else f"Switch to Branch #{idx}"
+                btn_lbl = f"Switch to Branch #{idx+1}"
                 if st.button(f":material/near_me: {btn_lbl}", key=f"{key_prefix}_sw_btn_{sc_id}", use_container_width=True):
-                    if sc_id == "base":
-                        project.active_sub_scenario_id = None
-                    else:
-                        project.active_sub_scenario_id = sc_id
+                    project.active_sub_scenario_id = sc_id
                     sync_active_scenario_into_session(project, auto_execute=False)
                     st.rerun()
 

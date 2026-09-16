@@ -142,6 +142,38 @@ class BESSKPIs:
     annual_degradation_pct: float = 2.0
 
 
+@dataclass
+class BESSFinancialMetrics:
+    """Complete multi-year lifecycle financial metrics for a BESS installation."""
+    is_configured: bool = True
+    total_capex: float = 0.0
+    capex_per_kwh: float = 0.0
+    annual_opex_year1: float = 0.0
+
+    # Annual Savings Breakdown
+    annual_energy_savings: float = 0.0
+    annual_demand_charge_savings: float = 0.0
+    annual_penalty_savings: float = 0.0
+    annual_gross_savings: float = 0.0
+    annual_net_savings_year1: float = 0.0
+
+    # Investment & Amortization KPIs
+    simple_payback_years: Optional[float] = None
+    discounted_payback_years: Optional[float] = None
+    net_present_value: float = 0.0
+    internal_rate_of_return_pct: Optional[float] = None
+    levelized_cost_of_storage_eur_kwh: float = 0.0  # LCOS (€/kWh)
+    return_on_investment_pct: float = 0.0
+
+    # Multi-Year Projections & Trajectories
+    cash_flow_table: List[Dict[str, Any]] = field(default_factory=list)
+    cumulative_cash_flow: List[float] = field(default_factory=list)
+    cumulative_status_quo: List[float] = field(default_factory=list)
+    cumulative_with_bess: List[float] = field(default_factory=list)
+    annual_status_quo_costs: List[float] = field(default_factory=list)
+    annual_with_bess_costs: List[float] = field(default_factory=list)
+
+
 def get_bess_presets() -> Dict[str, BESSConfig]:
     """Returns standard pre-configured commercial and industrial BESS templates."""
     return {
