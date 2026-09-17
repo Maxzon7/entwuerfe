@@ -87,7 +87,7 @@ def find_active_contract_in_session() -> Optional[Any]:
     Finds the active electricity contract configured in Tab 2.
     """
     from current_model.models.contract import Contract
-    for k in ["app_tab2_contract", "tab2_contract", "active_contract"]:
+    for k in ["active_contract", "app_tab2_contract_model", "app_tab2_contract", "tab2_contract_model", "tab2_contract"]:
         if k in st.session_state and isinstance(st.session_state[k], Contract):
             return st.session_state[k]
 

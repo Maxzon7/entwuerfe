@@ -167,6 +167,26 @@ class SubScenario:
             techs.append("Alt Grid Tariff")
         return " + ".join(techs) if techs else "Grid Only (No Active Modules)"
 
+    def remove_component(self, component: str) -> None:
+        """
+        Removes / disables a specific hardware or tariff component from this sub-scenario.
+        Options: 'solar', 'bess', 'generator', 'tariff'/'contract', 'all'.
+        """
+        c = component.lower()
+        if c in ["solar", "all"]:
+            self.include_solar = False
+            self.solar_config = None
+            self.solar_financial = None
+        if c in ["bess", "battery", "storage", "all"]:
+            self.include_bess = False
+            self.bess_config = None
+        if c in ["generator", "genset", "all"]:
+            self.include_generator = False
+            self.generator_config = None
+        if c in ["tariff", "contract", "custom_contract", "all"]:
+            self.use_custom_grid_tariff = False
+            self.custom_contract = None
+
     def clone(self, new_id: Optional[str] = None, new_name: Optional[str] = None) -> "SubScenario":
         """
         Creates an exact deep copy clone of this sub-scenario with an independent ID and name.
@@ -241,6 +261,25 @@ class SubScenario:
         )
 
 
+def _json_default_serializer(obj: Any) -> Any:
+    """Robust fallback JSON serializer for pandas/numpy/datetime objects."""
+    if isinstance(obj, (pd.Timestamp, datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    elif isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    elif isinstance(obj, (datetime.time,)):
+        return obj.strftime("%H:%M:%S")
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
 @dataclass
 class ProjectContainer:
     """
@@ -306,6 +345,19 @@ class ProjectContainer:
             return True
         return False
 
+    def remove_sub_scenario_component(self, scenario_id: str, component: str) -> bool:
+        """Removes / disables a specific component from a sub-scenario."""
+        sub = self.get_sub_scenario(scenario_id)
+        if not sub:
+            return False
+        sub.remove_component(component)
+        self.updated_at = datetime.datetime.utcnow().isoformat()
+        return True
+
+    def reset_sub_scenario(self, scenario_id: str) -> bool:
+        """Resets all modular interventions in a sub-scenario back to blank baseline."""
+        return self.remove_sub_scenario_component(scenario_id, "all")
+
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the complete project container to a JSON-ready dictionary."""
         return {
@@ -324,7 +376,7 @@ class ProjectContainer:
 
     def to_json(self, indent: int = 2) -> str:
         """Serializes the project container to a formatted JSON string."""
-        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
+        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False, default=_json_default_serializer)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProjectContainer":

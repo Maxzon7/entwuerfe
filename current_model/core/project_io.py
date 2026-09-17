@@ -71,7 +71,13 @@ def export_project_from_session(
             cols_to_keep = [c for c in df_csv.columns if c in ["timestamp", "Total_Demand_kW", "Power_kW", "kW", "Active_Power_kW"]]
             if cols_to_keep:
                 csv_power_col = cols_to_keep[-1]
-                csv_records = df_csv[cols_to_keep].to_dict(orient="records")
+                df_sub = df_csv[cols_to_keep].copy()
+                if "timestamp" in df_sub.columns:
+                    df_sub["timestamp"] = df_sub["timestamp"].astype(str)
+                # Cap embedded snapshot records to 40,000 rows to prevent extreme file size bloat
+                if len(df_sub) > 40000:
+                    df_sub = df_sub.iloc[:40000]
+                csv_records = df_sub.to_dict(orient="records")
 
     # 2. Inspect Base Contract
     contract = find_active_contract_in_session()
@@ -272,14 +278,16 @@ def load_project_into_session(project: ProjectContainer, auto_execute: bool = Tr
 def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: bool = False) -> None:
     """
     Synchronizes the active scenario (Status Quo vs SubScenario) into Streamlit session state.
-    Clears input widget caches so form values strictly reflect the active scenario branch.
+    Restores the exact hardware parameters when switching to an existing scenario,
+    and cleanly purges all widget caches and simulation results when switching to a blank/new scenario.
     """
     st.session_state["project_container"] = project
     active_sub = project.get_active_scenario()
     base = project.base_scenario
 
-    # Comprehensive list of Tab 3 form widget keys to purge on scenario switch
-    form_keys_to_clear = [
+    # 1. Purge all Tab 3 and Tab 4 widget keys so forms re-instantiate cleanly
+    widget_keys_to_clear = [
+        # Tab 3 widget keys
         "app_tab3_form_mod_count",
         "app_tab3_form_mod_wp",
         "app_tab3_form_tech_choice",
@@ -308,58 +316,79 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
         "tab3_form_azimuth",
         "solar_cfg_mod_count",
         "solar_cfg_mod_wp",
-        "solar_cfg_tech_choice"
+        "solar_cfg_tech_choice",
+        "app_tab3_module_count_custom",
+        "app_tab3_area_custom",
+        # Tab 4 BESS widget keys
+        "app_tab4_bess_tech_units",
+        "app_tab4_bess_tech_unit_kwh",
+        "app_tab4_bess_tech_chem",
+        "app_tab4_bess_tech_dis_kw",
+        "app_tab4_bess_tech_chg_kw",
+        "app_tab4_bess_tech_rte",
+        "app_tab4_bess_tech_soc_min",
+        "app_tab4_bess_tech_soc_max",
+        "app_tab4_bess_tech_init_soc",
+        "app_tab4_bess_tech_shaving_cap",
+        "app_tab4_bess_tech_recharge_mode",
+        "app_tab4_bess_tech_preset_select",
+        "app_tab4_bess_tech_last_preset_applied",
+        "app_tab4_bess_tech_last_cfg_hash",
+        "app_tab4_bess_fin_cost_per_kwh",
+        "app_tab4_bess_fin_fixed_fee",
+        "app_tab4_bess_fin_annual_om_pct",
+        "app_tab4_bess_fin_horizon_years",
+        "app_tab4_bess_fin_wacc_rate",
+        "app_tab4_bess_fin_price_escalation",
+        "app_tab4_bess_fin_cell_rep_yr",
+        "app_tab4_bess_fin_cell_rep_cost_pct"
     ]
-    for k in form_keys_to_clear:
+    for k in widget_keys_to_clear:
         if k in st.session_state:
             del st.session_state[k]
 
+    solar_res_keys = [
+        "app_tab3_sim_result",
+        "app_tab3_int_sim_result",
+        "solar_kw_15min",
+        "solar_kpis",
+        "solar_dispatch_result",
+        "solar_financial_metrics",
+        "app_tab3_config",
+        "solar_config",
+        "app_tab3_fin_config",
+        "solar_financial_config"
+    ]
+
+    bess_res_keys = [
+        "app_tab4_bess_config",
+        "app_tab4_bess_sim_result",
+        "app_tab4_bess_tech_config",
+        "app_tab4_bess_tech_sim_result"
+    ]
+
     if active_sub is None:
-        # Status Quo is active: Pure baseline without solar PV simulation state
-        for k in [
-            "app_tab3_sim_result",
-            "app_tab3_int_sim_result",
-            "solar_kw_15min",
-            "solar_kpis",
-            "solar_dispatch_result",
-            "solar_financial_metrics",
-            "app_tab3_config",
-            "solar_config",
-            "app_tab3_fin_config",
-            "solar_financial_config",
-            "app_tab4_bess_config",
-            "app_tab4_bess_sim_result"
-        ]:
+        # Status Quo is active: Pure baseline without solar PV or BESS simulation state
+        for k in solar_res_keys + bess_res_keys:
             if k in st.session_state:
                 del st.session_state[k]
-    else:
-        # SubScenario is active: Populate specific solar, financial, and BESS configs
-        if active_sub.solar_config:
-            st.session_state["app_tab3_config"] = active_sub.solar_config
-            st.session_state["solar_config"] = active_sub.solar_config
-        else:
-            if "app_tab3_config" in st.session_state:
-                del st.session_state["app_tab3_config"]
-            if "solar_config" in st.session_state:
-                del st.session_state["solar_config"]
+        return
+
+    # --------------------------------------------------------------------------
+    # SubScenario Active: Synchronize Solar PV
+    # --------------------------------------------------------------------------
+    if active_sub.include_solar and active_sub.solar_config:
+        st.session_state["app_tab3_config"] = active_sub.solar_config
+        st.session_state["solar_config"] = active_sub.solar_config
+        st.session_state["app_tab3_module_count_custom"] = active_sub.solar_config.module_count
+        st.session_state["app_tab3_area_custom"] = active_sub.solar_config.required_area_m2
 
         if active_sub.solar_financial:
             st.session_state["app_tab3_fin_config"] = active_sub.solar_financial
             st.session_state["solar_financial_config"] = active_sub.solar_financial
-        else:
-            if "app_tab3_fin_config" in st.session_state:
-                del st.session_state["app_tab3_fin_config"]
-            if "solar_financial_config" in st.session_state:
-                del st.session_state["solar_financial_config"]
 
-        if active_sub.bess_config:
-            st.session_state["app_tab4_bess_config"] = active_sub.bess_config
-        else:
-            if "app_tab4_bess_config" in st.session_state:
-                del st.session_state["app_tab4_bess_config"]
-
-        # Run automated physical and financial simulation for active sub-scenario
-        if auto_execute and active_sub.include_solar and active_sub.solar_config and base.location:
+        # Trigger auto execution of solar engine if requested
+        if auto_execute and base.location:
             sim_res: SolarSimulationResult = simulate_solar_pv_generation(
                 config=active_sub.solar_config,
                 location=base.location
@@ -392,21 +421,51 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
                 )
                 st.session_state["app_tab3_int_sim_result"] = sim_res_coupled
                 st.session_state["solar_dispatch_result"] = sim_res_coupled
+    else:
+        # Solar is not active in this sub-scenario -> Clean state
+        for k in solar_res_keys:
+            if k in st.session_state:
+                del st.session_state[k]
 
-        # If BESS is configured and auto_execute requested
-        if auto_execute and active_sub.include_bess and active_sub.bess_config:
+    # --------------------------------------------------------------------------
+    # SubScenario Active: Synchronize BESS
+    # --------------------------------------------------------------------------
+    if active_sub.include_bess and active_sub.bess_config:
+        b_cfg = active_sub.bess_config
+        st.session_state["app_tab4_bess_config"] = b_cfg
+        st.session_state["app_tab4_bess_tech_config"] = b_cfg
+
+        # Restore input widget values
+        u_cnt = max(1, int(round(b_cfg.capacity_kwh / 100.0))) if b_cfg.capacity_kwh >= 100 else 1
+        st.session_state["app_tab4_bess_tech_units"] = u_cnt
+        st.session_state["app_tab4_bess_tech_unit_kwh"] = float(round(b_cfg.capacity_kwh / max(1, u_cnt), 1))
+        st.session_state["app_tab4_bess_tech_dis_kw"] = float(b_cfg.max_discharge_power_kw)
+        st.session_state["app_tab4_bess_tech_chg_kw"] = float(b_cfg.max_charge_power_kw)
+        st.session_state["app_tab4_bess_tech_rte"] = float(b_cfg.round_trip_efficiency_pct)
+        st.session_state["app_tab4_bess_tech_soc_min"] = float(b_cfg.soc_min_pct)
+        st.session_state["app_tab4_bess_tech_soc_max"] = float(b_cfg.soc_max_pct)
+        st.session_state["app_tab4_bess_tech_init_soc"] = float(b_cfg.initial_soc_pct)
+        st.session_state["app_tab4_bess_tech_shaving_cap"] = float(b_cfg.peak_shaving_threshold_kw)
+
+        if auto_execute:
             from current_model.core.bess_engine import simulate_bess_dispatch
             df_load_active = st.session_state.get("app_tab1_synthetic_active_df")
             if df_load_active is None or not isinstance(df_load_active, pd.DataFrame):
                 df_load_active = st.session_state.get("active_csv_df")
 
             if df_load_active is not None and isinstance(df_load_active, pd.DataFrame) and not df_load_active.empty:
-                g_lim = float(active_sub.bess_config.peak_shaving_threshold_kw)
+                g_lim = float(b_cfg.peak_shaving_threshold_kw)
                 bess_res = simulate_bess_dispatch(
-                    bess_config=active_sub.bess_config,
+                    bess_config=b_cfg,
                     load_df=df_load_active,
                     grid_limit_kw=g_lim
                 )
                 st.session_state["app_tab4_bess_sim_result"] = bess_res
+                st.session_state["app_tab4_bess_tech_sim_result"] = bess_res
+    else:
+        # BESS is not active in this sub-scenario -> Clean state
+        for k in bess_res_keys:
+            if k in st.session_state:
+                del st.session_state[k]
 
 

@@ -143,6 +143,20 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 azimuth_deg=0.0,
                 weather_mode="TMY"
             )
+            ex_fin = SolarFinancialConfig(
+                is_enabled=True,
+                currency="EUR",
+                cost_modules_per_wp=1.00,
+                cost_inverter_per_w=0.07,
+                cost_substructure_per_wp=0.15,
+                cost_installation_per_wp=0.35,
+                fixed_switchgear_cost=0.0,
+                fixed_travel_fee=0.0,
+                annual_opex_pct=1.0,
+                discount_rate_pct=5.0
+            )
+            st.session_state[f"{key_prefix}_fin_config"] = ex_fin
+            st.session_state["solar_financial_config"] = ex_fin
             for k in [
                 f"{key_prefix}_form_mod_count",
                 f"{key_prefix}_form_tech_choice",
@@ -160,32 +174,14 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
 
     with act_col2:
         if st.button(
-            "Reset / Clear Form",
+            "Reset / Clear Solar",
             icon=":material/restart_alt:",
             key=f"{key_prefix}_reset_btn",
-            help="Resets all inputs back to empty state and clears simulation results."
+            help="Resets all inputs back to empty state and removes Solar PV from this branch."
         ):
-            for k in [
-                state_cfg_key,
-                state_res_key,
-                "solar_kw_15min",
-                "solar_kpis",
-                "solar_config",
-                f"{key_prefix}_trigger_calc"
-            ]:
-                if k in st.session_state:
-                    del st.session_state[k]
-            for k in [
-                f"{key_prefix}_form_mod_count",
-                f"{key_prefix}_form_tech_choice",
-                f"{key_prefix}_form_inv_kw",
-                f"{key_prefix}_form_tilt",
-                f"{key_prefix}_form_azimuth",
-                f"{key_prefix}_form_weather_mode_select",
-                f"{key_prefix}_form_hist_year_select"
-            ]:
-                if k in st.session_state:
-                    del st.session_state[k]
+            active_sub.remove_component("solar")
+            st.session_state["project_container"] = project
+            sync_active_scenario_into_session(project, auto_execute=False)
             st.rerun()
 
     # 1. Location Section (Search, Map, Presets, Coordinates)
@@ -272,8 +268,8 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                     location=location
                 )
 
-                # Compute financial metrics if enabled
-                if fin_config and fin_config.is_enabled:
+                # Compute financial metrics if enabled or if valid costs exist
+                if fin_config and (fin_config.is_enabled or (getattr(fin_config, "cost_modules_per_wp", None) and fin_config.cost_modules_per_wp > 0)):
                     fin_metrics = compute_solar_financial_metrics(
                         config=config,
                         fin_config=fin_config,
@@ -295,7 +291,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 return
 
     elif need_financial_recalc:
-        if fin_config and fin_config.is_enabled:
+        if fin_config and (fin_config.is_enabled or (getattr(fin_config, "cost_modules_per_wp", None) and fin_config.cost_modules_per_wp > 0)):
             fin_metrics = compute_solar_financial_metrics(
                 config=config,
                 fin_config=fin_config,
@@ -327,8 +323,8 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     sim_res: SolarSimulationResult = st.session_state[state_res_key]
 
     # Dynamically evaluate financial metrics if user enabled financials on existing simulation
-    if submitted:
-        if fin_config and fin_config.is_enabled:
+    if fin_config and (fin_config.is_enabled or (getattr(fin_config, "cost_modules_per_wp", None) and fin_config.cost_modules_per_wp > 0)):
+        if sim_res.financial_metrics is None or not getattr(sim_res.financial_metrics, "is_configured", False) or getattr(sim_res.financial_metrics, "total_capex", 0) <= 0 or financial_config_changed:
             sim_res.financial_config = fin_config
             sim_res.financial_metrics = compute_solar_financial_metrics(
                 config=config,
@@ -336,22 +332,9 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
                 multi_year_yields=sim_res.multi_year_yields
             )
-        else:
-            sim_res.financial_config = fin_config
-            sim_res.financial_metrics = None
-    else:
-        # On tab switch / passive rerun: compute financials if enabled and not yet present, or preserve existing
-        if fin_config and fin_config.is_enabled and (sim_res.financial_metrics is None or not sim_res.financial_metrics.is_configured):
-            sim_res.financial_config = fin_config
-            sim_res.financial_metrics = compute_solar_financial_metrics(
-                config=config,
-                fin_config=fin_config,
-                annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
-                multi_year_yields=sim_res.multi_year_yields
-            )
-        elif sim_res.financial_metrics is not None and sim_res.financial_metrics.is_configured:
-            # Preserve active financial config from simulation result
-            fin_config = sim_res.financial_config or fin_config
+    elif fin_config and not fin_config.is_enabled and submitted:
+        sim_res.financial_config = fin_config
+        sim_res.financial_metrics = None
 
     kpis = sim_res.kpis
     df_ts = sim_res.df_timeseries
@@ -364,12 +347,14 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     st.session_state["solar_financial_metrics"] = sim_res.financial_metrics
 
     # Sync with active project sub-scenario
-    project = st.session_state.get("active_project")
-    if project and project.active_sub_scenario_id:
-        sub = project.get_sub_scenario(project.active_sub_scenario_id)
+    proj_container: Optional[ProjectContainer] = st.session_state.get("project_container")
+    if proj_container and proj_container.active_sub_scenario_id:
+        sub = proj_container.get_sub_scenario(proj_container.active_sub_scenario_id)
         if sub:
             sub.solar_config = config
-            sub.solar_kpis = kpis
+            sub.solar_financial = fin_config
+            sub.include_solar = (config.module_count > 0)
+            st.session_state["project_container"] = proj_container
 
     st.divider()
 
@@ -439,7 +424,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
             st.plotly_chart(fig_monthly, use_container_width=True)
 
         with col_s:
-            fig_seasonal = create_solar_seasonal_daily_figure(df=df_ts)
+            fig_seasonal = create_solar_seasonal_daily_figure(df=df_ts, latitude=location.latitude)
             st.plotly_chart(fig_seasonal, use_container_width=True)
 
         # 6. Loss Waterfall Analysis
@@ -540,20 +525,167 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     # ==========================================================================
     with tab_finance:
         fin_m = sim_res.financial_metrics
-        if (fin_m is None or not fin_m.is_configured or fin_m.total_capex <= 0) and fin_config and fin_config.is_enabled:
+        active_fin = fin_config or getattr(sim_res, "financial_config", None) or st.session_state.get(f"{key_prefix}_fin_config") or st.session_state.get("solar_financial_config") or SolarFinancialConfig(
+            is_enabled=True,
+            currency="EUR",
+            cost_modules_per_wp=1.00,
+            cost_inverter_per_w=0.07,
+            cost_substructure_per_wp=0.15,
+            cost_installation_per_wp=0.35,
+            annual_opex_pct=1.0,
+            discount_rate_pct=5.0
+        )
+
+        # On-the-fly robust computation if metrics are not yet present or zero
+        if fin_m is None or not getattr(fin_m, "is_configured", False) or getattr(fin_m, "total_capex", 0) <= 0:
+            active_fin_copy = SolarFinancialConfig(
+                is_enabled=True,
+                currency=active_fin.currency or "EUR",
+                cost_modules_per_wp=active_fin.cost_modules_per_wp if active_fin.cost_modules_per_wp is not None else 1.00,
+                cost_inverter_per_w=active_fin.cost_inverter_per_w if active_fin.cost_inverter_per_w is not None else 0.07,
+                cost_substructure_per_wp=active_fin.cost_substructure_per_wp if active_fin.cost_substructure_per_wp is not None else 0.15,
+                cost_installation_per_wp=active_fin.cost_installation_per_wp if active_fin.cost_installation_per_wp is not None else 0.35,
+                fixed_switchgear_cost=active_fin.fixed_switchgear_cost or 0.0,
+                fixed_travel_fee=active_fin.fixed_travel_fee or 0.0,
+                annual_opex_pct=active_fin.annual_opex_pct if active_fin.annual_opex_pct is not None else 1.0,
+                discount_rate_pct=active_fin.discount_rate_pct if active_fin.discount_rate_pct is not None else 5.0,
+                electricity_price_inflation_pct=active_fin.electricity_price_inflation_pct if active_fin.electricity_price_inflation_pct is not None else 3.0,
+                feed_in_tariff_per_kwh=active_fin.feed_in_tariff_per_kwh if active_fin.feed_in_tariff_per_kwh is not None else 0.06,
+                analysis_horizon_years=15
+            )
             fin_m = compute_solar_financial_metrics(
                 config=config,
-                fin_config=fin_config,
+                fin_config=active_fin_copy,
                 annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
                 multi_year_yields=sim_res.multi_year_yields
             )
-            sim_res.financial_config = fin_config
-            sim_res.financial_metrics = fin_m
+            if fin_m and fin_m.is_configured and fin_m.total_capex > 0:
+                sim_res.financial_config = active_fin_copy
+                sim_res.financial_metrics = fin_m
+                st.session_state[state_res_key] = sim_res
+                st.session_state[f"{key_prefix}_fin_config"] = active_fin_copy
+                st.session_state["solar_financial_config"] = active_fin_copy
+                st.session_state["solar_financial_metrics"] = fin_m
+                active_fin = active_fin_copy
 
         if fin_m and fin_m.is_configured and fin_m.total_capex > 0:
             f_curr = fin_m.currency
             st.subheader("Solar Turn-Key Investment Costs & CAPEX Breakdown")
             st.caption(f"Turn-key solar plant investment breakdown (DRACBV Kosten-/Berechnungs-Dashboard) and standalone electricity generation costs (LCOE):")
+
+            # Quick Turn-Key Cost & CAPEX Tuner Expander
+            with st.expander("🔧 Quick Turn-Key Cost & Financial Parameter Tuner (Live Recalculation)", expanded=False):
+                st.caption("Fine-tune individual investment rates and capital interest without re-running physical weather simulation:")
+                tf_c1, tf_c2, tf_c3, tf_c4 = st.columns(4)
+                with tf_c1:
+                    t_mod = st.number_input(
+                        f"Modules ({f_curr}/Wp):",
+                        min_value=0.0,
+                        max_value=10.0,
+                        value=float(active_fin.cost_modules_per_wp if active_fin.cost_modules_per_wp is not None else 1.00),
+                        step=0.05,
+                        format="%.2f",
+                        key=f"{key_prefix}_tab_fin_mod"
+                    )
+                    t_inv = st.number_input(
+                        f"Inverter ({f_curr}/W AC):",
+                        min_value=0.0,
+                        max_value=2.0,
+                        value=float(active_fin.cost_inverter_per_w if active_fin.cost_inverter_per_w is not None else 0.07),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"{key_prefix}_tab_fin_inv"
+                    )
+                with tf_c2:
+                    t_sub = st.number_input(
+                        f"Substructure ({f_curr}/Wp):",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=float(active_fin.cost_substructure_per_wp if active_fin.cost_substructure_per_wp is not None else 0.15),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"{key_prefix}_tab_fin_sub"
+                    )
+                    t_inst = st.number_input(
+                        f"Installation ({f_curr}/Wp):",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=float(active_fin.cost_installation_per_wp if active_fin.cost_installation_per_wp is not None else 0.35),
+                        step=0.01,
+                        format="%.2f",
+                        key=f"{key_prefix}_tab_fin_inst"
+                    )
+                with tf_c3:
+                    t_switch = st.number_input(
+                        f"Switchgear Cabinet ({f_curr}):",
+                        min_value=0.0,
+                        value=float(active_fin.fixed_switchgear_cost or 0.0),
+                        step=250.0,
+                        key=f"{key_prefix}_tab_fin_switch"
+                    )
+                    t_travel = st.number_input(
+                        f"Mobilization Fee ({f_curr}):",
+                        min_value=0.0,
+                        value=float(active_fin.fixed_travel_fee or 0.0),
+                        step=100.0,
+                        key=f"{key_prefix}_tab_fin_travel"
+                    )
+                with tf_c4:
+                    t_opex = st.number_input(
+                        "Annual O&M (%/a):",
+                        min_value=0.0,
+                        max_value=10.0,
+                        value=float(active_fin.annual_opex_pct if active_fin.annual_opex_pct is not None else 1.0),
+                        step=0.1,
+                        format="%.1f",
+                        key=f"{key_prefix}_tab_fin_opex"
+                    )
+                    t_disc = st.number_input(
+                        "Discount Rate (%):",
+                        min_value=0.0,
+                        max_value=20.0,
+                        value=float(active_fin.discount_rate_pct if active_fin.discount_rate_pct is not None else 5.0),
+                        step=0.5,
+                        format="%.1f",
+                        key=f"{key_prefix}_tab_fin_disc"
+                    )
+
+                if (abs(t_mod - float(active_fin.cost_modules_per_wp or 0.0)) > 0.001 or
+                    abs(t_inv - float(active_fin.cost_inverter_per_w or 0.0)) > 0.001 or
+                    abs(t_sub - float(active_fin.cost_substructure_per_wp or 0.0)) > 0.001 or
+                    abs(t_inst - float(active_fin.cost_installation_per_wp or 0.0)) > 0.001 or
+                    abs(t_switch - float(active_fin.fixed_switchgear_cost or 0.0)) > 0.1 or
+                    abs(t_travel - float(active_fin.fixed_travel_fee or 0.0)) > 0.1 or
+                    abs(t_opex - float(active_fin.annual_opex_pct if active_fin.annual_opex_pct is not None else 1.0)) > 0.01 or
+                    abs(t_disc - float(active_fin.discount_rate_pct if active_fin.discount_rate_pct is not None else 5.0)) > 0.01):
+                    t_fin = SolarFinancialConfig(
+                        is_enabled=True,
+                        currency=active_fin.currency or "EUR",
+                        cost_modules_per_wp=t_mod,
+                        cost_inverter_per_w=t_inv,
+                        cost_substructure_per_wp=t_sub,
+                        cost_installation_per_wp=t_inst,
+                        fixed_switchgear_cost=t_switch,
+                        fixed_travel_fee=t_travel,
+                        annual_opex_pct=t_opex,
+                        discount_rate_pct=t_disc,
+                        electricity_price_inflation_pct=active_fin.electricity_price_inflation_pct,
+                        feed_in_tariff_per_kwh=active_fin.feed_in_tariff_per_kwh,
+                        analysis_horizon_years=15
+                    )
+                    fin_m = compute_solar_financial_metrics(
+                        config=config,
+                        fin_config=t_fin,
+                        annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
+                        multi_year_yields=sim_res.multi_year_yields
+                    )
+                    sim_res.financial_config = t_fin
+                    sim_res.financial_metrics = fin_m
+                    st.session_state[state_res_key] = sim_res
+                    st.session_state[f"{key_prefix}_fin_config"] = t_fin
+                    st.session_state["solar_financial_config"] = t_fin
+                    st.session_state["solar_financial_metrics"] = fin_m
+                    st.rerun()
 
             # 1. Primary CAPEX & LCOE KPIs
             fk1, fk2, fk3, fk4 = st.columns(4)
@@ -580,7 +712,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 render_kpi_card(
                     "Annual Maintenance / OPEX",
                     f"{fin_m.annual_opex_year1:,.2f} {f_curr}/a",
-                    f"Year 1 O&M reserve ({fin_config.annual_opex_pct:.1f}% p.a.)"
+                    f"Year 1 O&M reserve ({active_fin.annual_opex_pct:.1f}% p.a.)"
                 )
 
             # 2. Secondary Financial Return & Life-Cycle KPIs
@@ -605,7 +737,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 render_kpi_card(
                     "Net Present Value (NPV)",
                     f"{fin_m.npv:,.2f} {f_curr}",
-                    f"Discounted at {fin_config.discount_rate_pct:.1f}% interest"
+                    f"Discounted at {active_fin.discount_rate_pct:.1f}% interest"
                 )
             with fk8:
                 irr_text = f"{fin_m.irr_pct:.1f}%" if fin_m.irr_pct is not None else "N/A"
@@ -624,44 +756,44 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                     {
                         "Component": "1. PV Solar Modules",
                         "Basis": f"{config.module_count:,} Modules ({config.dc_capacity_kwp * 1000.0:,.0f} Wp)",
-                        "Unit Rate": f"{fin_config.cost_modules_per_wp:.2f} {f_curr}/Wp" if fin_config.cost_modules_per_wp else "-",
+                        "Unit Rate": f"{active_fin.cost_modules_per_wp:.2f} {f_curr}/Wp" if active_fin.cost_modules_per_wp else "-",
                         f"Total ({f_curr})": f"{fin_m.capex_modules:,.2f}",
                         "Share": f"{(fin_m.capex_modules / fin_m.total_capex * 100.0):.1f} %"
                     },
                     {
                         "Component": "2. Inverter(s)",
                         "Basis": f"{config.inverter_capacity_kw:,.1f} kW AC ({config.inverter_capacity_kw * 1000.0:,.0f} W)",
-                        "Unit Rate": f"{fin_config.cost_inverter_per_w:.2f} {f_curr}/W AC" if fin_config.cost_inverter_per_w else "-",
+                        "Unit Rate": f"{active_fin.cost_inverter_per_w:.2f} {f_curr}/W AC" if active_fin.cost_inverter_per_w else "-",
                         f"Total ({f_curr})": f"{fin_m.capex_inverter:,.2f}",
                         "Share": f"{(fin_m.capex_inverter / fin_m.total_capex * 100.0):.1f} %"
                     },
                     {
                         "Component": "3. Substructure & Mounting (Maschinenbau)",
                         "Basis": f"{config.dc_capacity_kwp * 1000.0:,.0f} Wp DC",
-                        "Unit Rate": f"{fin_config.cost_substructure_per_wp:.2f} {f_curr}/Wp" if fin_config.cost_substructure_per_wp else "-",
+                        "Unit Rate": f"{active_fin.cost_substructure_per_wp:.2f} {f_curr}/Wp" if active_fin.cost_substructure_per_wp else "-",
                         f"Total ({f_curr})": f"{fin_m.capex_substructure:,.2f}",
                         "Share": f"{(fin_m.capex_substructure / fin_m.total_capex * 100.0):.1f} %"
                     },
                     {
                         "Component": "4. Electrical Installation & Grid Connection",
                         "Basis": f"{config.dc_capacity_kwp * 1000.0:,.0f} Wp DC",
-                        "Unit Rate": f"{fin_config.cost_installation_per_wp:.2f} {f_curr}/Wp" if fin_config.cost_installation_per_wp else "-",
+                        "Unit Rate": f"{active_fin.cost_installation_per_wp:.2f} {f_curr}/Wp" if active_fin.cost_installation_per_wp else "-",
                         f"Total ({f_curr})": f"{fin_m.capex_installation:,.2f}",
                         "Share": f"{(fin_m.capex_installation / fin_m.total_capex * 100.0):.1f} %"
                     },
                     {
                         "Component": "5. Switchgear Cabinet (Zählerschrank)",
                         "Basis": "Fixed Turn-Key Item",
-                        "Unit Rate": f"{fin_config.fixed_switchgear_cost:,.2f} {f_curr}" if fin_config.fixed_switchgear_cost else "-",
-                        f"Total ({f_curr})": f"{fin_config.fixed_switchgear_cost:,.2f}",
-                        "Share": f"{(fin_config.fixed_switchgear_cost / fin_m.total_capex * 100.0):.1f} %"
+                        "Unit Rate": f"{active_fin.fixed_switchgear_cost:,.2f} {f_curr}" if active_fin.fixed_switchgear_cost else "-",
+                        f"Total ({f_curr})": f"{active_fin.fixed_switchgear_cost:,.2f}",
+                        "Share": f"{(active_fin.fixed_switchgear_cost / fin_m.total_capex * 100.0):.1f} %"
                     },
                     {
                         "Component": "6. Mobilization Fee (Anfahrtsgebühr)",
                         "Basis": "Fixed Turn-Key Item",
-                        "Unit Rate": f"{fin_config.fixed_travel_fee:,.2f} {f_curr}" if fin_config.fixed_travel_fee else "-",
-                        f"Total ({f_curr})": f"{fin_config.fixed_travel_fee:,.2f}",
-                        "Share": f"{(fin_config.fixed_travel_fee / fin_m.total_capex * 100.0):.1f} %"
+                        "Unit Rate": f"{active_fin.fixed_travel_fee:,.2f} {f_curr}" if active_fin.fixed_travel_fee else "-",
+                        f"Total ({f_curr})": f"{active_fin.fixed_travel_fee:,.2f}",
+                        "Share": f"{(active_fin.fixed_travel_fee / fin_m.total_capex * 100.0):.1f} %"
                     }
                 ]
                 st.dataframe(pd.DataFrame(capex_rows), use_container_width=True, hide_index=True)
@@ -715,8 +847,31 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
         else:
             st.info(
                 "**Solar Financial Assessment is currently disabled.**\n\n"
-                "To calculate and display turn-key CAPEX breakdown, specific investment per kWp, and LCOE (€/kWh), "
-                "check **'Enable Solar Financial Assessment & Turn-Key CAPEX Calculation'** in Section 5 above and click **'Calculate Solar PV Generation & Multi-Technology Comparison'**.",
+                "Click below or check **'Enable Solar Financial Assessment'** in Section 5 above to calculate itemized turn-key CAPEX, specific investment per kWp, and LCOE.",
                 icon=":material/info:"
             )
+            if st.button("Enable & Calculate Turn-Key Financials", icon=":material/payments:", type="primary", key=f"{key_prefix}_tab_fin_enable_btn"):
+                quick_fin = SolarFinancialConfig(
+                    is_enabled=True,
+                    currency="EUR",
+                    cost_modules_per_wp=1.00,
+                    cost_inverter_per_w=0.07,
+                    cost_substructure_per_wp=0.15,
+                    cost_installation_per_wp=0.35,
+                    annual_opex_pct=1.0,
+                    discount_rate_pct=5.0
+                )
+                fin_m = compute_solar_financial_metrics(
+                    config=config,
+                    fin_config=quick_fin,
+                    annual_generation_kwh=sim_res.kpis.annual_energy_kwh,
+                    multi_year_yields=sim_res.multi_year_yields
+                )
+                sim_res.financial_config = quick_fin
+                sim_res.financial_metrics = fin_m
+                st.session_state[state_res_key] = sim_res
+                st.session_state[f"{key_prefix}_fin_config"] = quick_fin
+                st.session_state["solar_financial_config"] = quick_fin
+                st.session_state["solar_financial_metrics"] = fin_m
+                st.rerun()
 

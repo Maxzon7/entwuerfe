@@ -100,8 +100,11 @@ def _sync_contract_to_state(contract: Contract, key_prefix: str) -> None:
     state_contract_key = f"{key_prefix}_contract_model"
     state_tou_key = f"{key_prefix}_tou_rates_df"
     state_taxes_key = f"{key_prefix}_taxes_df"
+    active_lbl_key = f"{key_prefix}_active_contract_label"
 
     st.session_state[state_contract_key] = contract
+    st.session_state[active_lbl_key] = contract.name
+    st.session_state["active_contract"] = contract
     st.session_state[state_tou_key] = pd.DataFrame(contract.tou_rates) if contract.tou_rates else pd.DataFrame([
         {"name": "Standard Rate", "rate": contract.default_energy_rate, "start_time": "00:00", "end_time": "24:00"}
     ])
@@ -207,7 +210,6 @@ def render_contract_form(
                         st.session_state[uploader_sig_key] = current_sig
                         first_label = list(new_contracts.keys())[0]
                         _sync_contract_to_state(new_contracts[first_label], key_prefix=key_prefix)
-                        st.session_state[f"{key_prefix}_active_contract_label"] = first_label
                         st.success(f"Successfully loaded **{len(new_contracts)}** contract(s)!")
                         st.rerun()
                     else:
@@ -222,16 +224,17 @@ def render_contract_form(
 
             labels = list(loaded_dict.keys())
             current_sel = st.session_state.get(f"{key_prefix}_active_contract_label", labels[0])
-            sel_idx = labels.index(current_sel) if current_sel in labels else 0
+            if current_sel not in labels:
+                current_sel = labels[0]
+                st.session_state[f"{key_prefix}_active_contract_label"] = current_sel
+            sel_idx = labels.index(current_sel)
 
             selected_label = st.selectbox(
                 "Active Contract Selection:",
                 options=labels,
-                index=sel_idx,
-                key=f"{key_prefix}_switch_contract_select"
+                index=sel_idx
             )
-            if selected_label != st.session_state.get(f"{key_prefix}_active_contract_label"):
-                st.session_state[f"{key_prefix}_active_contract_label"] = selected_label
+            if selected_label != current_sel and selected_label in loaded_dict:
                 _sync_contract_to_state(loaded_dict[selected_label], key_prefix=key_prefix)
                 st.rerun()
 
@@ -250,7 +253,6 @@ def render_contract_form(
                     )
                     loaded_dict[new_c_name] = new_contract
                     st.session_state[loaded_contracts_dict_key] = loaded_dict
-                    st.session_state[f"{key_prefix}_active_contract_label"] = new_c_name
                     _sync_contract_to_state(new_contract, key_prefix=key_prefix)
                     st.success(f"Created new contract: {new_c_name}")
                     st.rerun()
@@ -262,7 +264,6 @@ def render_contract_form(
                     dup_contract.name = dup_name
                     loaded_dict[dup_name] = dup_contract
                     st.session_state[loaded_contracts_dict_key] = loaded_dict
-                    st.session_state[f"{key_prefix}_active_contract_label"] = dup_name
                     _sync_contract_to_state(dup_contract, key_prefix=key_prefix)
                     st.success(f"Duplicated to: {dup_name}")
                     st.rerun()
@@ -274,7 +275,6 @@ def render_contract_form(
                         del loaded_dict[current_sel]
                         st.session_state[loaded_contracts_dict_key] = loaded_dict
                         new_first = list(loaded_dict.keys())[0]
-                        st.session_state[f"{key_prefix}_active_contract_label"] = new_first
                         _sync_contract_to_state(loaded_dict[new_first], key_prefix=key_prefix)
                         st.warning(f"Deleted contract: {current_sel}")
                         st.rerun()
@@ -287,14 +287,23 @@ def render_contract_form(
                 index=0,
                 key=f"{key_prefix}_preset_select"
             )
-            if selected_preset_name in presets:
-                if st.button("Apply Preset", icon=":material/playlist_add_check:", key=f"{key_prefix}_apply_preset_btn", use_container_width=True):
-                    preset_c = presets[selected_preset_name]
-                    loaded_dict[preset_c.name] = preset_c
+            p_col1, p_col2 = st.columns(2)
+            with p_col1:
+                if selected_preset_name in presets:
+                    if st.button("Apply Preset", icon=":material/playlist_add_check:", key=f"{key_prefix}_apply_preset_btn", use_container_width=True):
+                        preset_c = presets[selected_preset_name]
+                        preset_copy = Contract.from_dict(preset_c.to_dict()) if hasattr(preset_c, "to_dict") else Contract.from_json(preset_c.to_json())
+                        loaded_dict[preset_copy.name] = preset_copy
+                        st.session_state[loaded_contracts_dict_key] = loaded_dict
+                        _sync_contract_to_state(preset_copy, key_prefix=key_prefix)
+                        st.success(f"Loaded preset: {selected_preset_name}")
+                        st.rerun()
+            with p_col2:
+                if st.button("Reset to Basic Contract", icon=":material/restart_alt:", key=f"{key_prefix}_reset_basic_c_btn", use_container_width=True, help="Restores the standard baseline utility tariff contract."):
+                    default_c = Contract(name="Standard Utility Contract (Baseline)")
+                    loaded_dict[default_c.name] = default_c
                     st.session_state[loaded_contracts_dict_key] = loaded_dict
-                    st.session_state[f"{key_prefix}_active_contract_label"] = preset_c.name
-                    _sync_contract_to_state(preset_c, key_prefix=key_prefix)
-                    st.success(f"Loaded preset: {selected_preset_name}")
+                    _sync_contract_to_state(default_c, key_prefix=key_prefix)
                     st.rerun()
 
         # --- RIGHT: Download / Export as .drac ---
@@ -459,11 +468,14 @@ def render_contract_form(
                 weekend_is_off_peak=weekend_off_peak,
                 taxes_and_fees=cleaned_taxes
             )
-            _sync_contract_to_state(updated_contract, key_prefix=key_prefix)
             if loaded_contracts_dict_key in st.session_state and st.session_state[loaded_contracts_dict_key]:
-                active_lbl = st.session_state.get(f"{key_prefix}_active_contract_label")
-                if active_lbl in st.session_state[loaded_contracts_dict_key]:
-                    st.session_state[loaded_contracts_dict_key][active_lbl] = updated_contract
+                old_active_lbl = st.session_state.get(f"{key_prefix}_active_contract_label")
+                new_lbl = updated_contract.name
+                if old_active_lbl and old_active_lbl != new_lbl and old_active_lbl in st.session_state[loaded_contracts_dict_key]:
+                    del st.session_state[loaded_contracts_dict_key][old_active_lbl]
+                st.session_state[loaded_contracts_dict_key][new_lbl] = updated_contract
+
+            _sync_contract_to_state(updated_contract, key_prefix=key_prefix)
             st.success("Contract configuration successfully saved.")
             st.rerun()
     return st.session_state[state_contract_key]

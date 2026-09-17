@@ -496,14 +496,77 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                 unsafe_allow_html=True
             )
 
-            if is_active:
-                st.button(":material/check_circle: Active in Workspace", key=f"{key_prefix}_act_btn_{sc_id}", disabled=True, use_container_width=True)
-            else:
-                btn_lbl = f"Switch to Branch #{idx+1}"
-                if st.button(f":material/near_me: {btn_lbl}", key=f"{key_prefix}_sw_btn_{sc_id}", use_container_width=True):
-                    project.active_sub_scenario_id = sc_id
-                    sync_active_scenario_into_session(project, auto_execute=False)
-                    st.rerun()
+            btn_act_col1, btn_act_col2 = st.columns([3, 1])
+            with btn_act_col1:
+                if is_active:
+                    st.button(":material/check_circle: Active", key=f"{key_prefix}_act_btn_{sc_id}", disabled=True, use_container_width=True)
+                else:
+                    btn_lbl = f"Switch #{idx+1}"
+                    if st.button(f":material/near_me: {btn_lbl}", key=f"{key_prefix}_sw_btn_{sc_id}", use_container_width=True):
+                        project.active_sub_scenario_id = sc_id
+                        sync_active_scenario_into_session(project, auto_execute=False)
+                        st.rerun()
+            with btn_act_col2:
+                with st.popover("⚙️", help="Branch & Component Options"):
+                    st.markdown(f"**{r['name']}**")
+                    if sub_obj and sub_obj.include_solar:
+                        if st.button("☀️ Remove Solar", key=f"{key_prefix}_card_rm_sol_{sc_id}", use_container_width=True):
+                            sub_obj.remove_component("solar")
+                            st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
+                            st.rerun()
+                    if sub_obj and sub_obj.include_bess:
+                        if st.button("🔋 Remove BESS", key=f"{key_prefix}_card_rm_bess_{sc_id}", use_container_width=True):
+                            sub_obj.remove_component("bess")
+                            st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
+                            st.rerun()
+                    if sub_obj and sub_obj.include_generator:
+                        if st.button("⚡ Remove Genset", key=f"{key_prefix}_card_rm_gen_{sc_id}", use_container_width=True):
+                            sub_obj.remove_component("generator")
+                            st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
+                            st.rerun()
+                    if st.button("🔄 Reset to Blank", key=f"{key_prefix}_card_reset_{sc_id}", use_container_width=True):
+                        sub_obj.remove_component("all")
+                        st.session_state["project_container"] = project
+                        sync_active_scenario_into_session(project, auto_execute=False)
+                        st.rerun()
+                    if st.button("🗑️ Delete Branch", key=f"{key_prefix}_card_del_{sc_id}", type="secondary", use_container_width=True):
+                        project.delete_sub_scenario(sc_id)
+                        st.session_state["project_container"] = project
+                        sync_active_scenario_into_session(project, auto_execute=False)
+                        st.rerun()
+
+    # Toolbar to create new branch directly from architecture overview
+    c_new1, _ = st.columns([3.5, 6.5])
+    with c_new1:
+        with st.popover("+ Create New Sub-Scenario Branch", icon=":material/add_circle:", use_container_width=True):
+            st.markdown("##### :material/add: Instantiate New Solution Path")
+            new_name_t5 = st.text_input(
+                "Sub-Scenario Name:",
+                value=f"Sub-Scenario {len(project.sub_scenarios) + 1}",
+                key=f"{key_prefix}_t5_tree_new_name"
+            )
+            color_choice_t5 = st.selectbox(
+                "Chart Curve Color:",
+                options=["#2563EB (Blue)", "#059669 (Green)", "#D97706 (Amber)", "#DC2626 (Red)", "#7C3AED (Purple)", "#0891B2 (Cyan)"],
+                index=len(project.sub_scenarios) % 6,
+                key=f"{key_prefix}_t5_tree_new_col"
+            )
+            clean_c = color_choice_t5.split(" ")[0]
+            if st.button("Create & Switch to Clean Branch", icon=":material/check:", type="primary", use_container_width=True, key=f"{key_prefix}_t5_tree_create_btn"):
+                new_sub = SubScenario(
+                    name=new_name_t5.strip() or f"Sub-Scenario {len(project.sub_scenarios) + 1}",
+                    color_code=clean_c,
+                    include_solar=False,
+                    include_bess=False
+                )
+                project.add_sub_scenario(new_sub)
+                project.active_sub_scenario_id = new_sub.id
+                st.session_state["project_container"] = project
+                sync_active_scenario_into_session(project, auto_execute=False)
+                st.rerun()
 
 
 def _build_scenario_delta_matrix(project: ProjectContainer, records: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -828,9 +891,9 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
         col_m1, col_m2 = st.columns([1, 1])
 
         with col_m1:
-            st.markdown("#### :material/edit_note: Scenario Quick Edit")
+            st.markdown("#### :material/edit_note: Scenario & Component Manager")
             if project.sub_scenarios:
-                edit_sub_options = {s.id: s.name for s in project.sub_scenarios}
+                edit_sub_options = {s.id: f"{s.name} ({s.technology_mix_label})" for s in project.sub_scenarios}
                 selected_edit_id = st.selectbox(
                     "Select Branch to Manage:",
                     options=list(edit_sub_options.keys()),
@@ -839,7 +902,10 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
                 )
                 target_sub = project.get_sub_scenario(selected_edit_id)
                 if target_sub:
+                    st.caption(f"Active Hardware in **{target_sub.name}**: {target_sub.technology_mix_label}")
                     rename_inp = st.text_input("Rename Branch:", value=target_sub.name, key="tab6_rename_sub_input")
+
+                    # Primary branch operations
                     c_act1, c_act2, c_act3 = st.columns(3)
                     with c_act1:
                         if st.button("Save Name", icon=":material/check:", key="tab6_save_name_btn", use_container_width=True):
@@ -848,16 +914,41 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
                             st.rerun()
                     with c_act2:
                         if st.button("Clone Branch", icon=":material/content_copy:", key="tab6_clone_btn", use_container_width=True):
-                            project.duplicate_sub_scenario(target_sub.id)
+                            cloned = project.duplicate_sub_scenario(target_sub.id)
+                            project.active_sub_scenario_id = cloned.id
                             st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
                             st.rerun()
                     with c_act3:
                         if st.button("Delete Branch", icon=":material/delete:", key="tab6_del_btn", type="secondary", use_container_width=True):
                             project.delete_sub_scenario(target_sub.id)
                             st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
+                            st.rerun()
+
+                    # Component-level removal and reset options
+                    st.markdown("##### :material/delete_sweep: Remove Specific Technologies")
+                    rm_col1, rm_col2, rm_col3 = st.columns(3)
+                    with rm_col1:
+                        if st.button("☀️ Remove Solar", icon=":material/solar_power:", key="tab6_rm_solar_btn", disabled=not target_sub.include_solar, use_container_width=True):
+                            target_sub.remove_component("solar")
+                            st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
+                            st.rerun()
+                    with rm_col2:
+                        if st.button("🔋 Remove BESS", icon=":material/battery_charging_full:", key="tab6_rm_bess_btn", disabled=not target_sub.include_bess, use_container_width=True):
+                            target_sub.remove_component("bess")
+                            st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
+                            st.rerun()
+                    with rm_col3:
+                        if st.button("🔄 Reset to Blank", icon=":material/restart_alt:", key="tab6_rm_all_btn", use_container_width=True, help="Removes all solar, BESS, and generator hardware from this branch."):
+                            target_sub.remove_component("all")
+                            st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
                             st.rerun()
             else:
-                st.info("No sub-scenarios available to manage. Create a new branch in the sidebar.")
+                st.info("No sub-scenarios available to manage. Create a new branch above or in the sidebar.")
 
         with col_m2:
             st.markdown("#### :material/file_download: Client Audit & Data Export")

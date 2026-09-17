@@ -115,6 +115,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     max_value=3000.0,
                     value=float(bess_cfg.cost_per_kwh),
                     step=25.0,
+                    key=f"{key_prefix}_cost_per_kwh",
                     help="Turn-key hardware cost per usable/nominal kWh of battery storage."
                 )
             with col_f2:
@@ -124,6 +125,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     max_value=200000.0,
                     value=float(bess_cfg.fixed_installation_cost),
                     step=500.0,
+                    key=f"{key_prefix}_fixed_fee",
                     help="Fixed project fee including engineering, switchgear, and grid certification."
                 )
             with col_f3:
@@ -133,6 +135,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     max_value=10.0,
                     value=float(bess_cfg.annual_om_pct),
                     step=0.1,
+                    key=f"{key_prefix}_annual_om_pct",
                     help="Annual operations, maintenance, telemetry, and insurance expenses."
                 )
             with col_f4:
@@ -140,6 +143,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     "Analysis Horizon:",
                     options=[10, 15, 20, 25],
                     index=1,
+                    key=f"{key_prefix}_horizon_years",
                     help="Life-cycle evaluation period (Years)."
                 )
 
@@ -151,6 +155,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     max_value=20.0,
                     value=5.0,
                     step=0.5,
+                    key=f"{key_prefix}_wacc_rate",
                     help="Weighted Average Cost of Capital used for discounting future cash flows (NPV)."
                 )
             with col_d2:
@@ -160,6 +165,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     max_value=15.0,
                     value=2.0,
                     step=0.5,
+                    key=f"{key_prefix}_price_escalation",
                     help="Expected annual increase in utility electricity tariffs and capacity charges."
                 )
             with col_d3:
@@ -169,6 +175,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     max_value=20,
                     value=int(bess_cfg.cell_replacement_year),
                     step=1,
+                    key=f"{key_prefix}_cell_rep_yr",
                     help="Year in which battery cell modules are refreshed."
                 )
             with col_d4:
@@ -178,6 +185,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
                     max_value=100.0,
                     value=float(bess_cfg.cell_replacement_cost_pct),
                     step=5.0,
+                    key=f"{key_prefix}_cell_rep_cost_pct",
                     help="Module replacement cost as a % of initial battery module investment."
                 )
 

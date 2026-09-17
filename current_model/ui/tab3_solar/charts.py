@@ -175,26 +175,39 @@ def create_solar_monthly_bar_figure(
     return fig
 
 
-def create_solar_seasonal_daily_figure(df: pd.DataFrame) -> go.Figure:
+def create_solar_seasonal_daily_figure(df: pd.DataFrame, latitude: float = 0.0) -> go.Figure:
     """
-    Plots average 24-hour daily generation profiles for representative seasonal solstices/equinoxes.
+    Plots average 24-hour daily generation profiles for representative seasonal solstices/equinoxes,
+    accurately contextualized for Northern vs. Southern hemispheres.
     """
     df_copy = df.copy()
     df_copy["hour"] = df_copy["timestamp"].dt.hour
     df_copy["month"] = df_copy["timestamp"].dt.month
 
+    is_south = (latitude < 0)
+    if is_south:
+        label_jan = "January (Summer Solstice)"
+        label_apr = "April (Autumn Equinox)"
+        label_jul = "July (Winter Solstice)"
+        label_oct = "October (Spring Equinox)"
+    else:
+        label_jan = "January (Winter Solstice)"
+        label_apr = "April (Spring Equinox)"
+        label_jul = "July (Summer Solstice)"
+        label_oct = "October (Autumn Equinox)"
+
     seasons = {
-        "January (Solstice / Summer)": df_copy[df_copy["month"] == 1],
-        "April (Autumn Equinox)": df_copy[df_copy["month"] == 4],
-        "July (Winter Solstice)": df_copy[df_copy["month"] == 7],
-        "October (Spring Equinox)": df_copy[df_copy["month"] == 10]
+        label_jan: df_copy[df_copy["month"] == 1],
+        label_apr: df_copy[df_copy["month"] == 4],
+        label_jul: df_copy[df_copy["month"] == 7],
+        label_oct: df_copy[df_copy["month"] == 10]
     }
 
     colors = {
-        "January (Solstice / Summer)": "#F59E0B",
-        "April (Autumn Equinox)": "#10B981",
-        "July (Winter Solstice)": "#3B82F6",
-        "October (Spring Equinox)": "#8B5CF6"
+        label_jan: "#3B82F6" if not is_south else "#F59E0B",
+        label_apr: "#10B981",
+        label_jul: "#F59E0B" if not is_south else "#3B82F6",
+        label_oct: "#8B5CF6"
     }
 
     fig = go.Figure()

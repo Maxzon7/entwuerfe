@@ -293,14 +293,14 @@ class TechnologyComparisonItem:
 @dataclass
 class SolarFinancialConfig:
     """Represents financial, investment, and operational cost parameters for the Solar PV installation."""
-    is_enabled: bool = False                      # False if user chooses to leave financial data empty
+    is_enabled: bool = True                       # True by default to provide immediate financial assessment
     currency: str = "EUR"                         # Currency code / symbol (e.g. EUR, USD, ARS)
 
     # CAPEX Parameter Breakdown (DRACBV Kosten-/Berechnungs-Dashboard)
-    cost_modules_per_wp: Optional[float] = None   # €/Wp (e.g. 1.00 €/Wp)
-    cost_inverter_per_w: Optional[float] = None   # €/W AC (e.g. 0.07 €/W)
-    cost_substructure_per_wp: Optional[float] = None # €/Wp (Maschinenbau/Unterkonstruktion, e.g. 0.15 €/Wp)
-    cost_installation_per_wp: Optional[float] = None # €/Wp (Elektrische Montage & Installation, e.g. 0.35 €/Wp)
+    cost_modules_per_wp: Optional[float] = 1.00   # €/Wp (e.g. 1.00 €/Wp)
+    cost_inverter_per_w: Optional[float] = 0.07   # €/W AC (e.g. 0.07 €/W)
+    cost_substructure_per_wp: Optional[float] = 0.15 # €/Wp (Maschinenbau/Unterkonstruktion, e.g. 0.15 €/Wp)
+    cost_installation_per_wp: Optional[float] = 0.35 # €/Wp (Elektrische Montage & Installation, e.g. 0.35 €/Wp)
     fixed_switchgear_cost: float = 0.0            # Zählerschrank (€)
     fixed_travel_fee: float = 0.0                 # Einmalige Anfahrtsgebühr (€)
     custom_additional_capex: float = 0.0          # Additional custom initial investment (€)

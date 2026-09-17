@@ -47,32 +47,26 @@ def render_sidebar_scenario_controller() -> None:
     # --------------------------------------------------------------------------
     st.markdown("#### :material/alt_route: Active Scenario Branch")
     
-    scenario_options = ["Status Quo (Base Benchmark)"]
-    scenario_id_map = {"Status Quo (Base Benchmark)": "base"}
-
+    scenario_ids = ["base"] + [s.id for s in project.sub_scenarios]
+    scenario_label_map = {"base": "Status Quo (Base Benchmark)"}
     for s in project.sub_scenarios:
-        label = f"{s.name} ({s.technology_mix_label})"
-        scenario_options.append(label)
-        scenario_id_map[label] = s.id
+        scenario_label_map[s.id] = f"{s.name} ({s.technology_mix_label})"
 
-    # Determine current index
-    current_idx = 0
-    if project.active_sub_scenario_id:
-        for idx, (lbl, s_id) in enumerate(scenario_id_map.items()):
-            if s_id == project.active_sub_scenario_id:
-                current_idx = idx
-                break
+    # Determine current index based on stable scenario IDs
+    current_active_id = project.active_sub_scenario_id if (project.active_sub_scenario_id and project.active_sub_scenario_id in scenario_ids) else "base"
+    try:
+        current_idx = scenario_ids.index(current_active_id)
+    except ValueError:
+        current_idx = 0
 
-    selected_label = st.selectbox(
+    selected_id = st.selectbox(
         "Active Simulation Target:",
-        options=scenario_options,
+        options=scenario_ids,
         index=current_idx,
-        key="sidebar_active_scenario_select",
+        format_func=lambda s_id: scenario_label_map.get(s_id, s_id),
         help="Select which scenario branch to inspect, configure, or optimize in the workspace tabs."
     )
 
-    selected_id = scenario_id_map.get(selected_label, "base")
-    current_active_id = project.active_sub_scenario_id if project.active_sub_scenario_id else "base"
     if selected_id != current_active_id:
         project.active_sub_scenario_id = None if selected_id == "base" else selected_id
         st.session_state["project_container"] = project

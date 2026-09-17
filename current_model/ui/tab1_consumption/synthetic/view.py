@@ -155,13 +155,18 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
                 index=0,
                 key=f"{key_prefix}_preset_select"
             )
-            p_btn1, p_btn2 = st.columns(2)
+            p_btn1, p_btn2, p_btn3 = st.columns(3)
             with p_btn1:
                 if selected_preset in PRESET_TEMPLATES:
                     if st.button("Apply Template", icon=":material/playlist_add_check:", key=f"{key_prefix}_apply_preset", use_container_width=True):
                         st.session_state[state_consumers_key] = PRESET_TEMPLATES[selected_preset]()
                         st.rerun()
             with p_btn2:
+                if st.button("Reset to Basic", icon=":material/restart_alt:", key=f"{key_prefix}_reset_basic_btn", use_container_width=True, help="Restores the standard 5-consumer industrial baseline load profile."):
+                    st.session_state[state_consumers_key] = get_industry_preset_consumers()
+                    st.session_state[state_holidays_key] = pd.DataFrame(columns=["date", "holiday_name"])
+                    st.rerun()
+            with p_btn3:
                 if st.button("Clear All Assets", icon=":material/delete_sweep:", key=f"{key_prefix}_clear_btn", use_container_width=True):
                     st.session_state[state_consumers_key] = []
                     st.rerun()

@@ -245,7 +245,7 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
     st.divider()
 
     # --------------------------------------------------------------------------
-    # 3. BESS Configuration Form (st.form) - Mapped to DRACBV Section 7.4
+    # 3. BESS Configuration Form - Mapped to DRACBV Section 7.4
     # --------------------------------------------------------------------------
     st.markdown("##### 2. Battery Energy Storage System (BESS) Technical Configuration")
     st.caption("Configure battery capacity, chemistry, charge/discharge power ratings, safe operating envelope, and peak shaving targets:")
@@ -253,14 +253,22 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
     presets = get_bess_presets()
     preset_names = ["Custom Sizing"] + list(presets.keys())
 
-    # Selected preset helper
-    sel_preset = st.selectbox(
-        "Load Commercial & Industrial BESS Preset:",
-        options=preset_names,
-        key=f"{key_prefix}_preset_select",
-        help="Quickly pre-fill standard industrial battery parameters."
-    )
+    # Session state keys
+    k_units = f"{key_prefix}_units"
+    k_unit_kwh = f"{key_prefix}_unit_kwh"
+    k_chem = f"{key_prefix}_chem"
+    k_dis = f"{key_prefix}_dis_kw"
+    k_chg = f"{key_prefix}_chg_kw"
+    k_rte = f"{key_prefix}_rte"
+    k_soc_min = f"{key_prefix}_soc_min"
+    k_soc_max = f"{key_prefix}_soc_max"
+    k_init_soc = f"{key_prefix}_init_soc"
+    k_shaving_cap = f"{key_prefix}_shaving_cap"
+    k_recharge = f"{key_prefix}_recharge_mode"
+    k_preset_sel = f"{key_prefix}_preset_select"
+    k_last_preset = f"{key_prefix}_last_preset_applied"
 
+    # Default BESS config
     curr_bess_cfg: Optional[BESSConfig] = active_sub.bess_config or st.session_state.get(f"{key_prefix}_config")
     if curr_bess_cfg is None:
         curr_bess_cfg = BESSConfig(
@@ -270,15 +278,107 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
             peak_shaving_threshold_kw=grid_limit_val
         )
 
-    if sel_preset != "Custom Sizing" and sel_preset in presets:
-        p_obj = presets[sel_preset]
-        curr_bess_cfg.capacity_kwh = p_obj.capacity_kwh
-        curr_bess_cfg.max_charge_power_kw = p_obj.max_charge_power_kw
-        curr_bess_cfg.max_discharge_power_kw = p_obj.max_discharge_power_kw
-        curr_bess_cfg.cost_per_kwh = p_obj.cost_per_kwh
-        curr_bess_cfg.fixed_installation_cost = p_obj.fixed_installation_cost
+    # Toolbar: Load Benchmark BESS / Reset Form
+    act_col1, act_col2, _ = st.columns([3.5, 2.5, 4])
+    with act_col1:
+        if st.button(
+            "Load Benchmark Case (200 kWh / 100 kW)",
+            icon=":material/play_circle:",
+            key=f"{key_prefix}_load_benchmark_btn",
+            help="Loads the standard 200 kWh / 100 kW industrial LFP storage benchmark."
+        ):
+            bench_cfg = BESSConfig(
+                capacity_kwh=200.0,
+                max_charge_power_kw=100.0,
+                max_discharge_power_kw=100.0,
+                round_trip_efficiency_pct=90.0,
+                soc_min_pct=10.0,
+                soc_max_pct=95.0,
+                initial_soc_pct=50.0,
+                dispatch_strategy="peak_shaving",
+                peak_shaving_threshold_kw=grid_limit_val,
+                cost_per_kwh=350.0,
+                fixed_installation_cost=5000.0
+            )
+            st.session_state[k_units] = 2
+            st.session_state[k_unit_kwh] = 100.0
+            st.session_state[k_dis] = 100.0
+            st.session_state[k_chg] = 100.0
+            st.session_state[k_rte] = 90.0
+            st.session_state[k_soc_min] = 10.0
+            st.session_state[k_soc_max] = 95.0
+            st.session_state[k_init_soc] = 50.0
+            st.session_state[k_shaving_cap] = float(grid_limit_val)
+            st.session_state[k_last_preset] = "Custom Sizing"
+            st.session_state[f"{key_prefix}_config"] = bench_cfg
+            active_sub.bess_config = bench_cfg
+            active_sub.include_bess = True
+            st.session_state["project_container"] = project
+            st.rerun()
 
-    with st.form(key=f"{key_prefix}_bess_config_form"):
+    with act_col2:
+        if st.button(
+            "Reset / Clear BESS",
+            icon=":material/restart_alt:",
+            key=f"{key_prefix}_reset_btn",
+            help="Resets all BESS inputs back to empty state and removes BESS from this branch."
+        ):
+            active_sub.remove_component("bess")
+            st.session_state["project_container"] = project
+            sync_active_scenario_into_session(project, auto_execute=False)
+            st.rerun()
+
+    # Preset selection handling
+    prev_applied = st.session_state.get(k_last_preset, "Custom Sizing")
+    sel_preset = st.selectbox(
+        "Load Commercial & Industrial BESS Preset:",
+        options=preset_names,
+        key=k_preset_sel,
+        help="Quickly pre-fill standard industrial battery parameters."
+    )
+
+    if sel_preset != prev_applied:
+        st.session_state[k_last_preset] = sel_preset
+        if sel_preset in presets:
+            p_obj = presets[sel_preset]
+            p_units = max(1, int(round(p_obj.capacity_kwh / 100.0))) if p_obj.capacity_kwh >= 100 else 1
+            p_unit_kwh = float(round(p_obj.capacity_kwh / max(1, p_units), 1))
+            st.session_state[k_units] = p_units
+            st.session_state[k_unit_kwh] = p_unit_kwh
+            st.session_state[k_dis] = float(p_obj.max_discharge_power_kw)
+            st.session_state[k_chg] = float(p_obj.max_charge_power_kw)
+            st.session_state[k_rte] = float(p_obj.round_trip_efficiency_pct)
+            st.session_state[k_soc_min] = float(p_obj.soc_min_pct)
+            st.session_state[k_soc_max] = float(p_obj.soc_max_pct)
+            st.session_state[k_init_soc] = float(p_obj.initial_soc_pct)
+            st.session_state[k_shaving_cap] = float(p_obj.peak_shaving_threshold_kw or grid_limit_val)
+            st.rerun()
+
+    # Initial default values for session keys if not yet present
+    if k_units not in st.session_state:
+        def_u = max(1, int(round(curr_bess_cfg.capacity_kwh / 100.0))) if curr_bess_cfg.capacity_kwh >= 100 else 1
+        st.session_state[k_units] = def_u
+    if k_unit_kwh not in st.session_state:
+        st.session_state[k_unit_kwh] = float(round(curr_bess_cfg.capacity_kwh / max(1, st.session_state[k_units]), 1))
+    if k_dis not in st.session_state:
+        st.session_state[k_dis] = float(curr_bess_cfg.max_discharge_power_kw)
+    if k_chg not in st.session_state:
+        st.session_state[k_chg] = float(curr_bess_cfg.max_charge_power_kw)
+    if k_rte not in st.session_state:
+        st.session_state[k_rte] = float(curr_bess_cfg.round_trip_efficiency_pct)
+    if k_soc_min not in st.session_state:
+        st.session_state[k_soc_min] = float(curr_bess_cfg.soc_min_pct)
+    if k_soc_max not in st.session_state:
+        st.session_state[k_soc_max] = float(curr_bess_cfg.soc_max_pct)
+    if k_init_soc not in st.session_state:
+        st.session_state[k_init_soc] = float(curr_bess_cfg.initial_soc_pct)
+    if k_shaving_cap not in st.session_state:
+        st.session_state[k_shaving_cap] = float(curr_bess_cfg.peak_shaving_threshold_kw or grid_limit_val)
+
+    # --------------------------------------------------------------------------
+    # Live Interactive Technical Configuration Controls
+    # --------------------------------------------------------------------------
+    with st.container(border=True):
         # Section A: Storage Capacity & Modular Units
         st.markdown("###### A. Storage Capacity & Unit Sizing")
         col_c1, col_c2, col_c3, col_c4 = st.columns(4)
@@ -288,8 +388,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Number of Battery Units:",
                 min_value=1,
                 max_value=100,
-                value=max(1, int(round(curr_bess_cfg.capacity_kwh / 100.0))) if curr_bess_cfg.capacity_kwh >= 100 else 1,
                 step=1,
+                key=k_units,
                 help="Modular battery cabinet / rack units."
             )
 
@@ -298,12 +398,12 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Capacity per Unit (kWh):",
                 min_value=10.0,
                 max_value=5000.0,
-                value=float(round(curr_bess_cfg.capacity_kwh / max(1, unit_count), 1)),
                 step=10.0,
+                key=k_unit_kwh,
                 help="Nominal energy rating per individual battery unit."
             )
 
-        total_nom_kwh = unit_count * unit_kwh
+        total_nom_kwh = float(unit_count * unit_kwh)
 
         with col_c3:
             battery_chem = st.selectbox(
@@ -314,11 +414,16 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                     "Flow Battery (Vanadium Redox - Long Duration)"
                 ],
                 index=0,
+                key=k_chem,
                 help="Cell chemistry determines thermal stability, cycle life, and degradation characteristics."
             )
 
         with col_c4:
-            st.metric("Total Nominal Capacity", f"{total_nom_kwh:,.1f} kWh", f"{unit_count} Units × {unit_kwh:.0f} kWh")
+            st.metric(
+                "Total Nominal Capacity",
+                f"{total_nom_kwh:,.1f} kWh",
+                f"↑ {unit_count} {'Unit' if unit_count == 1 else 'Units'} × {unit_kwh:,.0f} kWh"
+            )
 
         # Section B: Power Ratings, C-Rate & Efficiency
         st.markdown("###### B. Power Ratings & Operational Boundary")
@@ -329,8 +434,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Max Continuous Discharge Power (kW):",
                 min_value=1.0,
                 max_value=50000.0,
-                value=float(curr_bess_cfg.max_discharge_power_kw),
                 step=10.0,
+                key=k_dis,
                 help="Maximum continuous active power the battery can inject to shave peaks."
             )
 
@@ -339,22 +444,26 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Max Continuous Charge Power (kW):",
                 min_value=1.0,
                 max_value=50000.0,
-                value=float(curr_bess_cfg.max_charge_power_kw),
                 step=10.0,
+                key=k_chg,
                 help="Maximum continuous charging power from grid headroom."
             )
 
         with col_p3:
             c_rate_val = dis_kw / max(1.0, total_nom_kwh)
-            st.metric("Discharge C-Rate", f"{c_rate_val:.2f} C", f"Full discharge in ~{1.0/max(0.01, c_rate_val):.1f} h")
+            st.metric(
+                "Discharge C-Rate",
+                f"{c_rate_val:.2f} C",
+                f"↑ Full discharge in ~{1.0/max(0.01, c_rate_val):.1f} h"
+            )
 
         with col_p4:
             rte_pct = st.number_input(
                 "Round-Trip AC/AC Efficiency (%):",
                 min_value=50.0,
                 max_value=99.0,
-                value=float(curr_bess_cfg.round_trip_efficiency_pct),
                 step=1.0,
+                key=k_rte,
                 help="Combined conversion efficiency (including inverter, cabling, and battery cell losses)."
             )
 
@@ -367,8 +476,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Minimum SoC Boundary (%):",
                 min_value=0.0,
                 max_value=50.0,
-                value=float(curr_bess_cfg.soc_min_pct),
                 step=5.0,
+                key=k_soc_min,
                 help="Reserve margin to prevent deep discharge degradation."
             )
 
@@ -377,8 +486,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Maximum SoC Boundary (%):",
                 min_value=50.0,
                 max_value=100.0,
-                value=float(curr_bess_cfg.soc_max_pct),
                 step=5.0,
+                key=k_soc_max,
                 help="Upper charge limit to avoid overvoltage stress."
             )
 
@@ -387,13 +496,17 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Initial SoC at Simulation Start (%):",
                 min_value=float(soc_min),
                 max_value=float(soc_max),
-                value=float(max(soc_min, min(soc_max, curr_bess_cfg.initial_soc_pct))),
-                step=5.0
+                step=5.0,
+                key=k_init_soc
             )
 
         with col_s4:
-            usable_kwh_disp = total_nom_kwh * ((soc_max - soc_min) / 100.0)
-            st.metric("Effective Usable Capacity", f"{usable_kwh_disp:,.1f} kWh", f"DoD: {(soc_max - soc_min):.0f}%")
+            usable_kwh_disp = total_nom_kwh * (max(0.0, soc_max - soc_min) / 100.0)
+            st.metric(
+                "Effective Usable Capacity",
+                f"{usable_kwh_disp:,.1f} kWh",
+                f"↑ DoD: {(soc_max - soc_min):.0f}%"
+            )
 
         # Section D: Peak Shaving Threshold & Recharge Strategy
         col_t1, col_t2 = st.columns(2)
@@ -402,8 +515,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Target Peak Shaving Grid Cap (kW):",
                 min_value=1.0,
                 max_value=100000.0,
-                value=float(grid_limit_val),
                 step=10.0,
+                key=k_shaving_cap,
                 help="The battery will discharge to ensure net grid import never exceeds this threshold (defaults to your Grid Connection Limit)."
             )
 
@@ -415,17 +528,22 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                     "Scheduled Off-Peak / Valley Hours (Recharge exclusively 00:00 - 06:00)"
                 ],
                 index=0,
+                key=k_recharge,
                 help="Defines when the battery is allowed to draw power from the grid to replenish its charge."
             )
 
-        submitted = st.form_submit_button(
-            "Calculate BESS Peak Shaving & Electrical Dispatch",
-            icon=":material/calculate:",
-            type="primary",
-            use_container_width=True
-        )
+        # Action Button
+        btn_c1, _ = st.columns([4, 6])
+        with btn_c1:
+            recalc_clicked = st.button(
+                "⚡ Recalculate BESS Peak Shaving & Electrical Dispatch",
+                icon=":material/calculate:",
+                type="primary",
+                use_container_width=True,
+                key=f"{key_prefix}_calc_action_btn"
+            )
 
-    # Update BESS Config on Submission
+    # Synchronize updated BESS configuration object
     updated_bess_cfg = BESSConfig(
         capacity_kwh=total_nom_kwh,
         max_charge_power_kw=chg_kw,
@@ -447,13 +565,35 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
     st.session_state["project_container"] = project
 
     # --------------------------------------------------------------------------
-    # 4. Simulation Execution & Caching
+    # 4. Simulation Execution & Automatic Real-Time Calculation
     # --------------------------------------------------------------------------
     state_res_key = f"{key_prefix}_sim_result"
     sim_res: Optional[BESSSimulationResult] = st.session_state.get(state_res_key)
 
-    if submitted:
-        with st.spinner("Simulating 15-minute BESS peak shaving & electrical dispatch..."):
+    need_simulation = (
+        (sim_res is None or recalc_clicked)
+        and (df_load is not None and not df_load.empty and updated_bess_cfg.capacity_kwh > 0)
+    )
+
+    # Also check if configuration changed compared to previous run to auto-resimulate (< 30ms)
+    last_cfg_hash = (
+        updated_bess_cfg.capacity_kwh,
+        updated_bess_cfg.max_charge_power_kw,
+        updated_bess_cfg.max_discharge_power_kw,
+        updated_bess_cfg.round_trip_efficiency_pct,
+        updated_bess_cfg.soc_min_pct,
+        updated_bess_cfg.soc_max_pct,
+        updated_bess_cfg.initial_soc_pct,
+        updated_bess_cfg.peak_shaving_threshold_kw,
+        updated_bess_cfg.dispatch_strategy,
+        grid_limit_val
+    )
+    if st.session_state.get(f"{key_prefix}_last_cfg_hash") != last_cfg_hash:
+        need_simulation = True
+        st.session_state[f"{key_prefix}_last_cfg_hash"] = last_cfg_hash
+
+    if need_simulation and df_load is not None and not df_load.empty and updated_bess_cfg.capacity_kwh > 0:
+        with st.spinner("Computing 15-minute physical BESS dispatch & peak shaving..."):
             try:
                 sim_res = simulate_bess_dispatch(
                     bess_config=updated_bess_cfg,
@@ -465,17 +605,14 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 st.session_state[state_res_key] = sim_res
                 active_sub.summary_kpis["bess_peak_shaved_kw"] = sim_res.kpis.peak_shaved_kw
                 active_sub.summary_kpis["bess_throughput_kwh"] = sim_res.kpis.total_discharged_kwh
+                st.session_state["project_container"] = project
             except Exception as err:
                 st.error(f"BESS Simulation Error: {err}", icon=":material/error:")
                 return
 
-    # If no simulation result exists yet, show clean empty-state guidance
     if sim_res is None:
-        st.divider()
         st.info(
-            "**Ready to Simulate BESS Peak Shaving**\n\n"
-            "Review your battery parameters above and click **':material/calculate: Calculate BESS Peak Shaving & Electrical Dispatch'** "
-            "to compute the 15-minute electrical dispatch, peak demand reduction, and load duration curve.",
+            "Ready to simulate BESS. Please ensure an active load profile is loaded from Tab 1.",
             icon=":material/info:"
         )
         return

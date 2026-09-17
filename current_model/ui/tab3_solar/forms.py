@@ -59,6 +59,38 @@ SITE_PRESETS = {
 }
 
 
+def _apply_location_update(lat: float, lon: float, name: str, elevation: float, key_prefix: str) -> None:
+    st.session_state[f"{key_prefix}_lat"] = lat
+    st.session_state[f"{key_prefix}_lon"] = lon
+    st.session_state[f"{key_prefix}_name"] = name
+    st.session_state[f"{key_prefix}_elev"] = elevation
+
+    # Determine hemisphere-optimal azimuth (180° South for North Hemisphere, 0° North for South Hemisphere) and tilt
+    is_south = (lat < 0)
+    opt_azimuth = 0.0 if is_south else 180.0
+    opt_tilt = float(round(max(10.0, min(60.0, abs(lat) * 0.85)), 0))
+
+    # Purge widget state keys so input fields refresh with optimal values
+    for k in [
+        "app_tab3_form_tilt", "app_tab3_form_azimuth",
+        "tab3_solar_form_tilt", "tab3_solar_form_azimuth",
+        "solar_cfg_form_tilt", "solar_cfg_form_azimuth"
+    ]:
+        if k in st.session_state:
+            del st.session_state[k]
+
+    # Invalidate cached simulation results from the previous location so stale charts are cleared
+    for k in [
+        "app_tab3_sim_result", "tab3_solar_sim_result", "solar_kw_15min", "solar_kpis", "solar_financial_metrics"
+    ]:
+        if k in st.session_state:
+            del st.session_state[k]
+
+    # Auto-trigger calculation with the new location radiation dataset
+    st.session_state["app_tab3_trigger_calc"] = True
+    st.session_state["tab3_solar_trigger_calc"] = True
+
+
 def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocation:
     """
     Renders the location section featuring:
@@ -103,17 +135,13 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
                 if selected_match_label in options_dict:
                     chosen = options_dict[selected_match_label]
                     if abs(st.session_state[state_lat_key] - chosen["lat"]) > 0.001 or abs(st.session_state[state_lon_key] - chosen["lon"]) > 0.001:
-                        st.session_state[state_lat_key] = chosen["lat"]
-                        st.session_state[state_lon_key] = chosen["lon"]
-                        st.session_state[state_name_key] = chosen["display_name"]
-                        st.session_state[state_elev_key] = chosen.get("elevation", 500.0)
-                        for k in [
-                            "app_tab3_form_tilt", "app_tab3_form_azimuth",
-                            "tab3_solar_form_tilt", "tab3_solar_form_azimuth",
-                            "solar_cfg_form_tilt", "solar_cfg_form_azimuth"
-                        ]:
-                            if k in st.session_state:
-                                del st.session_state[k]
+                        _apply_location_update(
+                            lat=chosen["lat"],
+                            lon=chosen["lon"],
+                            name=chosen["display_name"],
+                            elevation=chosen.get("elevation", 500.0),
+                            key_prefix=key_prefix
+                        )
                         st.rerun()
             else:
                 st.caption("No matching cities found. Try another spelling.")
@@ -128,17 +156,13 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
         if preset_choice in SITE_PRESETS:
             p_data = SITE_PRESETS[preset_choice]
             if abs(st.session_state[state_lat_key] - p_data["lat"]) > 0.001 or abs(st.session_state[state_lon_key] - p_data["lon"]) > 0.001:
-                st.session_state[state_lat_key] = p_data["lat"]
-                st.session_state[state_lon_key] = p_data["lon"]
-                st.session_state[state_name_key] = p_data["name"]
-                st.session_state[state_elev_key] = p_data.get("elevation", 500.0)
-                for k in [
-                    "app_tab3_form_tilt", "app_tab3_form_azimuth",
-                    "tab3_solar_form_tilt", "tab3_solar_form_azimuth",
-                    "solar_cfg_form_tilt", "solar_cfg_form_azimuth"
-                ]:
-                    if k in st.session_state:
-                        del st.session_state[k]
+                _apply_location_update(
+                    lat=p_data["lat"],
+                    lon=p_data["lon"],
+                    name=p_data["name"],
+                    elevation=p_data.get("elevation", 500.0),
+                    key_prefix=key_prefix
+                )
                 st.rerun()
 
     cur_lat = float(st.session_state[state_lat_key])
@@ -178,9 +202,13 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
 
             if prev_click != (click_lat, click_lon) and (abs(click_lat - cur_lat) > 0.001 or abs(click_lon - cur_lon) > 0.001):
                 st.session_state[state_prev_click_key] = (click_lat, click_lon)
-                st.session_state[state_lat_key] = click_lat
-                st.session_state[state_lon_key] = click_lon
-                st.session_state[state_name_key] = f"Pinned Map Site ({click_lat:.3f}°, {click_lon:.3f}°)"
+                _apply_location_update(
+                    lat=click_lat,
+                    lon=click_lon,
+                    name=f"Pinned Map Site ({click_lat:.3f}°, {click_lon:.3f}°)",
+                    elevation=500.0,
+                    key_prefix=key_prefix
+                )
                 st.rerun()
 
     # Manual Coordinate Fields
@@ -197,8 +225,13 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
                 key=f"{key_prefix}_man_lat"
             )
             if man_lat != st.session_state[state_lat_key]:
-                st.session_state[state_lat_key] = man_lat
-                st.session_state[state_name_key] = f"Coordinates ({man_lat:.3f}°, {cur_lon:.3f}°)"
+                _apply_location_update(
+                    lat=man_lat,
+                    lon=cur_lon,
+                    name=f"Coordinates ({man_lat:.3f}°, {cur_lon:.3f}°)",
+                    elevation=float(st.session_state.get(state_elev_key, 500.0)),
+                    key_prefix=key_prefix
+                )
                 st.rerun()
 
         with c_lon:
@@ -212,8 +245,13 @@ def render_solar_location_section(key_prefix: str = "solar_loc") -> SolarLocatio
                 key=f"{key_prefix}_man_lon"
             )
             if man_lon != st.session_state[state_lon_key]:
-                st.session_state[state_lon_key] = man_lon
-                st.session_state[state_name_key] = f"Coordinates ({cur_lat:.3f}°, {man_lon:.3f}°)"
+                _apply_location_update(
+                    lat=cur_lat,
+                    lon=man_lon,
+                    name=f"Coordinates ({cur_lat:.3f}°, {man_lon:.3f}°)",
+                    elevation=float(st.session_state.get(state_elev_key, 500.0)),
+                    key_prefix=key_prefix
+                )
                 st.rerun()
 
     is_south = cur_lat < 0
@@ -543,8 +581,8 @@ def render_solar_config_form(
                 key=f"{key_prefix}_inv_eff"
             )
 
-        # 5. Solar Financial & Investment Parameters (DRACBV Kosten-/Berechnungs-Dashboard)
-        st.markdown("##### 5. Solar Financial & Turn-Key Investment Costs (Optional)")
+        # 6. Solar Financial & Investment Parameters (DRACBV Kosten-/Berechnungs-Dashboard)
+        st.markdown("##### 6. Solar Financial & Turn-Key Investment Costs (Optional)")
         st.caption("Enter investment costs to calculate CAPEX breakdown, LCOE (€/kWh), and 15-year life-cycle ROI. *Leave empty/unchecked if you wish to run technical generation only.*")
 
         existing_fin = (
@@ -552,11 +590,11 @@ def render_solar_config_form(
             st.session_state.get(f"{key_prefix}_fin_config") or 
             st.session_state.get("solar_financial_config") or 
             st.session_state.get("app_tab3_fin_config") or 
-            SolarFinancialConfig()
+            SolarFinancialConfig(is_enabled=True)
         )
         is_fin_active = st.checkbox(
             "Enable Solar Financial Assessment & Turn-Key CAPEX Calculation",
-            value=getattr(existing_fin, "is_enabled", False),
+            value=getattr(existing_fin, "is_enabled", True),
             key=f"{key_prefix}_enable_financials",
             help="When checked, computes itemized CAPEX (modules, inverters, substructure, installation), LCOE, and cash-flow timeline."
         )
@@ -700,12 +738,12 @@ def render_solar_config_form(
     fin_config = SolarFinancialConfig(
         is_enabled=bool(is_fin_active),
         currency=str(inp_curr or "EUR").strip(),
-        cost_modules_per_wp=float(inp_mod_wp) if is_fin_active else None,
-        cost_inverter_per_w=float(inp_inv_w) if is_fin_active else None,
-        cost_substructure_per_wp=float(inp_sub_wp) if is_fin_active else None,
-        cost_installation_per_wp=float(inp_inst_wp) if is_fin_active else None,
-        fixed_switchgear_cost=float(inp_switch) if is_fin_active else 0.0,
-        fixed_travel_fee=float(inp_travel) if is_fin_active else 0.0,
+        cost_modules_per_wp=float(inp_mod_wp),
+        cost_inverter_per_w=float(inp_inv_w),
+        cost_substructure_per_wp=float(inp_sub_wp),
+        cost_installation_per_wp=float(inp_inst_wp),
+        fixed_switchgear_cost=float(inp_switch),
+        fixed_travel_fee=float(inp_travel),
         annual_opex_pct=float(inp_opex),
         discount_rate_pct=float(inp_disc),
         electricity_price_inflation_pct=float(fin_infl),

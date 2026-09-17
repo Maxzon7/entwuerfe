@@ -287,6 +287,9 @@ def render_contract_comparison_view(
             chosen_contract = switchable_contracts[selected_to_switch]
             # Synchronize to all tab2 keys
             for prefix in ["app_tab2", "tab2", "contract"]:
+                loaded_dict_k = f"{prefix}_loaded_contracts_dict"
+                if loaded_dict_k in st.session_state and isinstance(st.session_state[loaded_dict_k], dict):
+                    st.session_state[loaded_dict_k][chosen_contract.name] = chosen_contract
                 st.session_state[f"{prefix}_contract_model"] = chosen_contract
                 st.session_state[f"{prefix}_tou_rates_df"] = pd.DataFrame(chosen_contract.tou_rates) if chosen_contract.tou_rates else pd.DataFrame([
                     {"name": "Standard Rate", "rate": chosen_contract.default_energy_rate, "start_time": "00:00", "end_time": "24:00"}
