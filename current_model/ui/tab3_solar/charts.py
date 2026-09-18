@@ -16,6 +16,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from current_model.models.solar import SolarMonthlyYield
 
 
@@ -771,6 +772,187 @@ def create_annual_running_costs_comparison_figure(
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
         height=380
+    )
+
+    return fig
+
+
+def create_unified_amortisation_master_figure(
+    fin_metrics: Any,
+    currency: str = "EUR"
+) -> go.Figure:
+    """
+    Constructs a unified, high-clarity 15-year life-cycle amortisation & cashflow master figure:
+      - Upper Subplot (Row 1): Cumulative Spend Trajectories (Status Quo vs. Mit Solar PV),
+        highlighting cumulative expenses, intersection point, and net 15-year savings.
+      - Lower Subplot (Row 2): Annual Net Savings Bars + Cumulative Net Cash Flow Curve,
+        with a 0-EUR break-even line.
+      - Shared X-Axis (Years 0-15) with vertical Amortisation marker running across both panels.
+    """
+    table = getattr(fin_metrics, "cash_flow_table", [])
+    if not table:
+        return go.Figure()
+
+    years = [0] + [row["year"] for row in table]
+    cum_sq = getattr(fin_metrics, "cumulative_status_quo", [])
+    cum_pv = getattr(fin_metrics, "cumulative_with_pv", [])
+    cum_cf = getattr(fin_metrics, "cumulative_cash_flow", [])
+
+    if not cum_sq or len(cum_sq) != len(years):
+        cum_sq = [0.0] + [row.get("cum_status_quo", 0.0) for row in table]
+    if not cum_pv or len(cum_pv) != len(years):
+        cum_pv = [fin_metrics.total_capex] + [row.get("cum_with_pv", fin_metrics.total_capex) for row in table]
+    if not cum_cf or len(cum_cf) != len(years):
+        cum_cf = [-fin_metrics.total_capex] + [row.get("cumulative_cash_flow", 0.0) for row in table]
+
+    annual_cf = [0.0] + [row.get("net_cash_flow", 0.0) for row in table]
+    pb = getattr(fin_metrics, "payback_period_years", None)
+    net_savings = getattr(fin_metrics, "total_lifetime_savings", 0.0)
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.58, 0.42],
+        subplot_titles=(
+            f"<b>15-Year Cumulative Total Expenses & Amortisation ({currency})</b>",
+            f"<b>Annual Net Benefit & Cumulative Cash Flow Payback ({currency})</b>"
+        )
+    )
+
+    # 1. Row 1: Status Quo Cumulative Line
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_sq,
+            mode="lines+markers",
+            name="Status Quo (Ohne PV)",
+            line=dict(color="#EF4444", width=2.8, dash="dash"),
+            marker=dict(size=6, color="#EF4444"),
+            hovertemplate="<b>Status Quo</b><br>Year %{x}: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
+        ),
+        row=1, col=1
+    )
+
+    # 2. Row 1: With Solar PV Cumulative Line
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_pv,
+            mode="lines+markers",
+            name="Mit Solar PV (CAPEX+Betrieb)",
+            line=dict(color="#10B981", width=3.2),
+            marker=dict(size=6, color="#10B981"),
+            hovertemplate="<b>Mit Solar PV</b><br>Year %{x}: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
+        ),
+        row=1, col=1
+    )
+
+    # Annotation of Total 15-Year Savings on Row 1
+    if net_savings > 0 and len(years) > 1:
+        last_y = years[-1]
+        fig.add_annotation(
+            x=last_y,
+            y=cum_pv[-1],
+            text=f"<b>Net Savings: +{net_savings:,.0f} {currency}</b>",
+            showarrow=True,
+            arrowhead=2,
+            arrowcolor="#10B981",
+            arrowsize=1,
+            arrowwidth=2,
+            ax=-75,
+            ay=-35,
+            bgcolor="rgba(16, 185, 129, 0.22)",
+            bordercolor="#10B981",
+            borderwidth=1,
+            font=dict(color="#F8FAFC", size=10.5),
+            row=1, col=1
+        )
+
+    # 3. Row 2: Annual Net Cash Flow Bars
+    fig.add_trace(
+        go.Bar(
+            x=years[1:],
+            y=annual_cf[1:],
+            name="Jährliche Netto-Ersparnis",
+            marker_color="rgba(56, 189, 248, 0.45)",
+            marker_line=dict(color="#38BDF8", width=1),
+            hovertemplate="Year %{x}: <b>+%{y:,.0f} " + currency + "</b> net/a<extra></extra>"
+        ),
+        row=2, col=1
+    )
+
+    # 4. Row 2: Cumulative Cash Flow Line
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_cf,
+            mode="lines+markers",
+            name="Kumulierter Netto-Cashflow",
+            line=dict(color="#10B981", width=2.8),
+            marker=dict(size=6, color="#10B981"),
+            hovertemplate="Year %{x}: <b>%{y:,.0f} " + currency + "</b> kumuliert<extra></extra>"
+        ),
+        row=2, col=1
+    )
+
+    # Zero Break-Even Line on Row 2
+    fig.add_hline(
+        y=0.0,
+        line_color="#64748B",
+        line_width=1.2,
+        line_dash="dash",
+        annotation_text="Break-Even (0 €)",
+        annotation_position="bottom right",
+        annotation_font=dict(color="#94A3B8", size=9.5),
+        row=2, col=1
+    )
+
+    # Payback / Amortisation Marker across both Subplots
+    if pb is not None and pb <= len(years) - 1:
+        fig.add_vline(
+            x=pb,
+            line_color="#F59E0B",
+            line_width=2.2,
+            line_dash="dot",
+            annotation_text=f"Amortisation: {pb:.1f} Yrs",
+            annotation_position="top left",
+            annotation_font=dict(color="#F59E0B", size=11)
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis2=dict(
+            title="Operational Year",
+            tickmode="linear",
+            dtick=1,
+            gridcolor="#1E293B"
+        ),
+        xaxis=dict(
+            tickmode="linear",
+            dtick=1,
+            gridcolor="#1E293B"
+        ),
+        yaxis=dict(
+            title=f"Cumulative Spend ({currency})",
+            gridcolor="#1E293B"
+        ),
+        yaxis2=dict(
+            title=f"Cash Flow ({currency})",
+            gridcolor="#1E293B"
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.04,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10.5)
+        ),
+        margin=dict(l=40, r=25, t=55, b=35),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=560
     )
 
     return fig

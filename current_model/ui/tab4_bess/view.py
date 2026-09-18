@@ -50,10 +50,7 @@ from current_model.ui.tab4_bess.charts import (
     create_grid_violation_preview_figure,
     create_average_week_dispatch_figure,
     create_bess_soc_analysis_figure,
-    create_bess_soc_heatmap_figure,
     create_bess_dispatch_timeseries_figure,
-    create_load_duration_peak_shaving_figure,
-    create_seasonal_bess_diurnal_figure,
     create_monthly_bess_throughput_figure
 )
 from current_model.ui.tab4_bess.financial_view import render_tab4_2_financial
@@ -697,21 +694,18 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
     st.write("")
 
     # --------------------------------------------------------------------------
-    # 6. Interactive Visual Dispatch Analytics (6 Modern Tabs)
+    # 6. Interactive Visual Dispatch Analytics (4 Modern Tabs)
     # --------------------------------------------------------------------------
     st.markdown("##### 4. Visual Dispatch & Battery Dynamics Analysis")
 
-    tab_avg_week, tab_soc, tab_ts, tab_ldc, tab_diurnal, tab_monthly = st.tabs([
+    tab_avg_week, tab_ts, tab_monthly = st.tabs([
         ":material/view_week: Representative Average Week (7-Day Dispatch)",
-        ":material/battery_charging_full: Battery SoC Dynamics & 24h Heatmap",
-        ":material/timeline: 15-Minute Timeseries Dispatch (Zoomable)",
-        ":material/trending_down: Peak Shaving Load Duration Curve",
-        ":material/schedule: Seasonal 24-Hour Diurnal Operation",
+        ":material/timeline: 15-Minute Timeseries Dispatch & Battery SoC (Zoomable)",
         ":material/bar_chart: Monthly Throughput & Cycles"
     ])
 
     with tab_avg_week:
-        st.caption(":material/info: *Continuous 168-hour representative Monday–Sunday profile averaged across the full simulation period, showing peak shaving dispatch, recharging, and battery state of charge.*")
+        st.caption(":material/info: *Continuous 168-hour representative Monday–Sunday profile averaged across the full simulation period, showing peak shaving dispatch and recharging.*")
         df_avg_week = compute_average_week_dispatch(df_ts, step_hours=load_summary.get("hours_per_step", 0.25))
         fig_avg = create_average_week_dispatch_figure(
             df_avg_week=df_avg_week,
@@ -720,16 +714,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         )
         st.plotly_chart(fig_avg, use_container_width=True)
 
-    with tab_soc:
-        st.caption(":material/info: *State of Charge (SoC %) dynamics, safe operational envelope boundaries (SoC min/max), stored energy (kWh), and 24-hour weekly charge heatmap.*")
-        fig_soc_dyn = create_bess_soc_analysis_figure(df=df_ts, bess_config=updated_bess_cfg)
-        st.plotly_chart(fig_soc_dyn, use_container_width=True)
-
-        fig_soc_heat = create_bess_soc_heatmap_figure(df=df_ts)
-        st.plotly_chart(fig_soc_heat, use_container_width=True)
-
     with tab_ts:
-        st.caption(":material/info: *High-resolution 15-minute interval dispatch profile. Use the range buttons or range slider below to zoom into specific weeks or months.*")
+        st.caption(":material/info: *High-resolution 15-minute interval active power dispatch profile, directly coupled with the battery State of Charge (SoC %) dynamics below:*")
         fig_ts = create_bess_dispatch_timeseries_figure(
             df=df_ts,
             grid_limit_kw=grid_limit_val,
@@ -738,19 +724,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         )
         st.plotly_chart(fig_ts, use_container_width=True)
 
-    with tab_ldc:
-        st.caption(":material/info: *Peak shaving impact on the annual load duration curve, highlighting peak hours shaved down by the battery storage.*")
-        fig_ldc = create_load_duration_peak_shaving_figure(
-            df=df_ts,
-            grid_limit_kw=grid_limit_val,
-            step_hours=load_summary.get("hours_per_step", 0.25)
-        )
-        st.plotly_chart(fig_ldc, use_container_width=True)
-
-    with tab_diurnal:
-        st.caption(":material/info: *Seasonal 24-hour diurnal cycling and battery charge/discharge behavior across summer, autumn, winter, and spring.*")
-        fig_diurnal = create_seasonal_bess_diurnal_figure(df=df_ts)
-        st.plotly_chart(fig_diurnal, use_container_width=True)
+        fig_soc_dyn = create_bess_soc_analysis_figure(df=df_ts, bess_config=updated_bess_cfg)
+        st.plotly_chart(fig_soc_dyn, use_container_width=True)
 
     with tab_monthly:
         st.caption(":material/info: *Monthly discharged energy (MWh) and equivalent full cycle counts over the annual operation cycle.*")

@@ -26,8 +26,7 @@ from current_model.core.project_io import export_project_from_session, sync_acti
 from current_model.core.bess_engine import simulate_bess_dispatch, BESSSimulationResult
 from current_model.core.bess_financial_engine import (
     compute_bess_financial_metrics,
-    compute_bess_capex_breakdown,
-    compute_bess_sensitivity_matrix
+    compute_bess_capex_breakdown
 )
 from current_model.core.synthetic_engine import aggregate_synthetic_year
 from current_model.models.presets import get_industry_preset_consumers
@@ -41,8 +40,7 @@ from current_model.ui.tab4_bess.financial_charts import (
     create_bess_cashflow_payback_figure,
     create_bess_annual_cost_comparison_figure,
     create_bess_cumulative_cost_trajectory_figure,
-    create_bess_capex_donut_figure,
-    create_bess_sensitivity_figure
+    create_bess_capex_donut_figure
 )
 
 
@@ -291,12 +289,11 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
     # --------------------------------------------------------------------------
     st.markdown("##### Visual Financial Analysis & Investment Trajectory")
 
-    tab_cf, tab_comp, tab_traj, tab_donut, tab_sens = st.tabs([
+    tab_cf, tab_comp, tab_traj, tab_donut = st.tabs([
         ":material/timeline: 15-Year Cash Flow & Amortization",
         ":material/balance: Annual Electricity Cost Comparison",
         ":material/trending_up: 15-Year Cumulative Total Cost",
-        ":material/pie_chart: CAPEX Sizing Breakdown",
-        ":material/tune: Parameter Sensitivity Analysis"
+        ":material/pie_chart: CAPEX Sizing Breakdown"
     ])
 
     with tab_cf:
@@ -318,17 +315,6 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
         st.caption(":material/info: *Itemized Turn-Key CAPEX breakdown into Battery Modules, Inverter/PCS, BOS, and Grid Integration.*")
         fig_donut = create_bess_capex_donut_figure(capex_breakdown, currency=currency)
         st.plotly_chart(fig_donut, use_container_width=True)
-
-    with tab_sens:
-        st.caption(":material/info: *Sensitivity of Simple Payback Period against ±10% and ±20% shifts in Battery CAPEX and Peak Demand Tariffs.*")
-        sens_rows = compute_bess_sensitivity_matrix(
-            bess_config=bess_cfg,
-            df_timeseries=sim_res.df_timeseries,
-            contract=active_contract,
-            grid_limit_kw=grid_limit_val
-        )
-        fig_sens = create_bess_sensitivity_figure(sens_rows, metric="payback_years")
-        st.plotly_chart(fig_sens, use_container_width=True)
 
     # --------------------------------------------------------------------------
     # 6. Detailed 15-Year Life-Cycle Cash Flow Table

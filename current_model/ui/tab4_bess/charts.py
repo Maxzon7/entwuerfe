@@ -17,6 +17,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from current_model.models.bess import BESSConfig, BESSKPIs
 
@@ -122,9 +123,9 @@ def create_bess_dispatch_timeseries_figure(
     capacity_kwh: float
 ) -> go.Figure:
     """
-    Constructs an interactive 15-minute timeseries showing load, residual grid import,
-    battery discharge, battery charge, and State of Charge (SoC %).
-    Includes range selectors and defaults to an initial 14-day zoomed view to prevent visual clutter.
+    Constructs an interactive 15-minute active power dispatch and peak shaving profile:
+    Facility Load, Residual Grid Import, Battery Discharge, Battery Charge, and Peak Shaving Target.
+    Includes range selectors and defaults to an initial 14-day zoomed view.
     """
     fig = go.Figure()
 
@@ -182,21 +183,7 @@ def create_bess_dispatch_timeseries_figure(
         )
     )
 
-    # 5. State of Charge (%) on Secondary Axis
-    fig.add_trace(
-        go.Scattergl(
-            x=timestamps,
-            y=plot_df["SoC_pct"],
-            name="Battery SoC (%)",
-            mode="lines",
-            yaxis="y2",
-            line=dict(color="#A855F7", width=1.8),
-            hovertemplate="<b>SoC: %{y:.1f}%</b><extra></extra>",
-            showlegend=True
-        )
-    )
-
-    # Grid Limit Threshold
+    # Grid Limit / Peak Shaving Threshold
     fig.add_hline(
         y=target_cap_kw,
         line_dash="dash",
@@ -218,7 +205,7 @@ def create_bess_dispatch_timeseries_figure(
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text=f"<b>15-Minute BESS Peak Shaving & Dispatch Profile</b> "
+            text=f"<b>15-Minute BESS Peak Shaving & Active Power Dispatch Profile</b> "
                  f"<span style='font-size:12px; color:#94A3B8;'>({capacity_kwh:,.0f} kWh BESS | Target Cap: {target_cap_kw:,.0f} kW)</span>",
             font=dict(size=14, color="#F8FAFC")
         ),
@@ -247,14 +234,6 @@ def create_bess_dispatch_timeseries_figure(
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
-        yaxis2=dict(
-            title="Battery SoC (%)",
-            overlaying="y",
-            side="right",
-            range=[0, 105],
-            gridcolor="rgba(168, 85, 247, 0.15)",
-            showgrid=False
-        ),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -263,10 +242,10 @@ def create_bess_dispatch_timeseries_figure(
             x=1.0,
             font=dict(size=11)
         ),
-        margin=dict(l=20, r=40, t=75, b=20),
+        margin=dict(l=20, r=25, t=75, b=20),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
-        height=450
+        height=390
     )
 
     return fig
@@ -340,21 +319,6 @@ def create_average_week_dispatch_figure(
         )
     )
 
-    # 5. State of Charge (%) on Secondary Axis
-    fig.add_trace(
-        go.Scatter(
-            x=x_vals,
-            y=df_avg_week["SoC_pct"],
-            name="Battery SoC (%)",
-            mode="lines",
-            yaxis="y2",
-            line=dict(color="#C084FC", width=2.0),
-            customdata=hover_labels,
-            hovertemplate="<b>%{customdata}</b><br>SoC: <b>%{y:.1f}%</b><extra></extra>",
-            showlegend=True
-        )
-    )
-
     # Peak Shaving Target
     fig.add_hline(
         y=target_cap_kw,
@@ -387,7 +351,7 @@ def create_average_week_dispatch_figure(
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text=f"<b>Representative Average Week (7-Day Continuous Dispatch & SoC Profile)</b><br>"
+            text=f"<b>Representative Average Week (7-Day Continuous Power Dispatch)</b><br>"
                  f"<span style='font-size:11px; color:#94A3B8;'>Aggregated 168-hour continuous cycle ({capacity_kwh:,.0f} kWh BESS | Target Cap: {target_cap_kw:,.0f} kW)</span>",
             font=dict(size=14, color="#F8FAFC")
         ),
@@ -404,14 +368,6 @@ def create_average_week_dispatch_figure(
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
-        yaxis2=dict(
-            title="Battery SoC (%)",
-            overlaying="y",
-            side="right",
-            range=[0, 105],
-            gridcolor="rgba(192, 132, 252, 0.15)",
-            showgrid=False
-        ),
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -420,7 +376,7 @@ def create_average_week_dispatch_figure(
             x=1.0,
             font=dict(size=11)
         ),
-        margin=dict(l=20, r=40, t=65, b=20),
+        margin=dict(l=20, r=20, t=65, b=20),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
         height=420
@@ -454,8 +410,8 @@ def create_bess_soc_analysis_figure(
             y=plot_df["SoC_pct"],
             name="Battery SoC (%)",
             line=dict(color="#A855F7", width=2.0),
-            fill="tonexty",
-            fillcolor="rgba(168, 85, 247, 0.15)",
+            fill="tozeroy",
+            fillcolor="rgba(168, 85, 247, 0.22)",
             hovertemplate="<b>%{x|%d %b %Y %H:%M}</b><br>Battery SoC: <b>%{y:.1f}%</b><extra></extra>",
             showlegend=True
         )

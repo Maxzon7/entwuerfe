@@ -57,14 +57,11 @@ from current_model.ui.common.session_utils import (
 from current_model.ui.tab3_solar.integration_charts import (
     create_solar_load_dispatch_figure,
     create_monthly_energy_balance_figure,
-    create_seasonal_dispatch_daily_figure,
-    create_energy_flow_sankey_figure,
-    create_bess_readiness_figure
+    create_energy_flow_sankey_figure
 )
 from current_model.ui.tab3_solar.charts import (
-    create_solar_cashflow_payback_figure,
-    create_cumulative_cost_comparison_figure,
-    create_annual_running_costs_comparison_figure
+    create_annual_running_costs_comparison_figure,
+    create_unified_amortisation_master_figure
 )
 
 
@@ -539,16 +536,14 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     st.write("")
 
     # --------------------------------------------------------------------------
-    # 6. Interactive Visual Dispatch Analytics (5 Modern Tabs)
+    # 6. Interactive Visual Dispatch Analytics (3 Core Tabs)
     # --------------------------------------------------------------------------
     st.markdown("##### 3. Visual Dispatch Analysis")
 
-    chart_tab1, chart_tab2, chart_tab3, chart_tab4, chart_tab5 = st.tabs([
+    chart_tab1, chart_tab2, chart_tab3 = st.tabs([
         ":material/timeline: 15-Minute Dispatch Timeseries",
         ":material/bar_chart: Monthly Energy Balance",
-        ":material/wb_sunny: Seasonal Diurnal Profiles",
-        ":material/schema: Energy Flow (Sankey)",
-        ":material/battery_charging_full: BESS Storage Readiness"
+        ":material/schema: Energy Flow (Sankey)"
     ])
 
     with chart_tab1:
@@ -564,16 +559,8 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         st.plotly_chart(fig_monthly, use_container_width=True)
 
     with chart_tab3:
-        fig_seasonal = create_seasonal_dispatch_daily_figure(df=df_ts)
-        st.plotly_chart(fig_seasonal, use_container_width=True)
-
-    with chart_tab4:
         fig_sankey = create_energy_flow_sankey_figure(kpis=kpis)
         st.plotly_chart(fig_sankey, use_container_width=True)
-
-    with chart_tab5:
-        fig_bess = create_bess_readiness_figure(df=df_ts)
-        st.plotly_chart(fig_bess, use_container_width=True)
 
     st.divider()
 
@@ -726,24 +713,19 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                             f"Capital return rate across horizon"
                         )
 
-                    # 15-Year Life-Cycle Comparison Diagrams (3 Interactive Tabs)
-                    diag_tab1, diag_tab2, diag_tab3 = st.tabs([
-                        ":material/show_chart: Cumulative Total Cost & Amortisation (Status Quo vs. With Solar PV)",
-                        ":material/bar_chart: Annual Running Costs & Operating Expenses",
-                        ":material/payments: Net Cash Flow & Payback Curve"
+                    # 15-Year Life-Cycle Master Trajectory & Amortisation Diagram
+                    diag_tab_master, diag_tab_running = st.tabs([
+                        ":material/show_chart: Master Amortisation & Cash Flow Curve",
+                        ":material/bar_chart: Annual Running Costs & Invoices"
                     ])
 
-                    with diag_tab1:
-                        fig_cum = create_cumulative_cost_comparison_figure(coupled_fin_metrics, currency=curr)
-                        st.plotly_chart(fig_cum, use_container_width=True)
+                    with diag_tab_master:
+                        fig_master = create_unified_amortisation_master_figure(coupled_fin_metrics, currency=curr)
+                        st.plotly_chart(fig_master, use_container_width=True)
 
-                    with diag_tab2:
+                    with diag_tab_running:
                         fig_running = create_annual_running_costs_comparison_figure(coupled_fin_metrics, currency=curr)
                         st.plotly_chart(fig_running, use_container_width=True)
-
-                    with diag_tab3:
-                        fig_cf = create_solar_cashflow_payback_figure(coupled_fin_metrics, currency=curr)
-                        st.plotly_chart(fig_cf, use_container_width=True)
 
                     # 15-Year Year-by-Year Table
                     with st.expander("15-Year Life-Cycle Year-by-Year Table (Cashflow, Degradation, OPEX, Savings)", icon=":material/view_timeline:", expanded=False):

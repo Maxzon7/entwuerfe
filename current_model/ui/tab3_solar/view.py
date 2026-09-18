@@ -33,7 +33,8 @@ from current_model.ui.tab3_solar.charts import (
     create_solar_capex_donut_figure,
     create_solar_cashflow_payback_figure,
     create_cumulative_cost_comparison_figure,
-    create_annual_running_costs_comparison_figure
+    create_annual_running_costs_comparison_figure,
+    create_unified_amortisation_master_figure
 )
 from current_model.ui.tab3_solar.integration_view import render_solar_integration_view
 
@@ -802,28 +803,23 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 fig_donut = create_solar_capex_donut_figure(fin_m, currency=f_curr)
                 st.plotly_chart(fig_donut, use_container_width=True)
 
-            # 4. 15-Year Life-Cycle Trajectory & Amortisation Curves
+            # 4. 15-Year Life-Cycle Trajectory & Amortisation Master Curves
             st.write("")
             st.markdown("##### 15-Year Life-Cycle Cost Trajectory & Amortisation Analysis")
-            st.caption("Directly compare total cumulative expenses, annual running operating costs, and the exact investment amortisation point:")
+            st.caption("Synchronized direct comparison of total cumulative expenses (Status Quo vs. Mit PV), amortisation point, and annual net cashflow:")
 
-            cf_tab1, cf_tab2, cf_tab3 = st.tabs([
-                ":material/show_chart: Cumulative Total Cost & Amortisation (Status Quo vs. Mit PV)",
-                ":material/bar_chart: Annual Running Costs & Operating Expenses",
-                ":material/payments: Net Cash Flow & Payback Curve"
+            cf_tab_master, cf_tab_running = st.tabs([
+                ":material/show_chart: Master Amortisation & Cash Flow Curve",
+                ":material/bar_chart: Annual Running Costs & Invoices"
             ])
 
-            with cf_tab1:
-                fig_cum = create_cumulative_cost_comparison_figure(fin_m, currency=f_curr)
-                st.plotly_chart(fig_cum, use_container_width=True)
+            with cf_tab_master:
+                fig_master = create_unified_amortisation_master_figure(fin_m, currency=f_curr)
+                st.plotly_chart(fig_master, use_container_width=True)
 
-            with cf_tab2:
+            with cf_tab_running:
                 fig_running = create_annual_running_costs_comparison_figure(fin_m, currency=f_curr)
                 st.plotly_chart(fig_running, use_container_width=True)
-
-            with cf_tab3:
-                fig_cf = create_solar_cashflow_payback_figure(fin_m, currency=f_curr)
-                st.plotly_chart(fig_cf, use_container_width=True)
 
             # 5. 15-Year Life-Cycle Year-by-Year Table
             with st.expander("15-Year Life-Cycle Year-by-Year Table (Cashflow, Degradation, OPEX, Savings)", icon=":material/view_timeline:", expanded=False):
