@@ -120,5 +120,5 @@ def render_contract_view(key_prefix: str = "contract") -> Contract:
     """
     Renders the dedicated Contract Data Tab view with caution warning.
     """
-    st.warning("⚠️ Should you wish to not use a contract, leave the fields empty.")
+    st.warning("Should you wish to not use a contract, leave the fields empty.", icon=":material/warning:")
     return render_contract_form(as_expander=False, key_prefix=key_prefix)

@@ -533,7 +533,7 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         btn_c1, _ = st.columns([4, 6])
         with btn_c1:
             recalc_clicked = st.button(
-                "⚡ Recalculate BESS Peak Shaving & Electrical Dispatch",
+                "Recalculate BESS Peak Shaving & Electrical Dispatch",
                 icon=":material/calculate:",
                 type="primary",
                 use_container_width=True,
@@ -638,7 +638,7 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         render_kpi_card(
             "Peak Demand Reduction",
             f"-{shaved_kw:,.1f} kW",
-            f"Original: {orig_pk:,.1f} kW ➔ Residual: {res_pk:,.1f} kW (-{shaved_pct:.1f}%)",
+            f"Original: {orig_pk:,.1f} kW -> Residual: {res_pk:,.1f} kW (-{shaved_pct:.1f}%)",
             status="ok" if shaved_kw > 0.1 else "default"
         )
     with m2:

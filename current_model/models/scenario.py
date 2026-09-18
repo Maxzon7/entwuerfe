@@ -298,6 +298,7 @@ class ProjectContainer:
     base_scenario: BaseScenario = field(default_factory=BaseScenario)
     sub_scenarios: List[SubScenario] = field(default_factory=list)
     active_sub_scenario_id: Optional[str] = None
+    is_initialized: bool = True
 
     def add_sub_scenario(self, scenario: SubScenario) -> None:
         """Adds a new sub-scenario and activates it."""
@@ -313,14 +314,10 @@ class ProjectContainer:
         return None
 
     def get_active_scenario(self) -> Optional[SubScenario]:
-        """Returns the currently active sub-scenario, or first if not specified."""
-        if not self.sub_scenarios:
+        """Returns the currently active sub-scenario, or None if Status Quo / base benchmark is active."""
+        if not self.active_sub_scenario_id or self.active_sub_scenario_id == "base":
             return None
-        if self.active_sub_scenario_id:
-            s = self.get_sub_scenario(self.active_sub_scenario_id)
-            if s:
-                return s
-        return self.sub_scenarios[0]
+        return self.get_sub_scenario(self.active_sub_scenario_id)
 
     def duplicate_sub_scenario(self, scenario_id: str, new_name: Optional[str] = None) -> Optional[SubScenario]:
         """Duplicates an existing sub-scenario and adds it to the project."""
@@ -367,6 +364,7 @@ class ProjectContainer:
             "description": self.description,
             "author": self.author,
             "currency": self.currency,
+            "is_initialized": bool(self.is_initialized),
             "created_at": self.created_at,
             "updated_at": datetime.datetime.utcnow().isoformat(),
             "active_sub_scenario_id": self.active_sub_scenario_id,
@@ -397,6 +395,7 @@ class ProjectContainer:
             description=data.get("description", ""),
             author=data.get("author", "DRACBV Consultant"),
             currency=data.get("currency", "EUR"),
+            is_initialized=bool(data.get("is_initialized", True)),
             created_at=data.get("created_at", datetime.datetime.utcnow().isoformat()),
             updated_at=data.get("updated_at", datetime.datetime.utcnow().isoformat()),
             active_sub_scenario_id=data.get("active_sub_scenario_id"),

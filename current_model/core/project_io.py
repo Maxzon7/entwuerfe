@@ -285,6 +285,17 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
     active_sub = project.get_active_scenario()
     base = project.base_scenario
 
+    # Synchronize canonical scenario selector widget keys in session state
+    active_id = active_sub.id if active_sub else "base"
+    try:
+        st.session_state["sidebar_target_scenario_select"] = active_id
+    except Exception:
+        pass
+    try:
+        st.session_state["app_scenarios_target_scenario_select"] = active_id
+    except Exception:
+        pass
+
     # 1. Purge all Tab 3 and Tab 4 widget keys so forms re-instantiate cleanly
     widget_keys_to_clear = [
         # Tab 3 widget keys

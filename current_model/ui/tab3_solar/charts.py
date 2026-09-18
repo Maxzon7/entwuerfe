@@ -680,11 +680,11 @@ def create_annual_running_costs_comparison_figure(
 ) -> go.Figure:
     """
     Constructs a 15-year annual operating & electricity invoice comparison chart showing:
-      - Status Quo Annual Electricity Bill (ohne PV)
-      - Residual Electricity Bill (mit PV)
-      - Annual PV OPEX / Maintenance (Wartung & Instandhaltung)
-      - Annual Surplus Feed-in Revenue (Einspeiseerlös)
-      - Net Annual Savings (Netto-Einsparung pro Jahr)
+      - Status Quo Annual Electricity Bill (without PV)
+      - Residual Electricity Bill (with PV)
+      - Annual PV OPEX / Maintenance
+      - Annual Surplus Feed-in Revenue
+      - Net Annual Savings per Year
     """
     fig = go.Figure()
 
@@ -704,7 +704,7 @@ def create_annual_running_costs_comparison_figure(
         go.Bar(
             x=years,
             y=sq_bills,
-            name="Status Quo Stromrechnung (ohne PV)",
+            name="Status Quo Electricity Bill (without PV)",
             marker_color="rgba(239, 68, 68, 0.65)",
             hovertemplate="%{x}<br>Status Quo Bill: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
         )
@@ -715,7 +715,7 @@ def create_annual_running_costs_comparison_figure(
         go.Bar(
             x=years,
             y=res_bills,
-            name="Reststromrechnung (mit PV)",
+            name="Residual Grid Bill (with PV)",
             marker_color="rgba(56, 189, 248, 0.75)",
             hovertemplate="%{x}<br>Residual Grid Bill: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
         )
@@ -726,7 +726,7 @@ def create_annual_running_costs_comparison_figure(
         go.Bar(
             x=years,
             y=opex_vals,
-            name="PV-Wartung & OPEX (Instandhaltung)",
+            name="Annual PV OPEX & Maintenance",
             marker_color="rgba(245, 158, 11, 0.8)",
             hovertemplate="%{x}<br>Annual PV OPEX: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
         )
@@ -738,7 +738,7 @@ def create_annual_running_costs_comparison_figure(
             x=years,
             y=net_savings,
             mode="lines+markers",
-            name="Jährliche Netto-Ersparnis (Vorteil)",
+            name="Annual Net Savings",
             line=dict(color="#10B981", width=3),
             marker=dict(size=6, color="#10B981"),
             hovertemplate="%{x}<br>Net Annual Savings: <b>+%{y:,.0f} " + currency + "</b>/a<extra></extra>"
@@ -874,7 +874,7 @@ def create_unified_amortisation_master_figure(
         go.Bar(
             x=years[1:],
             y=annual_cf[1:],
-            name="Jährliche Netto-Ersparnis",
+            name="Annual Net Savings",
             marker_color="rgba(56, 189, 248, 0.45)",
             marker_line=dict(color="#38BDF8", width=1),
             hovertemplate="Year %{x}: <b>+%{y:,.0f} " + currency + "</b> net/a<extra></extra>"

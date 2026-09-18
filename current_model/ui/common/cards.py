@@ -92,7 +92,7 @@ def render_active_scenario_banner() -> None:
                 </div>
             </div>
             <div style="font-size: 0.8rem; color: #64748B; text-align: right;">
-                <span>Switch / create branches in the sidebar 👈</span>
+                <span>Switch / create branches in the left sidebar &larr;</span>
             </div>
         </div>
         """,

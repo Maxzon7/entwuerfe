@@ -572,10 +572,10 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
         if fin_m and fin_m.is_configured and fin_m.total_capex > 0:
             f_curr = fin_m.currency
             st.subheader("Solar Turn-Key Investment Costs & CAPEX Breakdown")
-            st.caption(f"Turn-key solar plant investment breakdown (DRACBV Kosten-/Berechnungs-Dashboard) and standalone electricity generation costs (LCOE):")
+            st.caption(f"Turn-key solar plant investment breakdown (DRACBV Cost & Sizing Dashboard) and standalone electricity generation costs (LCOE):")
 
             # Quick Turn-Key Cost & CAPEX Tuner Expander
-            with st.expander("🔧 Quick Turn-Key Cost & Financial Parameter Tuner (Live Recalculation)", expanded=False):
+            with st.expander(":material/tune: Quick Turn-Key Cost & Financial Parameter Tuner (Live Recalculation)", expanded=False):
                 st.caption("Fine-tune individual investment rates and capital interest without re-running physical weather simulation:")
                 tf_c1, tf_c2, tf_c3, tf_c4 = st.columns(4)
                 with tf_c1:
@@ -783,14 +783,14 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                         "Share": f"{(fin_m.capex_installation / fin_m.total_capex * 100.0):.1f} %"
                     },
                     {
-                        "Component": "5. Switchgear Cabinet (Zählerschrank)",
+                        "Component": "5. Switchgear Cabinet",
                         "Basis": "Fixed Turn-Key Item",
                         "Unit Rate": f"{active_fin.fixed_switchgear_cost:,.2f} {f_curr}" if active_fin.fixed_switchgear_cost else "-",
                         f"Total ({f_curr})": f"{active_fin.fixed_switchgear_cost:,.2f}",
                         "Share": f"{(active_fin.fixed_switchgear_cost / fin_m.total_capex * 100.0):.1f} %"
                     },
                     {
-                        "Component": "6. Mobilization Fee (Anfahrtsgebühr)",
+                        "Component": "6. Mobilization Fee",
                         "Basis": "Fixed Turn-Key Item",
                         "Unit Rate": f"{active_fin.fixed_travel_fee:,.2f} {f_curr}" if active_fin.fixed_travel_fee else "-",
                         f"Total ({f_curr})": f"{active_fin.fixed_travel_fee:,.2f}",

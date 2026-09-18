@@ -483,7 +483,7 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                     <div style="font-size:0.8rem; color:#CBD5E1; line-height:1.6; margin-bottom:10px;">
                         <div><b>Solar PV:</b> <span style="color:{'#F59E0B' if pv_desc != 'None' else '#94A3B8'};">{pv_desc}</span></div>
                         <div><b>Storage (BESS):</b> <span style="color:{'#10B981' if bess_desc != 'None' else '#94A3B8'};">{bess_desc}</span></div>
-                        <div><b>Backup Genset:</b> <span style="color:{'#EC4899' if gen_desc != 'None' else '#94A3B8'};">{gen_desc}</span></div>
+                        <div><b>Vertragswechsel:</b> <span style="color:{'#38BDF8' if (sub_obj and sub_obj.use_custom_grid_tariff) else '#94A3B8'};">{'Aktiv (Neuer Tarif)' if (sub_obj and sub_obj.use_custom_grid_tariff) else 'None (Status Quo)'}</span></div>
                     </div>
                     <div style="background:rgba(0,0,0,0.3); border-radius:6px; padding:8px; font-size:0.78rem; color:#E2E8F0; display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:8px;">
                         <div><span style="color:#94A3B8;">CAPEX:</span> <b>{r['capex_str']}</b></div>
@@ -507,36 +507,27 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                         sync_active_scenario_into_session(project, auto_execute=False)
                         st.rerun()
             with btn_act_col2:
-                with st.popover("⚙️", help="Branch & Component Options"):
+                with st.popover("", icon=":material/settings:", help="Branch & Component Options"):
                     st.markdown(f"**{r['name']}**")
-                    if sub_obj and sub_obj.include_solar:
-                        if st.button("☀️ Remove Solar", key=f"{key_prefix}_card_rm_sol_{sc_id}", use_container_width=True):
-                            sub_obj.remove_component("solar")
+                    if sub_obj:
+                        st.caption("Active Solution Modules:")
+                        t_sol = st.checkbox("Solar PV", value=sub_obj.include_solar, key=f"{key_prefix}_card_chk_sol_{sc_id}")
+                        t_bess = st.checkbox("BESS Storage", value=sub_obj.include_bess, key=f"{key_prefix}_card_chk_bess_{sc_id}")
+                        t_tar = st.checkbox("Tariff Switch", value=sub_obj.use_custom_grid_tariff, key=f"{key_prefix}_card_chk_tar_{sc_id}")
+                        if t_sol != sub_obj.include_solar or t_bess != sub_obj.include_bess or t_tar != sub_obj.use_custom_grid_tariff:
+                            sub_obj.include_solar = t_sol
+                            sub_obj.include_bess = t_bess
+                            sub_obj.use_custom_grid_tariff = t_tar
                             st.session_state["project_container"] = project
                             sync_active_scenario_into_session(project, auto_execute=False)
                             st.rerun()
-                    if sub_obj and sub_obj.include_bess:
-                        if st.button("🔋 Remove BESS", key=f"{key_prefix}_card_rm_bess_{sc_id}", use_container_width=True):
-                            sub_obj.remove_component("bess")
+
+                        st.divider()
+                        if st.button("Delete Branch", icon=":material/delete:", key=f"{key_prefix}_card_del_{sc_id}", type="secondary", use_container_width=True):
+                            project.delete_sub_scenario(sc_id)
                             st.session_state["project_container"] = project
                             sync_active_scenario_into_session(project, auto_execute=False)
                             st.rerun()
-                    if sub_obj and sub_obj.include_generator:
-                        if st.button("⚡ Remove Genset", key=f"{key_prefix}_card_rm_gen_{sc_id}", use_container_width=True):
-                            sub_obj.remove_component("generator")
-                            st.session_state["project_container"] = project
-                            sync_active_scenario_into_session(project, auto_execute=False)
-                            st.rerun()
-                    if st.button("🔄 Reset to Blank", key=f"{key_prefix}_card_reset_{sc_id}", use_container_width=True):
-                        sub_obj.remove_component("all")
-                        st.session_state["project_container"] = project
-                        sync_active_scenario_into_session(project, auto_execute=False)
-                        st.rerun()
-                    if st.button("🗑️ Delete Branch", key=f"{key_prefix}_card_del_{sc_id}", type="secondary", use_container_width=True):
-                        project.delete_sub_scenario(sc_id)
-                        st.session_state["project_container"] = project
-                        sync_active_scenario_into_session(project, auto_execute=False)
-                        st.rerun()
 
     # Toolbar to create new branch directly from architecture overview
     c_new1, _ = st.columns([3.5, 6.5])
@@ -548,6 +539,10 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                 value=f"Sub-Scenario {len(project.sub_scenarios) + 1}",
                 key=f"{key_prefix}_t5_tree_new_name"
             )
+            st.markdown("**Select Modules to Include:**")
+            t_inc_sol = st.checkbox("Solar PV Generation", value=True, key=f"{key_prefix}_tree_new_sol")
+            t_inc_bess = st.checkbox("Battery Storage (BESS)", value=False, key=f"{key_prefix}_tree_new_bess")
+            t_inc_tar = st.checkbox("Tariff Switch / Alternative Contract", value=False, key=f"{key_prefix}_tree_new_tar")
             color_choice_t5 = st.selectbox(
                 "Chart Curve Color:",
                 options=["#2563EB (Blue)", "#059669 (Green)", "#D97706 (Amber)", "#DC2626 (Red)", "#7C3AED (Purple)", "#0891B2 (Cyan)"],
@@ -559,8 +554,9 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                 new_sub = SubScenario(
                     name=new_name_t5.strip() or f"Sub-Scenario {len(project.sub_scenarios) + 1}",
                     color_code=clean_c,
-                    include_solar=False,
-                    include_bess=False
+                    include_solar=t_inc_sol,
+                    include_bess=t_inc_bess,
+                    use_custom_grid_tariff=t_inc_tar
                 )
                 project.add_sub_scenario(new_sub)
                 project.active_sub_scenario_id = new_sub.id
@@ -699,35 +695,273 @@ def _build_scenario_delta_matrix(project: ProjectContainer, records: List[Dict[s
     return pd.DataFrame(rows)
 
 
-def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> None:
+def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
     """
-    Renders the Master Scenario Comparison & Executive Decision Dashboard.
+    Renders Tab 1: Scenario Management & Decision Center.
+    Acts as the primary application entryway:
+      - Project & Base Scenario Setup (Naming, Currency, Global physical/commercial status).
+      - Sub-Scenario Manager (Branch switching, creating new branches with modular opt-in toggles).
+      - Visual Architecture Hierarchy Tree.
+      - Master Scenario Comparison & Ranking Dashboard (Financial Benchmarks & Electrical Flows).
     """
-    t_head_col1, t_head_col2 = st.columns([7.5, 2.5])
-    with t_head_col1:
-        st.markdown("## :material/leaderboard: Master Scenario Comparison & Ranking Dashboard")
-        st.caption("Benchmark all branchable Sub-Scenarios against the Status Quo baseline across 15-year TCO, CAPEX, Electrical Flows, and Autarky.")
-    with t_head_col2:
-        if st.button("Refresh Dashboard", icon=":material/refresh:", type="primary", use_container_width=True, key=f"{key_prefix}_refresh_dash_btn", help="Re-synchronizes and re-evaluates all scenario comparisons with the latest workspace parameters."):
-            st.rerun()
-
     project: ProjectContainer = export_project_from_session()
     records = _build_scenario_evaluation_records(project)
     currency = project.currency or "EUR"
     base_rec = records[0] if records else {}
     base_annual_cost = base_rec.get("annual_opex", 344141.21)
     sub_records = [r for r in records if r["id"] != "base"]
+    active_sub = project.get_active_scenario()
 
     # --------------------------------------------------------------------------
-    # Visual Architecture & Branch Overview Cards
+    # 1. Header & Project Metadata
+    # --------------------------------------------------------------------------
+    t_head_col1, t_head_col2 = st.columns([7.5, 2.5])
+    with t_head_col1:
+        st.markdown("## :material/dashboard: 1. Scenario Management & Decision Center")
+        st.caption("Central entry point for your optimization project: Define project parameters, manage modular solution branches, and evaluate investment decisions.")
+    with t_head_col2:
+        if st.button("Refresh Project", icon=":material/refresh:", type="primary", use_container_width=True, key=f"{key_prefix}_refresh_dash_btn", help="Re-synchronizes all calculations and updates the workspace."):
+            st.rerun()
+
+    # 1.1 Project Title & Global Settings Bar
+    p_col1, p_col2 = st.columns([7, 3])
+    with p_col1:
+        new_p_name = st.text_input(
+            "Project / Facility Name:",
+            value=project.project_name,
+            key=f"{key_prefix}_proj_name_input",
+            help="Unique identifier for your simulation project (e.g. 'Commercial Facility Site North')."
+        )
+        if new_p_name != project.project_name and new_p_name.strip():
+            project.project_name = new_p_name.strip()
+            st.session_state["project_container"] = project
+            st.session_state["active_project_name"] = project.project_name
+    with p_col2:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        st.success(f":material/check_circle: Project Active | **{len(project.sub_scenarios)}** Sub-Scenarios")
+
+    # 1.2 Global Foundation Status Banner (Consumption & Contract)
+    c_load_name = project.base_scenario.load_profile_name or "Baseline Facility Load"
+    c_contract_name = project.base_scenario.base_contract.name if project.base_scenario.base_contract else "Standard Contract"
+    
+    st.markdown(
+        f"""
+        <div style="background: rgba(30, 41, 59, 0.45); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 8px; padding: 10px 16px; margin: 4px 0 16px 0; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="color: #60A5FA; font-weight: 700; font-size: 0.82rem;">GLOBAL BASELINE:</span>
+                <span style="color: #CBD5E1; font-size: 0.82rem;"><b>Consumption:</b> {c_load_name} ({base_rec.get('total_load_mwh', 0):,.1f} MWh/a)</span>
+                <span style="color: #64748B;">|</span>
+                <span style="color: #CBD5E1; font-size: 0.82rem;"><b>Status Quo Contract:</b> {c_contract_name} ({base_annual_cost:,.0f} {currency}/a)</span>
+            </div>
+            <div style="font-size: 0.78rem; color: #94A3B8;">
+                Uniform baseline reference for all sub-scenarios
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.divider()
+
+    # --------------------------------------------------------------------------
+    # 2. Sub-Scenario Manager & Module Configuration
+    # --------------------------------------------------------------------------
+    st.markdown("### :material/tune: Sub-Scenario Configuration & Module Selection")
+    st.caption("Select the scenario branch to configure and selectively activate desired solution modules (Solar PV, BESS, Tariff Switch). All inactive modules are completely omitted.")
+
+    # Branch Switcher
+    scenario_ids = ["base"] + [s.id for s in project.sub_scenarios]
+    scenario_label_map = {"base": "Status Quo (Base Benchmark - 100% Grid Supply)"}
+    for s in project.sub_scenarios:
+        scenario_label_map[s.id] = f"{s.name} ({s.technology_mix_label})"
+
+    current_active_id = project.active_sub_scenario_id if (project.active_sub_scenario_id and project.active_sub_scenario_id in scenario_ids) else "base"
+    try:
+        cur_idx = scenario_ids.index(current_active_id)
+    except ValueError:
+        cur_idx = 0
+
+    col_target1, col_target2 = st.columns([7, 3])
+    with col_target1:
+        tab1_key = f"{key_prefix}_target_scenario_select"
+        # Ensure selectbox key in session state stays strictly synchronized with current_active_id
+        if tab1_key not in st.session_state or st.session_state[tab1_key] not in scenario_ids:
+            st.session_state[tab1_key] = current_active_id
+        elif project.active_sub_scenario_id and st.session_state[tab1_key] != current_active_id:
+            st.session_state[tab1_key] = current_active_id
+
+        def _on_tab1_scenario_change() -> None:
+            new_target = st.session_state.get(tab1_key)
+            proj = export_project_from_session()
+            proj.active_sub_scenario_id = None if new_target == "base" else new_target
+            st.session_state["project_container"] = proj
+            st.session_state["sidebar_target_scenario_select"] = new_target or "base"
+            sync_active_scenario_into_session(proj, auto_execute=False)
+
+        st.selectbox(
+            "Select Active Scenario to Configure:",
+            options=scenario_ids,
+            index=cur_idx,
+            format_func=lambda s_id: scenario_label_map.get(s_id, s_id),
+            key=tab1_key,
+            on_change=_on_tab1_scenario_change
+        )
+
+    with col_target2:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        # Popover to create a new branch
+        with st.popover("+ New Sub-Scenario", icon=":material/add_circle:", use_container_width=True):
+            st.markdown("##### :material/add: Create New Sub-Scenario")
+            new_sub_name = st.text_input(
+                "Sub-Scenario Name:",
+                value=f"Option {len(project.sub_scenarios) + 1}: Solar & Storage",
+                key=f"{key_prefix}_new_sub_name_pop"
+            )
+            st.markdown("**Select Modules to Include:**")
+            p_sol = st.checkbox("Solar PV Generation", value=True, key=f"{key_prefix}_pop_new_sol")
+            p_bess = st.checkbox("Battery Storage (BESS)", value=False, key=f"{key_prefix}_pop_new_bess")
+            p_tar = st.checkbox("Tariff Switch / Alternative Contract", value=False, key=f"{key_prefix}_pop_new_tar")
+
+            color_choice = st.selectbox(
+                "Chart Curve Color:",
+                options=["#2563EB (Blue)", "#059669 (Green)", "#D97706 (Amber)", "#DC2626 (Red)", "#7C3AED (Purple)", "#0891B2 (Cyan)"],
+                index=len(project.sub_scenarios) % 6,
+                key=f"{key_prefix}_pop_new_col"
+            )
+            clean_c = color_choice.split(" ")[0]
+
+            if st.button("Create & Activate Sub-Scenario", icon=":material/check:", type="primary", use_container_width=True, key=f"{key_prefix}_pop_create_btn"):
+                created_sub = SubScenario(
+                    name=new_sub_name.strip() or f"Sub-Scenario {len(project.sub_scenarios) + 1}",
+                    color_code=clean_c,
+                    include_solar=p_sol,
+                    include_bess=p_bess,
+                    use_custom_grid_tariff=p_tar
+                )
+                project.add_sub_scenario(created_sub)
+                project.active_sub_scenario_id = created_sub.id
+                st.session_state["project_container"] = project
+                sync_active_scenario_into_session(project, auto_execute=False)
+                st.rerun()
+
+    # Active Branch Module Configuration Card
+    if active_sub is not None:
+        st.markdown(
+            f"""
+            <div style="background: rgba(15, 23, 42, 0.7); border: 2px solid #3B82F6; border-radius: 8px; padding: 14px; margin: 8px 0 16px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                        <span style="font-weight: 800; font-size: 1.05rem; color: #F8FAFC;">Module Activation for: {active_sub.name}</span>
+                        <span style="background: {active_sub.color_code}33; color: {active_sub.color_code}; border: 1px solid {active_sub.color_code}88; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 10px; font-weight: 700;">
+                            {active_sub.technology_mix_label}
+                        </span>
+                    </div>
+                    <span style="font-size: 0.8rem; color: #94A3B8;">Active modules appear as tabs in the navigation bar above</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        mod_col1, mod_col2, mod_col3 = st.columns(3)
+        with mod_col1:
+            with st.container(border=True):
+                st.markdown("#### :material/solar_power: Solar PV Generation")
+                st.caption("System sizing (kWp, tilt, modules) & 15-minute load-coupling yield simulation.")
+                sol_val = st.checkbox(
+                    "Activate Solar PV",
+                    value=active_sub.include_solar,
+                    key=f"{key_prefix}_chk_mod_solar",
+                    help="Enables the 'Solar PV Generation' tab for this sub-scenario."
+                )
+                if sol_val != active_sub.include_solar:
+                    active_sub.include_solar = sol_val
+                    st.session_state["project_container"] = project
+                    sync_active_scenario_into_session(project, auto_execute=False)
+                    st.rerun()
+
+        with mod_col2:
+            with st.container(border=True):
+                st.markdown("#### :material/battery_charging_full: Battery Storage (BESS)")
+                st.caption("Battery storage (kWh capacity, kW power), peak shaving & 15-minute dispatch.")
+                bess_val = st.checkbox(
+                    "Activate Battery Storage (BESS)",
+                    value=active_sub.include_bess,
+                    key=f"{key_prefix}_chk_mod_bess",
+                    help="Enables the 'Battery Storage (BESS)' tab for this sub-scenario."
+                )
+                if bess_val != active_sub.include_bess:
+                    active_sub.include_bess = bess_val
+                    st.session_state["project_container"] = project
+                    sync_active_scenario_into_session(project, auto_execute=False)
+                    st.rerun()
+
+        with mod_col3:
+            with st.container(border=True):
+                st.markdown("#### :material/swap_horiz: Tariff Switch")
+                st.caption("Evaluate alternative electricity supply contracts (spot market, fixed rate) & bill savings.")
+                tariff_val = st.checkbox(
+                    "Activate Tariff Switch",
+                    value=active_sub.use_custom_grid_tariff,
+                    key=f"{key_prefix}_chk_mod_tariff",
+                    help="Enables the 'Tariff Switch / Alternative Contract' tab for this sub-scenario."
+                )
+                if tariff_val != active_sub.use_custom_grid_tariff:
+                    active_sub.use_custom_grid_tariff = tariff_val
+                    st.session_state["project_container"] = project
+                    sync_active_scenario_into_session(project, auto_execute=False)
+                    st.rerun()
+
+        # Branch management actions
+        with st.expander(f"Manage / Rename Sub-Scenario '{active_sub.name}'", icon=":material/tune:", expanded=False):
+            m_c1, m_c2, m_c3, m_c4 = st.columns([4, 2, 2, 2])
+            with m_c1:
+                ren_val = st.text_input("Rename Branch:", value=active_sub.name, key=f"{key_prefix}_rename_act_input")
+            with m_c2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                if st.button("Save Name", icon=":material/check:", key=f"{key_prefix}_save_ren_btn", use_container_width=True):
+                    active_sub.name = ren_val.strip() or active_sub.name
+                    st.session_state["project_container"] = project
+                    st.rerun()
+            with m_c3:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                if st.button("Duplicate", icon=":material/content_copy:", key=f"{key_prefix}_dup_act_btn", use_container_width=True):
+                    cloned = project.duplicate_sub_scenario(active_sub.id, f"{active_sub.name} (Copy)")
+                    project.active_sub_scenario_id = cloned.id
+                    st.session_state["project_container"] = project
+                    sync_active_scenario_into_session(project, auto_execute=False)
+                    st.rerun()
+            with m_c4:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                if st.button("Delete Branch", icon=":material/delete:", type="secondary", key=f"{key_prefix}_del_act_btn", use_container_width=True):
+                    project.delete_sub_scenario(active_sub.id)
+                    st.session_state["project_container"] = project
+                    sync_active_scenario_into_session(project, auto_execute=False)
+                    st.rerun()
+    else:
+        st.info(
+            "### :material/lock: Status Quo (Base Benchmark) Active\n\n"
+            "The **Status Quo** represents your utility grid electricity baseline without on-site generation or storage assets. "
+            "It serves as the fixed economic benchmark for all payback and savings calculations.\n\n"
+            "Select a sub-scenario branch above or create a new one to configure Solar PV, Battery Storage, or a Contract Tariff Switch.",
+            icon=":material/info:"
+        )
+
+    st.divider()
+
+    # --------------------------------------------------------------------------
+    # 3. Visuelle Architektur-Hierarchie (Tree Overview)
     # --------------------------------------------------------------------------
     _render_scenario_visual_cards(project, records, key_prefix=key_prefix)
 
     st.divider()
 
     # --------------------------------------------------------------------------
-    # Top Level Sub-Tabs Navigation (Financial vs. Electrical)
+    # 4. Master Scenario Comparison & Ranking Dashboard
     # --------------------------------------------------------------------------
+    st.markdown("### :material/leaderboard: Master Decision Dashboard & Scenario Ranking")
+    st.caption("Benchmark of all scenario branches against the Status Quo baseline over 15 years regarding TCO, investment capital, energy dispatch, and self-sufficiency.")
+
     tab_fin, tab_elec = st.tabs([
         ":material/payments: Financial Benchmarks & Amortisation",
         ":material/bolt: Electrical Energy & Power Balance"
@@ -930,19 +1164,19 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
                     st.markdown("##### :material/delete_sweep: Remove Specific Technologies")
                     rm_col1, rm_col2, rm_col3 = st.columns(3)
                     with rm_col1:
-                        if st.button("☀️ Remove Solar", icon=":material/solar_power:", key="tab6_rm_solar_btn", disabled=not target_sub.include_solar, use_container_width=True):
+                        if st.button("Remove Solar", icon=":material/solar_power:", key="tab6_rm_solar_btn", disabled=not target_sub.include_solar, use_container_width=True):
                             target_sub.remove_component("solar")
                             st.session_state["project_container"] = project
                             sync_active_scenario_into_session(project, auto_execute=False)
                             st.rerun()
                     with rm_col2:
-                        if st.button("🔋 Remove BESS", icon=":material/battery_charging_full:", key="tab6_rm_bess_btn", disabled=not target_sub.include_bess, use_container_width=True):
+                        if st.button("Remove BESS", icon=":material/battery_charging_full:", key="tab6_rm_bess_btn", disabled=not target_sub.include_bess, use_container_width=True):
                             target_sub.remove_component("bess")
                             st.session_state["project_container"] = project
                             sync_active_scenario_into_session(project, auto_execute=False)
                             st.rerun()
                     with rm_col3:
-                        if st.button("🔄 Reset to Blank", icon=":material/restart_alt:", key="tab6_rm_all_btn", use_container_width=True, help="Removes all solar, BESS, and generator hardware from this branch."):
+                        if st.button("Reset to Blank", icon=":material/restart_alt:", key="tab6_rm_all_btn", use_container_width=True, help="Removes all solar, BESS, and generator hardware from this branch."):
                             target_sub.remove_component("all")
                             st.session_state["project_container"] = project
                             sync_active_scenario_into_session(project, auto_execute=False)
@@ -1070,3 +1304,7 @@ def render_master_comparison_dashboard(key_prefix: str = "app_comparison") -> No
             st.caption("Power grid integration metrics: Peak demand load reduction (kW) and annual clean energy decarbonisation:")
             fig_peak_co2 = create_multi_scenario_peak_and_co2_figure(records)
             st.plotly_chart(fig_peak_co2, use_container_width=True)
+
+
+# Backwards-compatible alias for existing imports
+render_master_comparison_dashboard = render_scenario_management

@@ -25,12 +25,13 @@ for p in [current_dir, parent_dir]:
 
 import streamlit as st
 from current_model.ui.common.styles import apply_custom_styles
+from current_model.ui.tab_comparison.view import render_scenario_management
 from current_model.ui.tab1_consumption.view import render_tab1_consumption
-from current_model.ui.tab2_contract.view import render_tab2_contract
+from current_model.ui.tab2_contract.view import render_tab2_base_contract, render_tab2_contract_switch
 from current_model.ui.tab3_solar.view import render_tab3_solar
 from current_model.ui.tab4_bess.view import render_tab4_bess
-from current_model.ui.tab_comparison.view import render_master_comparison_dashboard
 from current_model.ui.common.sidebar_scenario_view import render_sidebar_scenario_controller
+from current_model.core.project_io import export_project_from_session
 
 from current_model.ui.common.cards import render_active_scenario_banner
 
@@ -58,33 +59,32 @@ st.caption(f":material/folder_open: **Active Workspace Project:** {active_projec
 render_active_scenario_banner()
 
 # --------------------------------------------------------------------------
-# 4. Top-Level Tab Navigation
+# 4. Top-Level Tab Navigation (Dynamic Scenario-Centric Architecture)
 # --------------------------------------------------------------------------
-tab_consumption, tab_contract, tab_solar, tab_bess, tab_comparison = st.tabs([
-    ":material/analytics: 1. Consumption",
-    ":material/description: 2. Contract Data",
-    ":material/solar_power: 3. Solar PV Generation",
-    ":material/battery_charging_full: 4. Battery Storage (BESS)",
-    ":material/leaderboard: 5. Master Scenario Comparison & Ranking"
-])
+project = export_project_from_session()
+active_sub = project.get_active_scenario()
 
-# TAB 1: Consumption
-with tab_consumption:
-    render_tab1_consumption(key_prefix="app_tab1")
+# 4.1 Assemble Base Navigation Tabs
+nav_tabs = [
+    (":material/dashboard: 1. Scenario Management", lambda: render_scenario_management(key_prefix="app_scenarios")),
+    (":material/analytics: 2. Consumption (Baseline)", lambda: render_tab1_consumption(key_prefix="app_tab1")),
+    (":material/description: 3. Current Contract (Status Quo)", lambda: render_tab2_base_contract(key_prefix="app_tab2"))
+]
 
-# TAB 2: Contract Data
-with tab_contract:
-    render_tab2_contract(key_prefix="app_tab2")
+# 4.2 Append Dynamic Solution Module Tabs Strictly Based on Active Sub-Scenario Configuration
+if active_sub is not None:
+    if active_sub.include_solar:
+        nav_tabs.append((":material/solar_power: Solar PV Generation", lambda: render_tab3_solar(key_prefix="app_tab3")))
+    if active_sub.include_bess:
+        nav_tabs.append((":material/battery_charging_full: Battery Storage (BESS)", lambda: render_tab4_bess(key_prefix="app_tab4_bess")))
+    if active_sub.use_custom_grid_tariff:
+        nav_tabs.append((":material/swap_horiz: Tariff Switch / Alternative Contract", lambda: render_tab2_contract_switch(key_prefix="app_contract_switch")))
 
-# TAB 3: Solar PV Generation
-with tab_solar:
-    render_tab3_solar(key_prefix="app_tab3")
+# 4.3 Render Tabs Dynamically
+tab_titles = [title for title, _ in nav_tabs]
+rendered_tabs = st.tabs(tab_titles)
 
-# TAB 4: Battery Storage (BESS)
-with tab_bess:
-    render_tab4_bess(key_prefix="app_tab4_bess")
-
-# TAB 5: Master Scenario Comparison & Decision Dashboard
-with tab_comparison:
-    render_master_comparison_dashboard(key_prefix="app_tab5")
+for tab_element, (_, render_fn) in zip(rendered_tabs, nav_tabs):
+    with tab_element:
+        render_fn()
 

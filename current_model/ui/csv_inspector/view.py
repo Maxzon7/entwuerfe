@@ -55,7 +55,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
     for file_name, raw_csv_text in files_to_process:
         st.caption(f"Active Dataset: **{file_name}**")
 
-        with st.expander("🔍 **CSV Preview & Table Inspector**", expanded=False):
+        with st.expander(":material/search: **CSV Preview & Table Inspector**", expanded=False):
             skip_header_rows = st.number_input(
                 "Skip Header Rows:",
                 min_value=0, max_value=50, value=0, step=1,
@@ -77,7 +77,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
 
             with map_col1:
                 selected_time_cols = st.multiselect(
-                    "📅 Timestamp Column(s):",
+                    ":material/calendar_today: Timestamp Column(s):",
                     options=cols,
                     default=[c for c in suggested_time if c in cols],
                     key=f"{key_prefix}_time_{file_name}"
@@ -85,7 +85,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
 
             with map_col2:
                 selected_power_cols = st.multiselect(
-                    "⚡ Power / Meter Column(s):",
+                    ":material/bolt: Power / Meter Column(s):",
                     options=cols,
                     default=[c for c in suggested_power if c in cols],
                     key=f"{key_prefix}_pwr_{file_name}"
@@ -100,7 +100,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 ]
                 unit_idx = unit_options.index(suggested_unit) if suggested_unit in unit_options else 0
                 selected_unit = st.selectbox(
-                    "📊 Unit Conversion:",
+                    ":material/tune: Unit Conversion:",
                     options=unit_options,
                     index=unit_idx,
                     key=f"{key_prefix}_unit_{file_name}"
@@ -119,7 +119,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             date_opt_col1, date_opt_col2 = st.columns([5, 6])
             with date_opt_col1:
                 dayfirst_choice = st.toggle(
-                    "🔄 **Day-First Date Format (DD.MM)**",
+                    ":material/sync: **Day-First Date Format (DD.MM)**",
                     value=default_dayfirst,
                     key=f"{key_prefix}_dayfirst_{file_name}"
                 )
@@ -129,11 +129,11 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                     try:
                         parsed_sample = pd.to_datetime(sample_raw_str, dayfirst=dayfirst_choice, errors="coerce")
                         if pd.notnull(parsed_sample):
-                            st.caption(f"🗓️ Preview: `{sample_raw_str}` ➔ **{parsed_sample.strftime('%d %b %Y %H:%M')}**")
+                            st.caption(f":material/event: Preview: `{sample_raw_str}` -> **{parsed_sample.strftime('%d %b %Y %H:%M')}**")
                     except Exception:
                         pass
 
-            submit_calc = st.form_submit_button("⚡ Calculate Load Profile & Metrics", type="primary", use_container_width=True)
+            submit_calc = st.form_submit_button("Calculate Load Profile & Metrics", icon=":material/calculate:", type="primary", use_container_width=True)
 
         calc_cache_key = f"{key_prefix}_calc_data_{file_name}"
 
@@ -166,13 +166,13 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             st.subheader("3. Energy Metrics & Key Performance Indicators")
             k1, k2, k3, k4 = st.columns(4)
             with k1:
-                render_kpi_card("⚡ Peak Demand (P_max)", f"{kpis.peak_kw:,.1f} kW", "Maximum measured power")
+                render_kpi_card("Peak Demand (P_max)", f"{kpis.peak_kw:,.1f} kW", "Maximum measured power")
             with k2:
-                render_kpi_card("🔋 Total Energy", f"{kpis.total_mwh:,.2f} MWh", f"Across {kpis.duration_days:.0f} days")
+                render_kpi_card("Total Energy", f"{kpis.total_mwh:,.2f} MWh", f"Across {kpis.duration_days:.0f} days")
             with k3:
-                render_kpi_card("📊 Average Power", f"{kpis.avg_kw:,.1f} kW", "Average continuous load")
+                render_kpi_card("Average Power", f"{kpis.avg_kw:,.1f} kW", "Average continuous load")
             with k4:
-                render_kpi_card("📋 Data Points", f"{kpis.data_points_count:,}", f"Interval: {kpis.hours_per_step*60:.0f} min")
+                render_kpi_card("Data Points", f"{kpis.data_points_count:,}", f"Interval: {kpis.hours_per_step*60:.0f} min")
 
             # Compact Grid Limit Option (No standalone subheader)
             g_col1, g_col2 = st.columns([1, 1])
@@ -216,20 +216,20 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 overload_kwh = float(overload_diff.sum() * 0.25)
                 has_violation = overload_peak_kw > 0.0
 
-                st.markdown("#### 🚨 Grid Capacity Overload Analysis")
+                st.markdown("#### :material/warning: Grid Capacity Overload Analysis")
                 o_col1, o_col2, o_col3 = st.columns(3)
 
                 with o_col1:
                     status_style = "alert" if has_violation else "ok"
-                    status_title = "⚠️ Grid Overload Peak" if has_violation else "✅ Grid Status"
+                    status_title = "Grid Overload Peak" if has_violation else "Grid Status"
                     val_str = f"+{overload_peak_kw:.1f} kW" if has_violation else "Within Limit"
                     render_kpi_card(status_title, val_str, f"Max Limit: {grid_limit_kw:.1f} kW", status=status_style)
 
                 with o_col2:
-                    render_kpi_card("⏱️ Overload Duration", f"{overload_hours:.2f} hrs", f"{int(overload_hours * 4)} intervals (15-min)")
+                    render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", f"{int(overload_hours * 4)} intervals (15-min)")
 
                 with o_col3:
-                    render_kpi_card("⚡ Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
+                    render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
 
-            with st.expander("📋 Processed Data Table Preview", expanded=False):
+            with st.expander(":material/table_chart: Processed Data Table Preview", expanded=False):
                 st.dataframe(df_clean, use_container_width=True, height=220)

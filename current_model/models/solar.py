@@ -24,7 +24,7 @@ TECHNOLOGY_SPECS = {
         "temp_coeff_pct_c": -0.35,
         "first_year_deg_pct": 2.00,
         "annual_deg_pct": 0.55,
-        "description": "Standard P-Type monokristalline Technologie. Bewährter, robuster Industriestandard mit gutem Preis-Leistungs-Verhältnis."
+        "description": "Standard P-Type monocrystalline technology. Proven, robust industry standard with favorable price-performance ratio."
     },
     "TOPCon": {
         "name": "TOPCon (Tunnel Oxide Passivated Contact)",
@@ -33,7 +33,7 @@ TECHNOLOGY_SPECS = {
         "temp_coeff_pct_c": -0.29,
         "first_year_deg_pct": 1.50,
         "annual_deg_pct": 0.40,
-        "description": "Moderne N-Type Technologie der aktuellen Generation. Höhere Zelleffizienz (+9,8% Wp), geringere thermische Verluste und längere Lebensdauer."
+        "description": "Modern N-Type technology of current generation. Higher cell efficiency (+9.8% Wp), lower thermal losses, and extended operational lifetime."
     },
     "Backcontact": {
         "name": "Backcontact / IBC (Interdigitated Back Contact)",
@@ -42,7 +42,7 @@ TECHNOLOGY_SPECS = {
         "temp_coeff_pct_c": -0.26,
         "first_year_deg_pct": 1.00,
         "annual_deg_pct": 0.35,
-        "description": "Premium-Zelltechnologie der Spitzenklasse. Kontakte auf der Rückseite verhindern Abschattungen auf der Vorderseite; minimaler Temperaturkoeffizient und minimale Degradation."
+        "description": "Premium IBC back-contact cell architecture. Eliminates front-side busbar shading, offering lowest temperature coefficient and minimal degradation."
     }
 }
 
@@ -84,7 +84,7 @@ class SolarLocation:
 class SolarPVConfig:
     """Represents the technical parameters of the Solar PV system."""
     # Module & DC Sizing
-    module_count: int = 600                       # Number of solar panels (Stückzahl)
+    module_count: int = 600                       # Number of solar panels (quantity)
     module_power_wp: float = 450.0                # Rated power per panel (Wp)
     technology_preset: str = "TOPCon"             # "PERC", "TOPCon", "Backcontact", or "Custom"
     module_technology: str = "N-Type TOPCon"      # Human-readable label
@@ -269,8 +269,8 @@ class SolarKPIs:
     direct_consumption_kwh: float = 0.0            # Solar PV energy directly consumed on-site (kWh)
     surplus_generation_kwh: float = 0.0            # Excess PV energy exported / available for BESS (kWh)
     residual_load_kwh: float = 0.0                 # Remaining facility load from grid / generator (kWh)
-    self_consumption_rate_pct: float = 0.0         # Eigenverbrauchsquote: Direct / Solar Total (%)
-    solar_fraction_autarky_pct: float = 0.0        # Autarkiegrad / Solar Deckung: Direct / Load Total (%)
+    self_consumption_rate_pct: float = 0.0         # Self-consumption rate: Direct / Solar Total (%)
+    solar_fraction_autarky_pct: float = 0.0        # Autarky / Solar Fraction: Direct / Load Total (%)
 
 
 @dataclass
@@ -296,19 +296,19 @@ class SolarFinancialConfig:
     is_enabled: bool = True                       # True by default to provide immediate financial assessment
     currency: str = "EUR"                         # Currency code / symbol (e.g. EUR, USD, ARS)
 
-    # CAPEX Parameter Breakdown (DRACBV Kosten-/Berechnungs-Dashboard)
+    # CAPEX Parameter Breakdown (Turn-Key Cost Breakdown)
     cost_modules_per_wp: Optional[float] = 1.00   # €/Wp (e.g. 1.00 €/Wp)
     cost_inverter_per_w: Optional[float] = 0.07   # €/W AC (e.g. 0.07 €/W)
-    cost_substructure_per_wp: Optional[float] = 0.15 # €/Wp (Maschinenbau/Unterkonstruktion, e.g. 0.15 €/Wp)
-    cost_installation_per_wp: Optional[float] = 0.35 # €/Wp (Elektrische Montage & Installation, e.g. 0.35 €/Wp)
-    fixed_switchgear_cost: float = 0.0            # Zählerschrank (€)
-    fixed_travel_fee: float = 0.0                 # Einmalige Anfahrtsgebühr (€)
+    cost_substructure_per_wp: Optional[float] = 0.15 # €/Wp (Racking / Mounting structure, e.g. 0.15 €/Wp)
+    cost_installation_per_wp: Optional[float] = 0.35 # €/Wp (Electrical installation & labor, e.g. 0.35 €/Wp)
+    fixed_switchgear_cost: float = 0.0            # Switchgear cabinet (€)
+    fixed_travel_fee: float = 0.0                 # One-off mobilization & travel fee (€)
     custom_additional_capex: float = 0.0          # Additional custom initial investment (€)
 
     # Operational Parameters (OPEX & Lifecycle Assumptions)
     annual_opex_pct: float = 1.0                  # Annual O&M, insurance & monitoring (% of CAPEX per year)
     annual_opex_fixed: float = 0.0                # Optional fixed OPEX per year (€/a)
-    discount_rate_pct: float = 5.0                # Weighted average cost of capital / Kalkulationszins (%)
+    discount_rate_pct: float = 5.0                # Weighted average cost of capital / Discount rate (%)
     electricity_price_inflation_pct: float = 3.0  # Annual electricity price escalation (%)
     feed_in_tariff_per_kwh: float = 0.06          # Export compensation rate for surplus solar power (€/kWh)
     analysis_horizon_years: int = 15              # Life-cycle economic assessment horizon (15–25 years)

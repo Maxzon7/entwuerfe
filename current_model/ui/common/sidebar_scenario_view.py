@@ -59,20 +59,31 @@ def render_sidebar_scenario_controller() -> None:
     except ValueError:
         current_idx = 0
 
-    selected_id = st.selectbox(
+    sb_key = "sidebar_target_scenario_select"
+    # Ensure selectbox key in session state stays strictly synchronized with current_active_id
+    if sb_key not in st.session_state or st.session_state[sb_key] not in scenario_ids:
+        st.session_state[sb_key] = current_active_id
+    elif project.active_sub_scenario_id and st.session_state[sb_key] != current_active_id:
+        st.session_state[sb_key] = current_active_id
+
+    def _on_sidebar_scenario_change() -> None:
+        new_target = st.session_state.get(sb_key)
+        proj = export_project_from_session()
+        proj.active_sub_scenario_id = None if new_target == "base" else new_target
+        st.session_state["project_container"] = proj
+        st.session_state["app_scenarios_target_scenario_select"] = new_target or "base"
+        from current_model.core.project_io import sync_active_scenario_into_session
+        sync_active_scenario_into_session(proj, auto_execute=False)
+
+    st.selectbox(
         "Active Simulation Target:",
         options=scenario_ids,
         index=current_idx,
         format_func=lambda s_id: scenario_label_map.get(s_id, s_id),
+        key=sb_key,
+        on_change=_on_sidebar_scenario_change,
         help="Select which scenario branch to inspect, configure, or optimize in the workspace tabs."
     )
-
-    if selected_id != current_active_id:
-        project.active_sub_scenario_id = None if selected_id == "base" else selected_id
-        st.session_state["project_container"] = project
-        from current_model.core.project_io import sync_active_scenario_into_session
-        sync_active_scenario_into_session(project, auto_execute=False)
-        st.rerun()
 
     # --------------------------------------------------------------------------
     # 3. Scenario Management Actions (New, Duplicate, Delete)
@@ -94,11 +105,18 @@ def render_sidebar_scenario_controller() -> None:
             )
             clean_color = color_choice.split(" ")[0]
 
+            st.markdown("**Select Modules to Include:**")
+            s_sol = st.checkbox(":material/solar_power: Solar PV Generation", value=True, key="sidebar_new_sol")
+            s_bess = st.checkbox(":material/battery_charging_full: Battery Storage (BESS)", value=False, key="sidebar_new_bess")
+            s_tar = st.checkbox(":material/swap_horiz: Tariff Switch / Alternative Contract", value=False, key="sidebar_new_tar")
+
             if st.button("Instantiate Branch", icon=":material/check:", type="primary", use_container_width=True):
                 new_sub = SubScenario(
                     name=new_name.strip() or f"Sub-Scenario {len(project.sub_scenarios) + 1}",
                     color_code=clean_color,
-                    include_solar=False
+                    include_solar=s_sol,
+                    include_bess=s_bess,
+                    use_custom_grid_tariff=s_tar
                 )
                 project.add_sub_scenario(new_sub)
                 project.active_sub_scenario_id = new_sub.id

@@ -92,6 +92,16 @@ class TestProjectIO(unittest.TestCase):
         self.assertNotIn("app_tab3_sim_result", st.session_state)
         self.assertNotIn("solar_kw_15min", st.session_state)
 
+        # Widget selection keys must be properly synchronized
+        self.assertEqual(st.session_state.get("sidebar_target_scenario_select"), "sub_test_pv")
+        self.assertEqual(st.session_state.get("app_scenarios_target_scenario_select"), "sub_test_pv")
+
+        # When switched to base (Status Quo), widget keys must synchronize to base
+        self.project.active_sub_scenario_id = None
+        sync_active_scenario_into_session(self.project, auto_execute=False)
+        self.assertEqual(st.session_state.get("sidebar_target_scenario_select"), "base")
+        self.assertEqual(st.session_state.get("app_scenarios_target_scenario_select"), "base")
+
 
 if __name__ == "__main__":
     unittest.main()

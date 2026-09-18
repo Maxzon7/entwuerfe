@@ -150,6 +150,78 @@ class TestScenarioDomainModels(unittest.TestCase):
         self.assertEqual(restored_sub.bess_config.capacity_kwh, 500.0)
         self.assertEqual(restored_sub.generator_config.rated_power_kw, 200.0)
 
+    def test_dynamic_scenario_module_selection_and_routing(self):
+        """
+        Verifies dynamic scenario module toggling, Status Quo baseline isolation,
+        and dynamic tab assembly logic.
+        """
+        project = ProjectContainer(project_name="Dynamic Workflow Test")
+        self.assertTrue(project.is_initialized)
+
+        # Initially, with no sub-scenarios or base active:
+        self.assertIsNone(project.get_active_scenario())
+
+        # 1. Base / Status Quo benchmark state
+        project.active_sub_scenario_id = "base"
+        self.assertIsNone(project.get_active_scenario())
+
+        # 2. Add sub-scenario with only Solar
+        sub_solar = SubScenario(
+            id="sub_sol",
+            name="Option Solar",
+            include_solar=True,
+            include_bess=False,
+            use_custom_grid_tariff=False
+        )
+        project.add_sub_scenario(sub_solar)
+        active = project.get_active_scenario()
+        self.assertIsNotNone(active)
+        self.assertEqual(active.id, "sub_sol")
+        self.assertTrue(active.include_solar)
+        self.assertFalse(active.include_bess)
+        self.assertFalse(active.use_custom_grid_tariff)
+
+        # 3. Simulate dynamic tab list construction logic
+        def build_tabs(proj):
+            act = proj.get_active_scenario()
+            tabs = ["1. Scenario Management", "2. Consumption (Baseline)", "3. Current Contract (Status Quo)"]
+            if act is not None:
+                if act.include_solar:
+                    tabs.append("Solar PV")
+                if act.include_bess:
+                    tabs.append("BESS")
+                if act.use_custom_grid_tariff:
+                    tabs.append("Tariff Switch")
+            return tabs
+
+        # On sub_solar:
+        self.assertEqual(build_tabs(project), ["1. Scenario Management", "2. Consumption (Baseline)", "3. Current Contract (Status Quo)", "Solar PV"])
+
+        # Switch to Status Quo (base):
+        project.active_sub_scenario_id = "base"
+        self.assertEqual(build_tabs(project), ["1. Scenario Management", "2. Consumption (Baseline)", "3. Current Contract (Status Quo)"])
+
+        # 4. Add sub-scenario with Solar + BESS + Tariff Switch
+        sub_all = SubScenario(
+            id="sub_all",
+            name="Option Complete",
+            include_solar=True,
+            include_bess=True,
+            use_custom_grid_tariff=True
+        )
+        project.add_sub_scenario(sub_all)
+        self.assertEqual(
+            build_tabs(project),
+            ["1. Scenario Management", "2. Consumption (Baseline)", "3. Current Contract (Status Quo)", "Solar PV", "BESS", "Tariff Switch"]
+        )
+
+        # 5. Disable BESS on sub_all
+        sub_all.include_bess = False
+        self.assertEqual(
+            build_tabs(project),
+            ["1. Scenario Management", "2. Consumption (Baseline)", "3. Current Contract (Status Quo)", "Solar PV", "Tariff Switch"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

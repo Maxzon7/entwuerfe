@@ -436,6 +436,10 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                 )
                 st.session_state[state_res_key] = sim_res
                 config_changed = False
+                if active_sub is not None:
+                    active_sub.solar_config = curr_cfg
+                    active_sub.include_solar = True
+                    st.session_state["project_container"] = project
             except Exception as err:
                 st.error(f"Coupled Dispatch Simulation Error: {err}", icon=":material/error:")
                 return
@@ -510,7 +514,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         render_kpi_card(
             "Peak Demand Reduction",
             f"-{peak_shaved_kw:.1f} kW",
-            f"Original: {p_orig_max:.1f} kW ➔ Residual: {p_res_max:.1f} kW (-{peak_shaved_pct:.1f}%)",
+            f"Original: {p_orig_max:.1f} kW -> Residual: {p_res_max:.1f} kW (-{peak_shaved_pct:.1f}%)",
             status="ok" if peak_shaved_kw > 0.1 else "default"
         )
     with s2:

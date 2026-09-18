@@ -625,7 +625,7 @@ def render_solar_config_form(
                 key=f"{key_prefix}_fin_mod_wp"
             )
             inp_switch = st.number_input(
-                f"Switchgear Cabinet / Zählerschrank ({inp_curr}):",
+                f"Switchgear Cabinet ({inp_curr}):",
                 min_value=0.0,
                 value=float(fin_switch),
                 step=250.0,
@@ -645,7 +645,7 @@ def render_solar_config_form(
                 key=f"{key_prefix}_fin_inv_w"
             )
             inp_sub_wp = st.number_input(
-                f"Substructure / Maschinenbau ({inp_curr}/Wp):",
+                f"Substructure / Racking ({inp_curr}/Wp):",
                 min_value=0.0,
                 max_value=5.0,
                 value=float(fin_sub_wp if fin_sub_wp is not None else 0.15),
@@ -655,7 +655,7 @@ def render_solar_config_form(
                 key=f"{key_prefix}_fin_sub_wp"
             )
             inp_travel = st.number_input(
-                f"Mobilization / Anfahrtsgebühr ({inp_curr}):",
+                f"Mobilization Fee ({inp_curr}):",
                 min_value=0.0,
                 value=float(fin_travel),
                 step=100.0,

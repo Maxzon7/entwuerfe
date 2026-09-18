@@ -6,8 +6,8 @@ Tab 1: Consumption Orchestrator (current_model/ui/tab1_consumption/view.py)
 Description:
 ------------
 Main entry point for Tab 1 (Consumption), allowing the user to select between:
-  1. ⚡ 24-Hour / 365-Day Synthetic Load Simulator
-  2. 📁 CSV Real Meter Data Visualizer
+  1. Synthetic Load Simulator (24h / 365-Day)
+  2. CSV Real Meter Data Visualizer
 Synchronizes the active data source selection with Tab 2 for financial assessment.
 """
 

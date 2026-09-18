@@ -143,7 +143,7 @@ def create_monthly_comparison_series_figure(
                 x=months,
                 y=gross_totals,
                 mode="lines+markers",
-                name=f"{'📌 ' if is_ref else ''}{res['display_name']}",
+                name=f"{'[Baseline] ' if is_ref else ''}{res['display_name']}",
                 line=dict(
                     color=color,
                     width=3 if is_ref else 2,

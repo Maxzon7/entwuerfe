@@ -38,7 +38,7 @@ def _gather_available_contracts(reference_contract: Contract, key_prefix: str) -
 
     # 1. Reference contract from Tab 2.1 (Always included as baseline)
     ref_name = getattr(reference_contract, "name", "Reference Contract (Tab 2.1)") or "Reference Contract"
-    ref_key = f"📌 {ref_name} (Baseline 2.1)"
+    ref_key = f"[Baseline] {ref_name}"
     all_contracts[ref_key] = reference_contract
 
     # 2. Check for contracts uploaded or created in Tab 2
@@ -46,14 +46,14 @@ def _gather_available_contracts(reference_contract: Contract, key_prefix: str) -
         if "loaded_contracts_dict" in k and isinstance(v, dict):
             for label, c in v.items():
                 if isinstance(c, Contract):
-                    contract_key = f"📄 {label}"
+                    contract_key = label
                     if contract_key not in all_contracts and label != ref_name:
                         all_contracts[contract_key] = c
 
     # 3. Presets for additional comparison options
     presets = get_contract_presets()
     for p_name, p_contract in presets.items():
-        preset_key = f"⚙️ Preset: {p_name}"
+        preset_key = f"[Preset] {p_name}"
         if preset_key not in all_contracts and p_name != ref_name:
             all_contracts[preset_key] = p_contract
 
@@ -69,11 +69,11 @@ def render_contract_comparison_view(
     """
     Renders Sub-tab 2.2: Multi-Contract Comparison & Tariff Benchmark.
     """
-    st.subheader("⚖️ Multi-Contract Tariff Benchmark & Cost Comparison")
+    st.subheader(":material/balance: Multi-Contract Tariff Benchmark & Cost Comparison")
     st.caption("Simultaneously evaluate multiple electricity contracts against your active consumption load profile to find the most cost-effective tariff.")
 
     if load_data is None:
-        st.info("💡 Please configure or import a consumption profile in **Tab 1 (Consumption)** first to run the multi-contract benchmark.")
+        st.info("Please configure or import a consumption profile in **Tab 1 (Consumption)** first to run the multi-contract benchmark.", icon=":material/info:")
         return
 
     # Gather available contracts
@@ -106,7 +106,7 @@ def render_contract_comparison_view(
                 st.rerun()
         with b3:
             if st.button("Baseline + Presets", key=f"{key_prefix}_btn_base_presets", use_container_width=True):
-                st.session_state[multiselect_key] = [k for k in all_options if k.startswith("📌") or k.startswith("⚙️")]
+                st.session_state[multiselect_key] = [k for k in all_options if k.startswith("[Baseline]") or k.startswith("[Preset]")]
                 st.rerun()
 
         selected_contract_keys = st.multiselect(
@@ -121,7 +121,7 @@ def render_contract_comparison_view(
             f"""
             <div style="background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(51, 65, 85, 0.7); border-radius: 8px; padding: 12px 16px; margin-top: 4px;">
                 <div style="font-size: 0.8rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em;">Benchmark Baseline</div>
-                <div style="font-size: 1.05rem; font-weight: 600; color: #38BDF8; margin-top: 2px;">📌 {reference_contract.name}</div>
+                <div style="font-size: 1.05rem; font-weight: 600; color: #38BDF8; margin-top: 2px;">{reference_contract.name}</div>
                 <div style="font-size: 0.8rem; color: #64748B; margin-top: 2px;">Active Load: {source_desc}</div>
             </div>
             """,
@@ -129,7 +129,7 @@ def render_contract_comparison_view(
         )
 
     if len(selected_contract_keys) < 1:
-        st.info("👆 Please select one or more contracts from the dropdown above to view the cost comparison and tariff benchmark.")
+        st.info("Please select one or more contracts from the dropdown above to view the cost comparison and tariff benchmark.", icon=":material/info:")
         return
 
     # 2. Perform simultaneous financial computation for each selected contract
@@ -197,7 +197,7 @@ def render_contract_comparison_view(
     kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
 
     with kpi_col1:
-        win_badge = "🏆 Most Cost-Effective"
+        win_badge = "Best Value Tariff"
         win_sub = f"{cheapest_name} (Savings: -{max_savings_gross:,.2f} {ref_currency} / -{max_savings_pct:.1f}%)" if max_savings_gross > 0.01 else f"{cheapest_name} (Matches Baseline)"
         render_kpi_card(
             title=win_badge,
@@ -208,7 +208,7 @@ def render_contract_comparison_view(
 
     with kpi_col2:
         render_kpi_card(
-            title="📌 Reference Baseline (2.1)",
+            title="Reference Baseline (Tab 2.1)",
             value=f"{ref_gross:,.2f} {ref_currency}",
             subtext=f"{reference_contract.name} (Eff. Rate: {ref_breakdown.effective_kwh_price:.4f} {ref_currency}/kWh)",
             status="default"
@@ -217,7 +217,7 @@ def render_contract_comparison_view(
     with kpi_col3:
         cheapest_eff_rate = winner["effective_rate_kwh"]
         render_kpi_card(
-            title="💡 Lowest Effective Rate",
+            title="Lowest Effective Rate",
             value=f"{cheapest_eff_rate:.4f} {winner['currency']}/kWh",
             subtext=f"For {winner['total_kwh']:,.0f} active kWh",
             status="default"
@@ -227,7 +227,7 @@ def render_contract_comparison_view(
         most_expensive = comparison_results[-1]
         cost_spread = most_expensive["total_gross"] - cheapest_gross
         render_kpi_card(
-            title="📊 Tariff Cost Spread",
+            title="Tariff Cost Spread",
             value=f"{cost_spread:,.2f} {ref_currency}",
             subtext=f"Spread between Min & Max Tariff",
             status="default"
@@ -243,7 +243,7 @@ def render_contract_comparison_view(
         is_win = res["is_winner"]
         is_ref = res["is_reference"]
 
-        status_tag = "🏆 Cheapest" if is_win else ("📌 Baseline" if is_ref else f"#{rank}")
+        status_tag = "Best Value" if is_win else ("Baseline" if is_ref else f"#{rank}")
 
         diff_str = "0.00 (Baseline)"
         if not is_ref:
@@ -313,9 +313,9 @@ def render_contract_comparison_view(
     st.markdown("##### 5. Visual Benchmark & Analysis")
 
     chart_tab1, chart_tab2, chart_tab3 = st.tabs([
-        "📊 Cost Components Breakdown",
-        "📅 12-Month Payment Trajectory",
-        "💡 Effective Rate Benchmark (/kWh)"
+        ":material/bar_chart: Cost Components Breakdown",
+        ":material/calendar_month: 12-Month Payment Trajectory",
+        ":material/payments: Effective Rate Benchmark (/kWh)"
     ])
 
     with chart_tab1:
@@ -331,7 +331,7 @@ def render_contract_comparison_view(
         st.plotly_chart(fig_eff, use_container_width=True)
 
     # 6. Contract Parameter Specification Matrix
-    with st.expander("🔍 **Contract Technical Parameters & Tariff Windows Matrix**", expanded=False):
+    with st.expander("Contract Technical Parameters & Tariff Windows Matrix", icon=":material/table_chart:", expanded=False):
         param_rows = []
         for res in comparison_results:
             c: Contract = res["contract"]
