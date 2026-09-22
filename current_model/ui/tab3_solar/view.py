@@ -211,7 +211,8 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     # Auto-save changes to active sub-scenario container
     active_sub.solar_config = config
     active_sub.solar_financial = fin_config
-    active_sub.include_solar = (config.module_count > 0)
+    if config.module_count > 0:
+        active_sub.include_solar = True
     st.session_state["project_container"] = project
 
     # 3. Physical Simulation Execution & Caching
@@ -354,7 +355,8 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
         if sub:
             sub.solar_config = config
             sub.solar_financial = fin_config
-            sub.include_solar = (config.module_count > 0)
+            if config.module_count > 0:
+                sub.include_solar = True
             st.session_state["project_container"] = proj_container
 
     st.divider()

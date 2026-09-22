@@ -25,6 +25,9 @@ class BESSConfig:
     """
     # Technical Ratings & Boundaries
     capacity_kwh: float = 100.0                   # Nominal storage capacity (kWh)
+    unit_count: int = 1                           # Modular battery unit count
+    unit_capacity_kwh: float = 100.0              # Nominal energy capacity per unit (kWh)
+    battery_chemistry: str = "LFP (Lithium Iron Phosphate - Standard)"
     max_charge_power_kw: float = 50.0             # Max continuous charging power (kW)
     max_discharge_power_kw: float = 50.0          # Max continuous discharging power (kW)
     round_trip_efficiency_pct: float = 90.0       # Round-trip AC/DC efficiency (%)
@@ -78,6 +81,9 @@ class BESSConfig:
         """Serializes BESSConfig to a JSON-ready dictionary."""
         return {
             "capacity_kwh": float(self.capacity_kwh),
+            "unit_count": int(self.unit_count),
+            "unit_capacity_kwh": float(self.unit_capacity_kwh),
+            "battery_chemistry": str(self.battery_chemistry),
             "max_charge_power_kw": float(self.max_charge_power_kw),
             "max_discharge_power_kw": float(self.max_discharge_power_kw),
             "round_trip_efficiency_pct": float(self.round_trip_efficiency_pct),
@@ -105,8 +111,15 @@ class BESSConfig:
         """Deserializes a dictionary into a BESSConfig instance."""
         if not data:
             return cls()
+        cap = float(data.get("capacity_kwh", 100.0))
+        u_cnt = int(data.get("unit_count", 1))
+        u_kwh = float(data.get("unit_capacity_kwh", round(cap / max(1, u_cnt), 1)))
+        chem = str(data.get("battery_chemistry", "LFP (Lithium Iron Phosphate - Standard)"))
         return cls(
-            capacity_kwh=float(data.get("capacity_kwh", 100.0)),
+            capacity_kwh=cap,
+            unit_count=u_cnt,
+            unit_capacity_kwh=u_kwh,
+            battery_chemistry=chem,
             max_charge_power_kw=float(data.get("max_charge_power_kw", 50.0)),
             max_discharge_power_kw=float(data.get("max_discharge_power_kw", 50.0)),
             round_trip_efficiency_pct=float(data.get("round_trip_efficiency_pct", 90.0)),
@@ -179,6 +192,9 @@ def get_bess_presets() -> Dict[str, BESSConfig]:
     return {
         "Small C&I Storage (100 kWh / 50 kW)": BESSConfig(
             capacity_kwh=100.0,
+            unit_count=1,
+            unit_capacity_kwh=100.0,
+            battery_chemistry="LFP (Lithium Iron Phosphate - Standard)",
             max_charge_power_kw=50.0,
             max_discharge_power_kw=50.0,
             dispatch_strategy="self_consumption",
@@ -187,6 +203,9 @@ def get_bess_presets() -> Dict[str, BESSConfig]:
         ),
         "Medium Commercial Storage (250 kWh / 125 kW)": BESSConfig(
             capacity_kwh=250.0,
+            unit_count=2,
+            unit_capacity_kwh=125.0,
+            battery_chemistry="LFP (Lithium Iron Phosphate - Standard)",
             max_charge_power_kw=125.0,
             max_discharge_power_kw=125.0,
             dispatch_strategy="self_consumption",
@@ -195,6 +214,9 @@ def get_bess_presets() -> Dict[str, BESSConfig]:
         ),
         "Industrial Peak Shaver (200 kWh / 200 kW - 1C)": BESSConfig(
             capacity_kwh=200.0,
+            unit_count=2,
+            unit_capacity_kwh=100.0,
+            battery_chemistry="LFP (Lithium Iron Phosphate - Standard)",
             max_charge_power_kw=200.0,
             max_discharge_power_kw=200.0,
             dispatch_strategy="peak_shaving",
@@ -204,6 +226,9 @@ def get_bess_presets() -> Dict[str, BESSConfig]:
         ),
         "Large Industrial Hub (500 kWh / 250 kW)": BESSConfig(
             capacity_kwh=500.0,
+            unit_count=5,
+            unit_capacity_kwh=100.0,
+            battery_chemistry="LFP (Lithium Iron Phosphate - Standard)",
             max_charge_power_kw=250.0,
             max_discharge_power_kw=250.0,
             dispatch_strategy="self_consumption",

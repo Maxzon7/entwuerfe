@@ -153,6 +153,25 @@ class SubScenario:
     financial_cashflows: List[Dict[str, Any]] = field(default_factory=list)
     dispatch_records: Optional[List[Dict[str, Any]]] = None
 
+    def __post_init__(self):
+        if self.include_solar and self.solar_config is None:
+            self.solar_config = SolarPVConfig(
+                module_count=600,
+                module_power_wp=450.0,
+                technology_preset="TOPCon",
+                module_technology="TOPCon (450 Wp - N-Type Modern Standard)",
+                inverter_capacity_kw=230.0,
+                tilt_deg=28.0,
+                azimuth_deg=0.0,
+                weather_mode="TMY"
+            )
+        if self.include_bess and self.bess_config is None:
+            self.bess_config = BESSConfig(
+                capacity_kwh=100.0,
+                max_charge_power_kw=50.0,
+                max_discharge_power_kw=50.0
+            )
+
     @property
     def technology_mix_label(self) -> str:
         """Returns a concise description of active technologies."""

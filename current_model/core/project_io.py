@@ -29,7 +29,6 @@ from current_model.models.generator import GeneratorConfig
 from current_model.core.synthetic_engine import aggregate_synthetic_year, aggregate_synthetic_24h
 from current_model.core.solar_engine import simulate_solar_pv_generation
 from current_model.core.solar_financial_engine import compute_solar_financial_metrics
-from current_model.ui.common.session_utils import find_active_load_data_in_session, find_active_contract_in_session
 
 
 def export_project_from_session(
@@ -80,7 +79,22 @@ def export_project_from_session(
                 csv_records = df_sub.to_dict(orient="records")
 
     # 2. Inspect Base Contract
+    from current_model.ui.common.session_utils import find_active_contract_in_session
     contract = find_active_contract_in_session()
+
+    # Preserve existing base_contract from existing project container if available
+    existing_proj: Optional[ProjectContainer] = st.session_state.get("project_container")
+    if contract is None and existing_proj is not None and getattr(existing_proj, "base_scenario", None):
+        if getattr(existing_proj.base_scenario, "base_contract", None) is not None:
+            contract = existing_proj.base_scenario.base_contract
+
+    # Ensure a default contract is always registered if completely unconfigured
+    if contract is None:
+        from current_model.models.contract import Contract
+        contract = Contract(name="Electricity Contract")
+        st.session_state["app_tab2_contract_model"] = contract
+        st.session_state["active_contract"] = contract
+
     currency = contract.currency if contract else "EUR"
 
     # 3. Inspect Location
@@ -107,7 +121,7 @@ def export_project_from_session(
     )
 
     # 5. Check if a ProjectContainer already exists in session_state, or initialize one
-    project: Optional[ProjectContainer] = st.session_state.get("project_container")
+    project: Optional[ProjectContainer] = existing_proj
     if project is None:
         project = ProjectContainer(
             project_name=project_name or "Energy Transition Project",
@@ -378,6 +392,15 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
         "app_tab4_bess_tech_sim_result"
     ]
 
+    # Synchronize active contract (custom tariff vs base contract)
+    cust_tariff = (getattr(active_sub, "custom_contract", None) or getattr(active_sub, "custom_grid_tariff", None)) if active_sub else None
+    if active_sub and getattr(active_sub, "use_custom_grid_tariff", False) and cust_tariff:
+        st.session_state["active_contract"] = cust_tariff
+        st.session_state["app_contract_switch_contract_model"] = cust_tariff
+    elif base and getattr(base, "base_contract", None):
+        st.session_state["active_contract"] = base.base_contract
+        st.session_state["app_tab2_contract_model"] = base.base_contract
+
     if active_sub is None:
         # Status Quo is active: Pure baseline without solar PV or BESS simulation state
         for k in solar_res_keys + bess_res_keys:
@@ -447,9 +470,17 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
         st.session_state["app_tab4_bess_tech_config"] = b_cfg
 
         # Restore input widget values
-        u_cnt = max(1, int(round(b_cfg.capacity_kwh / 100.0))) if b_cfg.capacity_kwh >= 100 else 1
-        st.session_state["app_tab4_bess_tech_units"] = u_cnt
-        st.session_state["app_tab4_bess_tech_unit_kwh"] = float(round(b_cfg.capacity_kwh / max(1, u_cnt), 1))
+        u_cnt = getattr(b_cfg, "unit_count", None)
+        if u_cnt is None:
+            u_cnt = max(1, int(round(b_cfg.capacity_kwh / 100.0))) if b_cfg.capacity_kwh >= 100 else 1
+        u_kwh = getattr(b_cfg, "unit_capacity_kwh", None)
+        if u_kwh is None:
+            u_kwh = float(round(b_cfg.capacity_kwh / max(1, u_cnt), 1))
+        chem = getattr(b_cfg, "battery_chemistry", "LFP (Lithium Iron Phosphate - Standard)")
+
+        st.session_state["app_tab4_bess_tech_units"] = int(u_cnt)
+        st.session_state["app_tab4_bess_tech_unit_kwh"] = float(u_kwh)
+        st.session_state["app_tab4_bess_tech_chem"] = str(chem)
         st.session_state["app_tab4_bess_tech_dis_kw"] = float(b_cfg.max_discharge_power_kw)
         st.session_state["app_tab4_bess_tech_chg_kw"] = float(b_cfg.max_charge_power_kw)
         st.session_state["app_tab4_bess_tech_rte"] = float(b_cfg.round_trip_efficiency_pct)

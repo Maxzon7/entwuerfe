@@ -55,6 +55,28 @@ class TestBESSModels(unittest.TestCase):
         peak_shaver = presets["Industrial Peak Shaver (200 kWh / 200 kW - 1C)"]
         self.assertEqual(peak_shaver.c_rate_discharge, 1.0)
         self.assertEqual(peak_shaver.dispatch_strategy, "peak_shaving")
+        self.assertEqual(peak_shaver.unit_count, 2)
+        self.assertEqual(peak_shaver.unit_capacity_kwh, 100.0)
+
+    def test_bess_modular_sizing_and_chemistry(self):
+        bess = BESSConfig(
+            capacity_kwh=450.0,
+            unit_count=3,
+            unit_capacity_kwh=150.0,
+            battery_chemistry="NMC (Nickel Manganese Cobalt - High Density)",
+            max_charge_power_kw=150.0,
+            max_discharge_power_kw=150.0
+        )
+        data = bess.to_dict()
+        self.assertEqual(data["unit_count"], 3)
+        self.assertEqual(data["unit_capacity_kwh"], 150.0)
+        self.assertEqual(data["battery_chemistry"], "NMC (Nickel Manganese Cobalt - High Density)")
+
+        restored = BESSConfig.from_dict(data)
+        self.assertEqual(restored.unit_count, 3)
+        self.assertEqual(restored.unit_capacity_kwh, 150.0)
+        self.assertEqual(restored.capacity_kwh, 450.0)
+        self.assertEqual(restored.battery_chemistry, "NMC (Nickel Manganese Cobalt - High Density)")
 
 
 if __name__ == "__main__":

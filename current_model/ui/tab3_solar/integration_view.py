@@ -25,7 +25,7 @@ Orchestrates the coupled Solar PV and Electrical Consumption analysis (Sub-Tab 3
       * Sankey energy flow diagram
       * BESS Storage Potential & Surplus Power Duration
   - Deep Financial & Tariff Savings Assessment:
-      * Coupled with Tab 2 Electricity Contract (Punta, Llano, Valle TOU periods)
+      * Coupled with Tab 3 (Current Contract) Electricity Contract (Punta, Llano, Valle TOU periods)
       * Itemized billing comparison table
       * 15-Year Life-Cycle Cost Trajectory & Amortisation Curves (linked with Tab 3.1 CAPEX/OPEX)
 """
@@ -41,6 +41,7 @@ from current_model.models.contract import Contract
 from current_model.core.project_io import export_project_from_session, sync_active_scenario_into_session
 from current_model.core.solar_engine import (
     simulate_solar_pv_generation,
+    couple_solar_simulation_with_load,
     calculate_scenario_target_kwp,
     calculate_recommended_inverter_size
 )
@@ -167,14 +168,20 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         unsafe_allow_html=True
     )
 
-    # Inherit location from Tab 3.1 / Session
-    loc_lat = st.session_state.get("app_tab3_loc_lat", -32.8908)
-    loc_lon = st.session_state.get("app_tab3_loc_lon", -68.8272)
-    loc_name = st.session_state.get("app_tab3_loc_name", "Mendoza, Argentina")
-    loc_elev = st.session_state.get("app_tab3_loc_elev", 746.0)
-    location = SolarLocation(name=loc_name, latitude=loc_lat, longitude=loc_lon, elevation_m=loc_elev)
+    # Inherit location from Tab 3.1 parent simulation, project container, or session state
+    parent_sim: Optional[SolarSimulationResult] = st.session_state.get("app_tab3_sim_result") or st.session_state.get("tab3_solar_sim_result")
+    if parent_sim is not None and getattr(parent_sim, "location", None) is not None:
+        location = parent_sim.location
+    elif getattr(project.base_scenario, "location", None) is not None:
+        location = project.base_scenario.location
+    else:
+        loc_lat = st.session_state.get("app_tab3_loc_lat") or st.session_state.get("tab3_solar_loc_lat") or -32.8908
+        loc_lon = st.session_state.get("app_tab3_loc_lon") or st.session_state.get("tab3_solar_loc_lon") or -68.8272
+        loc_name = st.session_state.get("app_tab3_loc_name") or st.session_state.get("tab3_solar_loc_name") or "Mendoza, Argentina"
+        loc_elev = st.session_state.get("app_tab3_loc_elev") or st.session_state.get("tab3_solar_loc_elev") or 746.0
+        location = SolarLocation(name=loc_name, latitude=float(loc_lat), longitude=float(loc_lon), elevation_m=float(loc_elev))
 
-    estimated_spec_yield = 1600.0  # Mendoza baseline specific yield estimate
+    estimated_spec_yield = 1600.0  # Baseline specific yield estimate
 
     # Parent configuration from Sub-Tab 3.1 / Active SubScenario
     parent_cfg: Optional[SolarPVConfig] = active_sub.solar_config or st.session_state.get("app_tab3_config") or st.session_state.get("tab3_solar_config")
@@ -404,17 +411,47 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     # --------------------------------------------------------------------------
     # 4. Calculation Action & Execution
     # --------------------------------------------------------------------------
+    state_res_key = f"{key_prefix}_sim_result"
+    sim_res: Optional[SolarSimulationResult] = st.session_state.get(state_res_key)
+
+    # Automatic Fast-Coupling from Sub-Tab 3.1:
+    # When in 'Live Mirror from Sub-Tab 3.1' mode and Sub-Tab 3.1 has an active simulation,
+    # automatically couple it with the facility load profile in milliseconds!
+    if (op_mode == "Live Mirror from Sub-Tab 3.1 (Recommended)" and
+        parent_sim is not None and
+        getattr(parent_sim, "df_timeseries", None) is not None and
+        "P_AC_kW" in parent_sim.df_timeseries.columns):
+        p_cfg = getattr(parent_sim, "config", None)
+        is_same_config = (
+            p_cfg is not None and
+            p_cfg.module_count == curr_cfg.module_count and
+            p_cfg.module_power_wp == curr_cfg.module_power_wp and
+            p_cfg.inverter_capacity_kw == curr_cfg.inverter_capacity_kw and
+            p_cfg.tilt_deg == curr_cfg.tilt_deg
+        )
+        needs_auto_coupling = (
+            sim_res is None or
+            "P_Load_kW" not in getattr(sim_res, "df_timeseries", pd.DataFrame()).columns or
+            getattr(sim_res, "config", None) != curr_cfg
+        )
+        if is_same_config and needs_auto_coupling:
+            sim_res = couple_solar_simulation_with_load(parent_sim, df_load)
+            st.session_state[state_res_key] = sim_res
+            if active_sub is not None:
+                active_sub.solar_config = curr_cfg
+                active_sub.include_solar = True
+                st.session_state["project_container"] = project
+
     auto_trigger = st.session_state.pop(f"{key_prefix}_trigger_calc", False)
+    btn_label = "Recalculate Coupled Solar & Consumption Dispatch" if sim_res is not None else "Calculate Coupled Solar & Consumption Dispatch"
+    btn_type = "secondary" if sim_res is not None else "primary"
     calc_btn_clicked = st.button(
-        "Calculate Coupled Solar & Consumption Dispatch",
+        btn_label,
         icon=":material/calculate:",
-        type="primary",
+        type=btn_type,
         use_container_width=True,
         key=f"{key_prefix}_calc_dispatch_btn"
     )
-
-    state_res_key = f"{key_prefix}_sim_result"
-    sim_res: Optional[SolarSimulationResult] = st.session_state.get(state_res_key)
 
     config_changed = False
     if sim_res is not None and hasattr(sim_res, "config"):
@@ -429,17 +466,33 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     if should_simulate:
         with st.spinner("Calculating 15-minute physical solar-load dispatch balance..."):
             try:
-                sim_res = simulate_solar_pv_generation(
-                    config=curr_cfg,
-                    location=location,
-                    load_df=df_load
-                )
+                # If we have parent_sim matching curr_cfg, fast-couple it
+                if (op_mode == "Live Mirror from Sub-Tab 3.1 (Recommended)" and
+                    parent_sim is not None and
+                    getattr(parent_sim, "df_timeseries", None) is not None and
+                    "P_AC_kW" in parent_sim.df_timeseries.columns and
+                    getattr(parent_sim, "config", None) is not None and
+                    parent_sim.config.module_count == curr_cfg.module_count and
+                    parent_sim.config.module_power_wp == curr_cfg.module_power_wp and
+                    parent_sim.config.tilt_deg == curr_cfg.tilt_deg):
+                    sim_res = couple_solar_simulation_with_load(parent_sim, df_load)
+                else:
+                    sim_res = simulate_solar_pv_generation(
+                        config=curr_cfg,
+                        location=location,
+                        load_df=df_load
+                    )
+                    # Also keep Sub-Tab 3.1 in sync
+                    st.session_state["app_tab3_sim_result"] = sim_res
+                    st.session_state["solar_kw_15min"] = sim_res.df_timeseries["P_AC_kW"]
+
                 st.session_state[state_res_key] = sim_res
                 config_changed = False
                 if active_sub is not None:
                     active_sub.solar_config = curr_cfg
                     active_sub.include_solar = True
                     st.session_state["project_container"] = project
+                st.success("Coupled dispatch calculated successfully!", icon=":material/check_circle:")
             except Exception as err:
                 st.error(f"Coupled Dispatch Simulation Error: {err}", icon=":material/error:")
                 return
@@ -569,11 +622,16 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     st.divider()
 
     # --------------------------------------------------------------------------
-    # 7. Economic & Avoided Cost Assessment (Coupled with Tab 2 Contract)
+    # 7. Economic & Avoided Cost Assessment (Coupled with Tab 3 Contract)
     # --------------------------------------------------------------------------
     st.markdown("##### 4. Financial & Tariff Savings Assessment")
 
     active_contract: Optional[Contract] = find_active_contract_in_session()
+    if active_contract is None:
+        if active_sub and getattr(active_sub, "use_custom_grid_tariff", False):
+            active_contract = getattr(active_sub, "custom_contract", None) or getattr(active_sub, "custom_grid_tariff", None)
+        if active_contract is None and project and project.base_scenario and project.base_scenario.base_contract:
+            active_contract = project.base_scenario.base_contract
 
     if active_contract is not None:
         st.caption(f"Linked Electricity Contract: **{active_contract.name}** ({active_contract.currency})")
@@ -752,10 +810,10 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
         except Exception as err:
-            st.warning(f"Unable to calculate financial savings against Tab 2 contract: {err}")
+            st.warning(f"Unable to calculate financial savings against Tab 3 contract: {err}")
 
     else:
-        st.info("No active electricity contract configured in Tab 2.")
+        st.info("No active electricity contract configured in Tab 3 (Current Contract).")
 
         enable_manual_rate = st.toggle(
             "Enable simplified avoided cost estimate",
@@ -816,4 +874,4 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                     f"For {kpis.surplus_generation_kwh:,.0f} kWh exported @ {feed_in_rate:.2f} {currency_code}/kWh"
                 )
         else:
-            st.caption("Tip: You can configure an electricity contract in Tab 2 for exact Time-of-Use and capacity billing, or toggle on the simplified rate estimate above.")
+            st.caption("Tip: You can configure an electricity contract in Tab 3 (Current Contract) for exact Time-of-Use and capacity billing, or toggle on the simplified rate estimate above.")

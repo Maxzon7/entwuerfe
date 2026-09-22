@@ -805,6 +805,77 @@ def compute_solar_load_dispatch(
     }
 
 
+def couple_solar_simulation_with_load(
+    solar_res: SolarSimulationResult,
+    load_df: pd.DataFrame
+) -> SolarSimulationResult:
+    """
+    Rapidly couples an existing physical Solar PV simulation result with a facility load dataframe.
+    Calculates interval-by-interval direct self-consumption, surplus export, and residual grid demand,
+    and updates the timeseries and KPIs in milliseconds without re-running physical ray-tracing.
+    """
+    import copy
+    df = solar_res.df_timeseries.copy()
+    if "P_AC_kW" not in df.columns:
+        return solar_res
+
+    # Determine time interval step in hours
+    if len(df) > 1 and "timestamp" in df.columns:
+        ts = pd.to_datetime(df["timestamp"])
+        dt_hours = (ts.iloc[1] - ts.iloc[0]).total_seconds() / 3600.0
+        dt_hours = dt_hours if dt_hours > 0 else 0.25
+    else:
+        dt_hours = 0.25
+
+    p_solar_arr = df["P_AC_kW"].to_numpy(dtype=float)
+    if load_df is not None and not load_df.empty:
+        p_load_col = get_load_power_column_name(load_df)
+        raw_load_arr = pd.to_numeric(load_df[p_load_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+
+        if len(raw_load_arr) == len(p_solar_arr):
+            p_load_aligned = raw_load_arr
+        elif len(raw_load_arr) < len(p_solar_arr) and len(raw_load_arr) > 0:
+            reps = int(math.ceil(len(p_solar_arr) / len(raw_load_arr)))
+            p_load_aligned = np.tile(raw_load_arr, reps)[:len(p_solar_arr)]
+        else:
+            p_load_aligned = raw_load_arr[:len(p_solar_arr)]
+    else:
+        p_load_aligned = np.zeros(len(p_solar_arr), dtype=float)
+
+    dispatch_res = compute_solar_load_dispatch(
+        solar_power_kw=p_solar_arr,
+        load_power_kw=p_load_aligned,
+        hours_per_step=dt_hours
+    )
+
+    df["P_Load_kW"] = np.round(dispatch_res["p_load_kw"], 2)
+    df["P_Direct_kW"] = np.round(dispatch_res["p_direct_kw"], 2)
+    df["P_Surplus_kW"] = np.round(dispatch_res["p_surplus_kw"], 2)
+    df["P_Residual_kW"] = np.round(dispatch_res["p_residual_kw"], 2)
+
+    # Clone and update KPIs with dispatch values
+    kpis = copy.copy(solar_res.kpis)
+    kpis.total_load_kwh = dispatch_res["total_load_kwh"]
+    kpis.direct_consumption_kwh = dispatch_res["direct_kwh"]
+    kpis.surplus_generation_kwh = dispatch_res["surplus_kwh"]
+    kpis.residual_load_kwh = dispatch_res["residual_kwh"]
+    kpis.self_consumption_rate_pct = dispatch_res["self_consumption_rate_pct"]
+    kpis.solar_fraction_autarky_pct = dispatch_res["solar_fraction_autarky_pct"]
+
+    return SolarSimulationResult(
+        config=solar_res.config,
+        location=solar_res.location,
+        kpis=kpis,
+        df_timeseries=df,
+        monthly_yields=solar_res.monthly_yields,
+        loss_breakdown=solar_res.loss_breakdown,
+        multi_year_yields=solar_res.multi_year_yields,
+        technology_comparison=solar_res.technology_comparison,
+        financial_config=solar_res.financial_config,
+        financial_metrics=solar_res.financial_metrics
+    )
+
+
 def get_load_power_column_name(load_df: pd.DataFrame) -> str:
     """
     Robustly identifies the total electrical power demand column in a load dataframe.
@@ -902,8 +973,7 @@ def simulate_solar_pv_generation(
     p_solar_arr = df["P_AC_kW"].to_numpy(dtype=float)
     if load_df is not None and not load_df.empty:
         p_load_col = get_load_power_column_name(load_df)
-        raw_load_arr = load_df[p_load_col].to_numpy(dtype=float)
-        raw_load_arr = np.nan_to_num(raw_load_arr, nan=0.0)
+        raw_load_arr = pd.to_numeric(load_df[p_load_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
 
         if len(raw_load_arr) == len(p_solar_arr):
             p_load_aligned = raw_load_arr

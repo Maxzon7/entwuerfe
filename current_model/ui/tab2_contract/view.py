@@ -93,6 +93,12 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
 
     # 2. Electricity Supply Contract & Tariff Configuration Form
     contract = render_contract_form(as_expander=False, key_prefix=key_prefix)
+    st.session_state["active_contract"] = contract
+    st.session_state[f"{key_prefix}_contract_model"] = contract
+    if "project_container" in st.session_state:
+        proj = st.session_state["project_container"]
+        if proj and hasattr(proj, "base_scenario") and proj.base_scenario is not None:
+            proj.base_scenario.base_contract = contract
 
     st.divider()
 
@@ -115,11 +121,14 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
                 ann_cost = full_breakdown.total_gross_period * factor
                 proj.base_scenario.baseline_annual_cost = ann_cost
                 proj.base_scenario.baseline_15year_cost = ann_cost * 18.5989
+                proj.base_scenario.base_contract = contract
 
         curr = getattr(contract, "currency", "ARS")
 
         # 4. Period Filter Selector (Full Duration vs. Single Month Inspection)
-        month_options = ["All Months (Full Duration Overview)"]
+        is_synthetic_annual = (len(full_breakdown.monthly_series) == 12 and full_breakdown.duration_days <= 1.5)
+        overview_label = "All Months (Full Year Overview)" if is_synthetic_annual else "All Months (Full Duration Overview)"
+        month_options = [overview_label]
         if full_breakdown.monthly_series:
             month_options += [m.period_label for m in full_breakdown.monthly_series]
 
@@ -134,7 +143,7 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
         with col_sel2:
             st.write("")
             st.write("")
-            is_single_month = (selected_period != "All Months (Full Duration Overview)")
+            is_single_month = (selected_period != overview_label)
             if is_single_month:
                 st.info(f"Viewing single-month detail for **{selected_period}**")
 
@@ -174,22 +183,53 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
                     subtext="All-inclusive unit cost"
                 )
         else:
+            # Aggregate across full monthly payment schedule
+            if breakdown.monthly_series:
+                sched_gross = sum(m.total_gross for m in breakdown.monthly_series)
+                sched_net = sum(m.total_net for m in breakdown.monthly_series)
+                sched_taxes = sum(m.taxes_and_levies for m in breakdown.monthly_series)
+                sched_kwh = sum(m.energy_kwh for m in breakdown.monthly_series)
+                sched_days = sum(m.days_count for m in breakdown.monthly_series)
+                n_months = len(breakdown.monthly_series)
+                avg_monthly_gross = sched_gross / max(1, n_months)
+                avg_monthly_net = sched_net / max(1, n_months)
+                avg_monthly_taxes = sched_taxes / max(1, n_months)
+                effective_price = (sched_gross / sched_kwh) if sched_kwh > 0 else breakdown.effective_kwh_price
+            else:
+                sched_gross = breakdown.total_gross_period
+                sched_net = breakdown.total_net_period
+                sched_taxes = breakdown.total_taxes_period
+                sched_kwh = breakdown.total_consumption_kwh
+                sched_days = int(round(breakdown.duration_days))
+                n_months = 1
+                avg_monthly_gross = breakdown.total_gross_monthly
+                avg_monthly_net = breakdown.total_net_monthly
+                avg_monthly_taxes = breakdown.total_taxes_monthly
+                effective_price = breakdown.effective_kwh_price
+
+            is_full_year = (n_months == 12 or sched_days >= 360 or is_synthetic_annual)
+
             with kpi_col1:
+                total_title = "Annual Total Cost (Full Year)" if is_full_year else "Total Cost over Period"
+                total_sub = (
+                    f"Net: {sched_net:,.2f} | 365 days ({sched_kwh:,.0f} kWh)" if is_synthetic_annual else
+                    f"Net: {sched_net:,.2f} | {sched_days} days ({sched_kwh:,.0f} kWh)"
+                )
                 render_kpi_card(
-                    title="Average Monthly Cost",
-                    value=f"{breakdown.total_gross_monthly:,.2f} {curr}",
-                    subtext=f"Net: {breakdown.total_net_monthly:,.2f} | Taxes: {breakdown.total_taxes_monthly:,.2f}"
+                    title=total_title,
+                    value=f"{sched_gross:,.2f} {curr}",
+                    subtext=total_sub
                 )
             with kpi_col2:
                 render_kpi_card(
-                    title="Total Cost over Period",
-                    value=f"{breakdown.total_gross_period:,.2f} {curr}",
-                    subtext=f"Analyzed period: {breakdown.duration_days:.0f} days ({breakdown.total_consumption_kwh:,.0f} kWh)"
+                    title="Average Monthly Cost",
+                    value=f"{avg_monthly_gross:,.2f} {curr}",
+                    subtext=f"Net: {avg_monthly_net:,.2f} | Taxes: {avg_monthly_taxes:,.2f}"
                 )
             with kpi_col3:
                 render_kpi_card(
                     title="Effective Electricity Price",
-                    value=f"{breakdown.effective_kwh_price:.4f} {curr}/kWh",
+                    value=f"{effective_price:.4f} {curr}/kWh",
                     subtext="All-inclusive average unit price"
                 )
             with kpi_col4:
@@ -203,16 +243,25 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
         t_col, c_col = st.columns([7, 5])
 
         with t_col:
-            header_title = f"Itemized Cost Breakdown ({selected_period})" if is_single_month else "Itemized Cost Breakdown (Normalized Month vs. Period)"
+            header_title = f"Itemized Cost Breakdown ({selected_period})" if is_single_month else (
+                "Itemized Cost Breakdown (Annualized vs. Monthly)" if is_synthetic_annual else "Itemized Cost Breakdown (Normalized Month vs. Period)"
+            )
             st.markdown(f"#### {header_title}")
             table_rows = []
             for item in breakdown.line_items:
+                if is_synthetic_annual:
+                    cost_val = item.cost_monthly * 12.0
+                    col_name = f"Annual Cost ({curr})"
+                else:
+                    cost_val = item.cost_period
+                    col_name = f"Period Cost ({curr})"
+
                 table_rows.append({
                     "Category": item.category,
                     "Description": item.description,
                     "Quantity": f"{item.basis_quantity:,.2f} {item.unit}",
                     "Unit Rate": f"{item.unit_rate:.4f} {curr}",
-                    f"Period Cost ({curr})": f"{item.cost_period:,.2f}",
+                    col_name: f"{cost_val:,.2f}",
                     f"Monthly Cost ({curr})": f"{item.cost_monthly:,.2f}",
                     "Share": f"{item.share_pct:.1f} %"
                 })

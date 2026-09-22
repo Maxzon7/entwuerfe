@@ -155,6 +155,88 @@ class TestSolarIntegrationTab(unittest.TestCase):
         fig_sankey = create_energy_flow_sankey_figure(dummy_kpis)
         self.assertIsNotNone(fig_sankey)
 
+    def test_couple_solar_simulation_with_load_fast(self):
+        """Verify that couple_solar_simulation_with_load accurately and rapidly couples solar output."""
+        from current_model.core.solar_engine import couple_solar_simulation_with_load
+
+        # 1. Run physical simulation standalone (without load)
+        standalone_res = simulate_solar_pv_generation(
+            config=self.config,
+            location=self.location
+        )
+        self.assertIn("P_AC_kW", standalone_res.df_timeseries.columns)
+
+        # 2. Fast couple with facility load
+        time_idx = pd.date_range("2025-01-01 00:00:00", periods=len(standalone_res.df_timeseries), freq="15min")
+        hours = time_idx.hour + time_idx.minute / 60.0
+        load_kw = np.where((hours >= 8) & (hours <= 18), 120.0, 30.0)
+        df_load = pd.DataFrame({"timestamp": time_idx, "Total_Demand_kW": load_kw})
+
+        coupled_res = couple_solar_simulation_with_load(standalone_res, df_load)
+
+        df = coupled_res.df_timeseries
+        kpis = coupled_res.kpis
+
+        # Verify coupled columns
+        for col in ["P_Load_kW", "P_Direct_kW", "P_Surplus_kW", "P_Residual_kW"]:
+            self.assertIn(col, df.columns)
+
+        # Verify physics conservation
+        self.assertTrue(np.allclose(df["P_Direct_kW"] + df["P_Residual_kW"], df["P_Load_kW"], atol=1e-2))
+        self.assertTrue(np.allclose(df["P_Direct_kW"] + df["P_Surplus_kW"], df["P_AC_kW"], atol=1e-2))
+        self.assertTrue(np.all(df["P_Direct_kW"] <= np.minimum(df["P_Load_kW"], df["P_AC_kW"]) + 1e-3))
+
+        # Verify KPIs are populated
+        self.assertGreater(kpis.direct_consumption_kwh, 0.0)
+        self.assertGreater(kpis.total_load_kwh, 0.0)
+        self.assertGreaterEqual(kpis.self_consumption_rate_pct, 0.0)
+        self.assertLessEqual(kpis.self_consumption_rate_pct, 100.0)
+        self.assertGreaterEqual(kpis.solar_fraction_autarky_pct, 0.0)
+        self.assertLessEqual(kpis.solar_fraction_autarky_pct, 100.0)
+
+    def test_find_active_contract_in_session_scenarios(self):
+        """Verify robust contract resolution across project container, sub-scenarios, and session keys."""
+        from current_model.models.contract import Contract
+        from current_model.models.scenario import ProjectContainer, BaseScenario, SubScenario
+
+        # Clear session keys
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+
+        test_contract = Contract(name="Primary Contract", contracted_capacity_kw=250.0)
+
+        # 1. Direct session key
+        st.session_state["active_contract"] = test_contract
+        resolved = find_active_contract_in_session()
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.contracted_capacity_kw, 250.0)
+
+        # 2. Project container base scenario
+        del st.session_state["active_contract"]
+        base = BaseScenario(name="Base", base_contract=test_contract)
+        proj = ProjectContainer(project_name="Test Proj", base_scenario=base)
+        st.session_state["project_container"] = proj
+
+        resolved = find_active_contract_in_session()
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.contracted_capacity_kw, 250.0)
+
+        # 3. Sub-scenario custom tariff override
+        sub_custom = Contract(name="Special Custom Tariff", contracted_capacity_kw=500.0)
+        sub = SubScenario(
+            id="sub_custom",
+            name="Option with Custom Grid Tariff",
+            use_custom_grid_tariff=True,
+            custom_contract=sub_custom
+        )
+        proj.sub_scenarios.append(sub)
+        proj.active_sub_scenario_id = "sub_custom"
+
+        resolved = find_active_contract_in_session()
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.contracted_capacity_kw, 500.0)
+        self.assertEqual(resolved.name, "Special Custom Tariff")
+
 
 if __name__ == "__main__":
     unittest.main()

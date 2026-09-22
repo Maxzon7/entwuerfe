@@ -29,10 +29,11 @@ def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
     """
     Constructs a clean, modern Donut chart displaying monthly cost distribution across all line items.
     """
+    is_synthetic_annual = (len(breakdown.monthly_series) == 12 and breakdown.duration_days <= 1.5)
     category_totals: Dict[str, float] = {}
     for item in breakdown.line_items:
         cat = item.category
-        val = item.cost_monthly if breakdown.duration_days > 35 else item.cost_period
+        val = item.cost_monthly if (breakdown.duration_days > 35 or is_synthetic_annual) else item.cost_period
         if val > 0:
             category_totals[cat] = category_totals.get(cat, 0.0) + val
 

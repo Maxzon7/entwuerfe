@@ -871,7 +871,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                 sol_val = st.checkbox(
                     "Activate Solar PV",
                     value=active_sub.include_solar,
-                    key=f"{key_prefix}_chk_mod_solar",
+                    key=f"{key_prefix}_chk_mod_solar_{active_sub.id}",
                     help="Enables the 'Solar PV Generation' tab for this sub-scenario."
                 )
                 if sol_val != active_sub.include_solar:
@@ -887,7 +887,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                 bess_val = st.checkbox(
                     "Activate Battery Storage (BESS)",
                     value=active_sub.include_bess,
-                    key=f"{key_prefix}_chk_mod_bess",
+                    key=f"{key_prefix}_chk_mod_bess_{active_sub.id}",
                     help="Enables the 'Battery Storage (BESS)' tab for this sub-scenario."
                 )
                 if bess_val != active_sub.include_bess:
@@ -903,7 +903,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                 tariff_val = st.checkbox(
                     "Activate Tariff Switch",
                     value=active_sub.use_custom_grid_tariff,
-                    key=f"{key_prefix}_chk_mod_tariff",
+                    key=f"{key_prefix}_chk_mod_tariff_{active_sub.id}",
                     help="Enables the 'Tariff Switch / Alternative Contract' tab for this sub-scenario."
                 )
                 if tariff_val != active_sub.use_custom_grid_tariff:
@@ -916,7 +916,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
         with st.expander(f"Manage / Rename Sub-Scenario '{active_sub.name}'", icon=":material/tune:", expanded=False):
             m_c1, m_c2, m_c3, m_c4 = st.columns([4, 2, 2, 2])
             with m_c1:
-                ren_val = st.text_input("Rename Branch:", value=active_sub.name, key=f"{key_prefix}_rename_act_input")
+                ren_val = st.text_input("Rename Branch:", value=active_sub.name, key=f"{key_prefix}_rename_act_input_{active_sub.id}")
             with m_c2:
                 st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
                 if st.button("Save Name", icon=":material/check:", key=f"{key_prefix}_save_ren_btn", use_container_width=True):

@@ -78,7 +78,40 @@ class TestBESSSimulation(unittest.TestCase):
         # Peak 2: (160 - 100) * 8 * 0.25 = 60 * 2 = 120 kWh
         # Total: 200 kWh
         self.assertAlmostEqual(diag["total_exceedance_energy_kwh"], 200.0, places=1)
+        self.assertAlmostEqual(diag["worst_event_energy_kwh"], 120.0, places=1)
+        self.assertAlmostEqual(diag["min_bess_capacity_kwh"], 120.0, places=1)
+        self.assertAlmostEqual(diag["worst_event_duration_hours"], 2.0, places=1)
         self.assertTrue(diag["has_violations"])
+
+    def test_min_bess_capacity_asymmetric_peaks(self):
+        """
+        Verify that minimum BESS capacity correctly integrates discrete energy
+        even when one peak is long & low and another is short & sharp.
+        """
+        # 100 kW grid limit
+        # Event 1: Long & low: 24 intervals (6 hours) at 115 kW -> 15 kW over * 6h = 90 kWh
+        # Event 2: Short & sharp: 4 intervals (1 hour) at 170 kW -> 70 kW over * 1h = 70 kWh
+        load = np.full(100, 50.0)
+        load[10:34] = 115.0  # 6 hours, 15 kW exceedance = 90 kWh
+        load[50:54] = 170.0  # 1 hour, 70 kW exceedance = 70 kWh
+
+        diag = analyze_grid_violations(load, grid_limit_kw=100.0, step_hours=0.25)
+        self.assertEqual(diag["overload_peak_kw"], 70.0)
+        self.assertEqual(diag["longest_violation_run_hours"], 6.0)
+        # Event 1 has greater energy (90 kWh > 70 kWh) despite lower peak
+        self.assertAlmostEqual(diag["worst_event_energy_kwh"], 90.0, places=1)
+        self.assertAlmostEqual(diag["min_bess_capacity_kwh"], 90.0, places=1)
+        self.assertAlmostEqual(diag["worst_event_duration_hours"], 6.0, places=1)
+
+        # Now test case where short & sharp has more energy:
+        # Event 3: 8 intervals (2 hours) at 180 kW -> 80 kW over * 2h = 160 kWh
+        load[70:78] = 180.0
+        diag2 = analyze_grid_violations(load, grid_limit_kw=100.0, step_hours=0.25)
+        self.assertEqual(diag2["overload_peak_kw"], 80.0)
+        self.assertEqual(diag2["longest_violation_run_hours"], 6.0)  # Still event 1 has longest duration
+        self.assertAlmostEqual(diag2["worst_event_energy_kwh"], 160.0, places=1)  # Event 3 has highest energy
+        self.assertAlmostEqual(diag2["min_bess_capacity_kwh"], 160.0, places=1)
+        self.assertAlmostEqual(diag2["worst_event_duration_hours"], 2.0, places=1)
 
     def test_bess_peak_shaving_dispatch(self):
         """Verify interval-by-interval battery peak shaving dispatch and SoC tracking."""

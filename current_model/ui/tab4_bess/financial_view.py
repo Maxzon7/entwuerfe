@@ -85,6 +85,12 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
 
     load_summary = get_load_profile_summary(df_load, power_col=p_col)
     active_contract = find_active_contract_in_session()
+    if active_contract is None:
+        if active_sub and getattr(active_sub, "use_custom_grid_tariff", False) and getattr(active_sub, "custom_grid_tariff", None):
+            active_contract = active_sub.custom_grid_tariff
+        elif project and project.base_scenario and project.base_scenario.base_contract:
+            active_contract = project.base_scenario.base_contract
+
     contract_kw = float(getattr(active_contract, "contracted_capacity_kw", 0.0)) if active_contract else 0.0
 
     # Retrieve or initialize BESS config

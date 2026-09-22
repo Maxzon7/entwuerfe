@@ -223,13 +223,21 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
         holiday_list = edited_holidays["date"].dropna().astype(str).tolist()
 
     # 3. Horizon Selector: 24h vs. 365 Days
-    h_col1, h_col2 = st.columns([4, 6])
+    h_col1, h_col2 = st.columns([5, 5])
     with h_col1:
         horizon_mode = st.radio(
-            "Simulation Horizon:",
+            "Inspection Horizon (Tab 1 Charts):",
             options=["24-Hour Typical Day", "Full Year (365 Days / 35,040 Steps)"],
             horizontal=True,
             key=f"{key_prefix}_horizon"
+        )
+    with h_col2:
+        st.write("")
+        is_full_year = horizon_mode.startswith("Full Year")
+        st.caption(
+            ":material/check_circle: *Full 365-day timeseries (35,040 steps) is automatically maintained for BESS & Solar simulations.*"
+            if not is_full_year else
+            ":material/calendar_month: *Full 365-day timeseries with range slider and 2D load heatmap active.*"
         )
 
     # 4. Simulation Calculations
@@ -242,25 +250,22 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
             render_consumer_editor(consumers)
         return
 
-    # Calculate 24h baseline
+    # Calculate 24h baseline (for 24h charts and machine breakdown)
     df_day, total_curve_24h, metrics_24h = aggregate_synthetic_24h(consumers)
 
-    # Calculate 365-day annual timeseries on-demand only when Full Year is active
-    is_full_year = horizon_mode.startswith("Full Year")
-    if is_full_year:
-        df_year, total_curve_year, metrics_year = aggregate_synthetic_year(
-            consumers=consumers,
-            year=2025,
-            holidays=holiday_list
-        )
-        active_synthetic_dataset = df_year
-    else:
-        df_year, total_curve_year, metrics_year = None, None, None
-        active_synthetic_dataset = df_day
+    # Always calculate 365-day annual timeseries so downstream tabs (BESS, Solar, Contract)
+    # ALWAYS receive a full annual dataset (35,040 steps) without requiring manual toggling.
+    df_year, total_curve_year, metrics_year = aggregate_synthetic_year(
+        consumers=consumers,
+        year=2025,
+        holidays=holiday_list
+    )
 
-    # Store active dataset in session state so Tab 2 can automatically read it
-    st.session_state[f"{key_prefix}_active_df"] = active_synthetic_dataset
-    st.session_state["active_synthetic_df"] = active_synthetic_dataset
+    # Store both horizons in session state
+    st.session_state["active_synthetic_df"] = df_year
+    st.session_state["active_synthetic_year_df"] = df_year
+    st.session_state["active_synthetic_day_df"] = df_day
+    st.session_state[f"{key_prefix}_active_df"] = df_year if is_full_year else df_day
 
 
     # 5. KPI Cards

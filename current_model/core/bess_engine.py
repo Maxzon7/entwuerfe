@@ -56,6 +56,9 @@ def analyze_grid_violations(
             "violation_share_pct": 0.0,
             "longest_violation_run_intervals": 0,
             "longest_violation_run_hours": 0.0,
+            "worst_event_energy_kwh": 0.0,
+            "worst_event_duration_hours": 0.0,
+            "min_bess_capacity_kwh": 0.0,
             "total_exceedance_energy_kwh": 0.0,
             "total_exceedance_energy_mwh": 0.0,
             "avg_overload_power_kw": 0.0,
@@ -71,18 +74,28 @@ def analyze_grid_violations(
     violation_share_pct = float(total_violation_intervals / len(arr) * 100.0) if len(arr) > 0 else 0.0
     total_exceedance_kwh = float(np.sum(diff) * step_hours)
 
-    # Longest consecutive violation run calculation
+    # Longest consecutive violation run & worst-case event energy integration
     longest_run = 0
     current_run = 0
-    for is_over in violation_mask:
+    current_run_energy = 0.0
+    worst_event_energy_kwh = 0.0
+    worst_event_run_intervals = 0
+
+    for val, is_over in zip(diff, violation_mask):
         if is_over:
             current_run += 1
+            current_run_energy += float(val * step_hours)
             if current_run > longest_run:
                 longest_run = current_run
+            if current_run_energy > worst_event_energy_kwh:
+                worst_event_energy_kwh = current_run_energy
+                worst_event_run_intervals = current_run
         else:
             current_run = 0
+            current_run_energy = 0.0
 
     longest_run_hours = float(longest_run * step_hours)
+    worst_event_duration_hours = float(worst_event_run_intervals * step_hours)
     avg_overload = float(np.mean(diff[violation_mask])) if total_violation_intervals > 0 else 0.0
 
     return {
@@ -94,6 +107,9 @@ def analyze_grid_violations(
         "violation_share_pct": round(violation_share_pct, 2),
         "longest_violation_run_intervals": longest_run,
         "longest_violation_run_hours": round(longest_run_hours, 2),
+        "worst_event_energy_kwh": round(worst_event_energy_kwh, 1),
+        "worst_event_duration_hours": round(worst_event_duration_hours, 2),
+        "min_bess_capacity_kwh": round(worst_event_energy_kwh, 1),
         "total_exceedance_energy_kwh": round(total_exceedance_kwh, 1),
         "total_exceedance_energy_mwh": round(total_exceedance_kwh / 1000.0, 2),
         "avg_overload_power_kw": round(avg_overload, 1),
