@@ -127,6 +127,9 @@ class SolarPVConfig:
     # Sizing Scenario Tag
     sizing_scenario: str = "custom"               # "40%", "60%", "80%", "100%", or "custom"
 
+    # Multi-Technology Comparison Toggle
+    enable_technology_comparison: bool = False    # Whether to run 15-year multi-technology comparison matrix
+
     def __post_init__(self):
         if self.dc_capacity_kwp is not None:
             # If user provided dc_capacity_kwp and module_count is at default 600, calculate module count
@@ -186,7 +189,8 @@ class SolarPVConfig:
             "selected_weather_year": int(self.selected_weather_year),
             "multi_year_start": int(self.multi_year_start),
             "multi_year_end": int(self.multi_year_end),
-            "sizing_scenario": str(self.sizing_scenario)
+            "sizing_scenario": str(self.sizing_scenario),
+            "enable_technology_comparison": bool(self.enable_technology_comparison)
         }
 
     @classmethod
@@ -222,7 +226,8 @@ class SolarPVConfig:
             selected_weather_year=int(data.get("selected_weather_year", 2024)),
             multi_year_start=int(data.get("multi_year_start", 2015)),
             multi_year_end=int(data.get("multi_year_end", 2024)),
-            sizing_scenario=data.get("sizing_scenario", "custom")
+            sizing_scenario=data.get("sizing_scenario", "custom"),
+            enable_technology_comparison=bool(data.get("enable_technology_comparison", False))
         )
 
 

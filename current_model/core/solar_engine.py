@@ -1103,15 +1103,17 @@ def simulate_solar_pv_generation(
     )
 
     # 10. Multi-Technology Comparison Matrix (PERC vs TOPCon vs Backcontact)
-    tech_comparison = compute_technology_comparison(
-        module_count=config.module_count,
-        poa_arr=poa,
-        t_amb_arr=t_amb,
-        dt_hours=dt_hours,
-        nmot_c=config.nmot_c,
-        dc_loss_pct=config.total_dc_loss_pct,
-        inverter_eff_pct=config.inverter_efficiency_pct
-    )
+    tech_comparison = []
+    if getattr(config, "enable_technology_comparison", False):
+        tech_comparison = compute_technology_comparison(
+            module_count=config.module_count,
+            poa_arr=poa,
+            t_amb_arr=t_amb,
+            dt_hours=dt_hours,
+            nmot_c=config.nmot_c,
+            dc_loss_pct=config.total_dc_loss_pct,
+            inverter_eff_pct=config.inverter_efficiency_pct
+        )
 
     return SolarSimulationResult(
         config=config,

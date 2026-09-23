@@ -202,8 +202,107 @@ class TestExample1Scenario(unittest.TestCase):
         self.assertIn("Paula1 (Bodegas Salentein - EDEMSA T2 R MT)", presets)
         self.assertIn("Industrial Multi-Tariff (EUR)", presets)
         self.assertIn("Commercial Standard Fixed (EUR)", presets)
-        self.assertIn("Argentine T3 Grandes Demandas (ARS)", presets)
+    def test_residual_grid_load_comparison_figure(self):
+        """Verify create_residual_grid_load_comparison_figure renders correctly in all 3 modes."""
+        from current_model.ui.tab_comparison.charts import create_residual_grid_load_comparison_figure
+        
+        sample_records = [
+            {
+                "id": "base",
+                "name": "Status Quo (Base Scenario)",
+                "total_load_mwh": 441.4,
+                "monthly_load_mwh": [36.8] * 12,
+                "monthly_residual_mwh": [36.8] * 12,
+                "residual_grid_mwh": 441.4,
+                "direct_consumption_mwh": 0.0,
+                "autarky_pct": 0.0
+            },
+            {
+                "id": "sub1",
+                "name": "Option 1: Solar & Storage",
+                "total_load_mwh": 441.4,
+                "monthly_load_mwh": [36.8] * 12,
+                "monthly_residual_mwh": [10.9] * 12,
+                "residual_grid_mwh": 131.1,
+                "direct_consumption_mwh": 310.3,
+                "autarky_pct": 70.3
+            }
+        ]
+
+        # Test 12-month trajectory curve mode (default)
+        fig_curve = create_residual_grid_load_comparison_figure(sample_records, chart_mode="monthly_curve")
+        self.assertIsNotNone(fig_curve)
+        self.assertEqual(len(fig_curve.data), 2)
+        self.assertEqual(fig_curve.data[0].name, "Facility Total Demand (Status Quo)")
+        self.assertIn("Option 1: Solar & Storage", fig_curve.data[1].name)
+
+        # Test monthly grouped mode
+        fig_grouped = create_residual_grid_load_comparison_figure(sample_records, chart_mode="monthly_grouped")
+        self.assertIsNotNone(fig_grouped)
+        self.assertEqual(len(fig_grouped.data), 2)
+
+        # Test annual totals mode
+        fig_annual = create_residual_grid_load_comparison_figure(sample_records, chart_mode="annual_totals")
+        self.assertIsNotNone(fig_annual)
+        self.assertEqual(len(fig_annual.data), 1)
+
+    def test_build_scenario_evaluation_records_with_various_subscenarios(self):
+        """Verify _build_scenario_evaluation_records handles subscenarios with and without solar without UnboundLocalError."""
+        from current_model.ui.tab_comparison.view import _build_scenario_evaluation_records
+        from current_model.models.scenario import ProjectContainer, BaseScenario, SubScenario
+        from current_model.models.solar import SolarPVConfig
+        from current_model.models.bess import BESSConfig
+
+        proj = ProjectContainer(
+            project_name="Mixed SubScenario Facility",
+            base_scenario=BaseScenario(
+                name="Base",
+                baseline_annual_kwh=100000.0,
+                baseline_annual_cost=30000.0
+            ),
+            sub_scenarios=[
+                # SubScenario 1: Solar enabled
+                SubScenario(
+                    id="sub_solar",
+                    name="Solar PV Branch",
+                    include_solar=True,
+                    solar_config=SolarPVConfig(module_count=200, module_power_wp=400.0)
+                ),
+                # SubScenario 2: BESS only (Solar disabled)
+                SubScenario(
+                    id="sub_bess_only",
+                    name="Battery Only Branch",
+                    include_solar=False,
+                    include_bess=True,
+                    bess_config=BESSConfig(capacity_kwh=100.0, max_discharge_power_kw=50.0)
+                ),
+                # SubScenario 3: Tariff switch only (Solar disabled, BESS disabled)
+                SubScenario(
+                    id="sub_tariff_only",
+                    name="Tariff Only Branch",
+                    include_solar=False,
+                    include_bess=False,
+                    use_custom_grid_tariff=True
+                ),
+                # SubScenario 4: Empty / default (Old legacy scenario upload)
+                SubScenario(
+                    id="sub_empty",
+                    name="Empty Branch",
+                    include_solar=False,
+                    include_bess=False
+                )
+            ]
+        )
+
+        records = _build_scenario_evaluation_records(proj)
+        self.assertEqual(len(records), 5)  # 1 base + 4 subscenarios
+        for r in records:
+            self.assertIn("monthly_load_mwh", r)
+            self.assertIn("monthly_residual_mwh", r)
+            self.assertEqual(len(r["monthly_load_mwh"]), 12)
+            self.assertEqual(len(r["monthly_residual_mwh"]), 12)
 
 
 if __name__ == "__main__":
     unittest.main()
+

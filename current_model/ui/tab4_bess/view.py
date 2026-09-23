@@ -396,7 +396,7 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
     with st.form(key=f"{key_prefix}_specs_form", clear_on_submit=False):
         # Section A: Storage Capacity & Modular Units
         st.markdown("###### A. Storage Capacity & Unit Sizing")
-        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+        col_c1, col_c2, col_c3 = st.columns([1.2, 1.2, 1.6])
 
         with col_c1:
             unit_count = st.number_input(
@@ -418,25 +418,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 help="Nominal energy rating per individual battery unit."
             )
 
-        chem_options = [
-            "LFP (Lithium Iron Phosphate - Standard)",
-            "NMC (Nickel Manganese Cobalt - High Density)",
-            "Flow Battery (Vanadium Redox - Long Duration)"
-        ]
-        curr_chem_val = st.session_state.get(k_chem, getattr(curr_bess_cfg, "battery_chemistry", chem_options[0]))
-        chem_idx = chem_options.index(curr_chem_val) if curr_chem_val in chem_options else 0
-
-        with col_c3:
-            battery_chem = st.selectbox(
-                "Battery Cell Chemistry:",
-                options=chem_options,
-                index=chem_idx,
-                key=k_chem,
-                help="Cell chemistry determines thermal stability, cycle life, and degradation characteristics."
-            )
-
         calc_nom_kwh = float(unit_count * unit_kwh)
-        with col_c4:
+        with col_c3:
             st.metric(
                 "Configured Nominal Capacity",
                 f"{calc_nom_kwh:,.1f} kWh",
@@ -571,7 +554,7 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
             capacity_kwh=total_nom_kwh,
             unit_count=int(unit_count),
             unit_capacity_kwh=float(unit_kwh),
-            battery_chemistry=str(battery_chem),
+            battery_chemistry=getattr(curr_bess_cfg, "battery_chemistry", "LFP (Lithium Iron Phosphate - Standard)"),
             max_charge_power_kw=float(chg_kw),
             max_discharge_power_kw=float(dis_kw),
             round_trip_efficiency_pct=float(rte_pct),

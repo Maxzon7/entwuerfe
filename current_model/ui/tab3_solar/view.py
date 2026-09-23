@@ -237,6 +237,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
             getattr(prev_cfg, "temp_coefficient_pct_c", None) != config.temp_coefficient_pct_c or
             getattr(prev_cfg, "weather_mode", None) != getattr(config, "weather_mode", None) or
             getattr(prev_cfg, "selected_weather_year", None) != getattr(config, "selected_weather_year", None) or
+            getattr(prev_cfg, "enable_technology_comparison", False) != getattr(config, "enable_technology_comparison", False) or
             getattr(getattr(cached_res, "location", None), "latitude", None) != location.latitude or
             getattr(getattr(cached_res, "location", None), "longitude", None) != location.longitude):
             physical_config_changed = True
@@ -263,7 +264,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     need_financial_recalc = valid_sizing and not need_full_simulation and submitted and (financial_config_changed or (cached_res is not None and cached_res.financial_metrics is None and fin_config and fin_config.is_enabled))
 
     if need_full_simulation:
-        with st.spinner("Calculating 15-minute physical solar PV generation & technology comparison..."):
+        with st.spinner("Calculating 15-minute physical solar PV generation..."):
             try:
                 sim_result: SolarSimulationResult = simulate_solar_pv_generation(
                     config=config,
@@ -314,13 +315,13 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
         st.info(
             "**Ready to Simulate Solar PV Generation**\n\n"
             "Review or adjust your solar system specifications and financial parameters above, then click "
-            "**:material/calculate: Calculate Solar PV Generation & Multi-Technology Comparison** to compute the 15-minute physical generation profile, KPIs, and technology comparison.",
+            "**:material/calculate: Calculate Solar PV Generation** to compute the 15-minute physical generation profile, KPIs, and yield.",
             icon=":material/info:"
         )
         return
 
     if physical_config_changed and valid_sizing:
-        st.warning("Solar configuration parameters were modified above. Click **'Calculate Solar PV Generation & Multi-Technology Comparison'** to recompute the physical simulation.", icon=":material/warning:")
+        st.warning("Solar configuration parameters were modified above. Click **'Calculate Solar PV Generation'** to recompute the physical simulation.", icon=":material/warning:")
 
     sim_res: SolarSimulationResult = st.session_state[state_res_key]
 
@@ -453,13 +454,12 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
             st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
 
         # 8. Multi-Technology Comparative Production Analysis (Output Panel)
-        st.subheader("7. Multi-Technology Production Analysis (PERC vs. TOPCon vs. Backcontact)")
-        st.caption(
-            f"Direct performance comparison for **{config.module_count:,} identical module positions** "
-            f"across a 15-year operational lifetime (accounting for cell wattage, temperature coefficient, and 2-stage degradation):"
-        )
-
-        if sim_res.technology_comparison:
+        if sim_res.technology_comparison and len(sim_res.technology_comparison) > 0:
+            st.subheader("7. Multi-Technology Production Analysis (PERC vs. TOPCon vs. Backcontact)")
+            st.caption(
+                f"Direct performance comparison for **{config.module_count:,} identical module positions** "
+                f"across a 15-year operational lifetime (accounting for cell wattage, temperature coefficient, and 2-stage degradation):"
+            )
             fig_tech = create_technology_comparison_figure(sim_res.technology_comparison)
             st.plotly_chart(fig_tech, use_container_width=True)
 

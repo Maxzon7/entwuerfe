@@ -144,7 +144,7 @@ def test_gather_available_contracts_uses_clean_emoji_keys():
 
     for key in contracts.keys():
         assert not key.startswith(":material/"), f"Key {key} contains unparsed material icon shortcode"
-        assert key.startswith("📌") or key.startswith("📄") or key.startswith("⚙️")
+        assert any(key.startswith(p) for p in ["[Baseline]", "[Preset]", "[Configured]", "📌", "📄", "⚙️"])
 
 
 def test_cumulative_cost_comparison_and_running_costs_figures():

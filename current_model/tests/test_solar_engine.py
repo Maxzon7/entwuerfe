@@ -179,7 +179,8 @@ class TestSolarEngine(unittest.TestCase):
         self.assertAlmostEqual(cfg2.required_area_m2, 121.0, delta=0.1)
 
     def test_multi_technology_comparison_matrix(self):
-        """Verify comparative production matrix computes PERC vs TOPCon vs Backcontact yields."""
+        """Verify comparative production matrix computes PERC vs TOPCon vs Backcontact yields when enabled."""
+        self.config.enable_technology_comparison = True
         result: SolarSimulationResult = simulate_solar_pv_generation(
             config=self.config,
             location=self.location
@@ -201,6 +202,15 @@ class TestSolarEngine(unittest.TestCase):
         # Backcontact (470W, -0.26%/°C) must yield higher than TOPCon
         self.assertGreater(backcontact.year_1_kwh, topcon.year_1_kwh)
         self.assertGreater(backcontact.gain_pct_vs_perc, topcon.gain_pct_vs_perc)
+
+    def test_multi_technology_comparison_disabled_by_default(self):
+        """Verify technology comparison is skipped and returns empty list when enable_technology_comparison is False."""
+        self.config.enable_technology_comparison = False
+        result: SolarSimulationResult = simulate_solar_pv_generation(
+            config=self.config,
+            location=self.location
+        )
+        self.assertEqual(result.technology_comparison, [])
 
     def test_pvgis_tmy_weather_data_fetching_and_structure(self):
         """Verify TMY data returns a valid 35,040 15-minute grid with physical solar values."""

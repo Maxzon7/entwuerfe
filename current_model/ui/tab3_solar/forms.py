@@ -300,18 +300,6 @@ def render_solar_config_form(
     st.subheader("2. Solar PV Technical Specifications & Generator Sizing")
     st.caption("Configure solar module quantities, rated wattage, cell technology, mounting area, and inverter limits:")
 
-    # Compact Educational Guide on Cell Technologies
-    with st.expander("Technology Guide: What are PERC, TOPCon, and Backcontact?", expanded=False):
-        st.markdown(
-            """
-            | Technology | Std. Power | Temp. Coeff. γ | Degradation (Y1 / Annual) | Core Characteristics |
-            | :--- | :---: | :---: | :---: | :--- |
-            | **PERC** | 410 Wp | -0.35 %/°C | 2.0 % / 0.55 %/a | Cost-effective P-Type industrial standard. Higher initial LID degradation. |
-            | **TOPCon** | 450 Wp | -0.29 %/°C | 1.5 % / 0.40 %/a | Modern N-Type benchmark: +9.8 % power density, superior low-light yield. |
-            | **Backcontact** | 470 Wp | -0.26 %/°C | 1.0 % / 0.35 %/a | Premium IBC tier: Zero front busbar shading, lowest thermal losses. |
-            """
-        )
-
     # Compact Educational Guide on Weather Data Foundations
     with st.expander("Educational Guide: How Solar Weather Data and Multi-Year Modeling Work", expanded=False):
         st.markdown(
@@ -368,60 +356,11 @@ def render_solar_config_form(
             with w_col2:
                 st.caption("10-Year Historical Evaluation Horizon: **2015 - 2024** (Computes P50 expected yield, P90 debt sizing, and volatility range)")
 
-        # 2. Module Quantities & Cell Technology (Input Panel)
-        st.markdown("##### 2. Module Quantity & Cell Technology (Input Panel)")
-        c1, c2, c3 = st.columns([4, 4, 4])
+        # 2. Module Quantities & Generator Sizing (Quick Sizing)
+        st.markdown("##### 2. Solar PV Generator Sizing (Quick Configuration)")
+        c_qty, c_pwr = st.columns(2)
 
-        with c1:
-            tech_options = [
-                "TOPCon (450 Wp - N-Type Modern Standard)",
-                "PERC (410 Wp - P-Type Standard)",
-                "Backcontact / IBC (470 Wp - Premium)",
-                "Custom Parameters"
-            ]
-            current_tech_idx = 0
-            preset_name = getattr(cfg, "technology_preset", "TOPCon")
-            if preset_name == "PERC":
-                current_tech_idx = 1
-            elif preset_name == "Backcontact":
-                current_tech_idx = 2
-            elif preset_name == "Custom":
-                current_tech_idx = 3
-
-            selected_tech = st.selectbox(
-                "Cell Technology Preset:",
-                options=tech_options,
-                index=current_tech_idx,
-                key=f"{key_prefix}_tech_choice"
-            )
-
-        # Technology Parameter Presets
-        if "TOPCon" in selected_tech:
-            preset_key = "TOPCon"
-            def_wp = 450.0
-            def_gamma = -0.29
-            def_d1 = 1.50
-            def_d2 = 0.40
-        elif "PERC" in selected_tech:
-            preset_key = "PERC"
-            def_wp = 410.0
-            def_gamma = -0.35
-            def_d1 = 2.00
-            def_d2 = 0.55
-        elif "Backcontact" in selected_tech:
-            preset_key = "Backcontact"
-            def_wp = 470.0
-            def_gamma = -0.26
-            def_d1 = 1.00
-            def_d2 = 0.35
-        else:
-            preset_key = "Custom"
-            def_wp = getattr(cfg, "module_power_wp", 450.0)
-            def_gamma = getattr(cfg, "temp_coefficient_pct_c", -0.29)
-            def_d1 = getattr(cfg, "first_year_degradation_pct", 1.50)
-            def_d2 = getattr(cfg, "annual_degradation_pct", 0.40)
-
-        with c2:
+        with c_qty:
             default_mod_count = int(st.session_state.get(f"{key_prefix}_mod_count", getattr(cfg, "module_count", 600) or 600))
             mod_count = st.number_input(
                 "Amount of Modules (Units):",
@@ -433,270 +372,340 @@ def render_solar_config_form(
                 key=f"{key_prefix}_mod_count"
             )
 
-        with c3:
+        with c_pwr:
             mod_wp = st.number_input(
                 "Module Rated Power (Wp / Unit):",
                 min_value=50.0,
                 max_value=1000.0,
-                value=float(def_wp),
+                value=float(getattr(cfg, "module_power_wp", 450.0) or 450.0),
                 step=5.0,
                 format="%.1f",
-                help="Rated STC peak power per module in Watts-peak (Wp).",
+                help="Rated STC peak power per module in Watts-peak (Wp). Standard TOPCon: 450 Wp.",
                 key=f"{key_prefix}_mod_wp"
             )
 
         # Dynamic Calculated DC Capacity Info Banner
         calc_dc_kwp = round((mod_count * mod_wp) / 1000.0, 2)
+        est_area_m2 = round(mod_count * float(getattr(cfg, "module_length_m", 1.76)) * float(getattr(cfg, "module_width_m", 1.13)) * float(getattr(cfg, "area_factor", 1.40)), 0)
         if calc_dc_kwp > 0:
-            st.info(f"**Installed DC Generator Capacity:** `{calc_dc_kwp:,.2f} kWp` ({mod_count:,} Modules × {mod_wp:.0f} Wp)")
+            st.info(f"**Installed DC Generator Capacity:** `{calc_dc_kwp:,.2f} kWp` ({mod_count:,} Modules × {mod_wp:.0f} Wp) | **Estimated Required Area:** `~{est_area_m2:,.0f} m²`")
         else:
-            st.info("**Installed DC Generator Capacity:** `0.00 kWp` *(Tip: Enter your module count and click 'Calculate Solar PV Generation' at the bottom of this form to apply)*")
+            st.info("**Installed DC Generator Capacity:** `0.00 kWp` *(Tip: Enter your module count and click 'Calculate Solar PV Generation' to simulate)*")
 
-        # 3. Physical Dimensions & Area Requirements (Year Sheet)
-        st.markdown("##### 3. Physical Dimensions & Required Area (Year Sheet)")
-        a1, a2, a3 = st.columns(3)
-        with a1:
-            mod_len = st.number_input(
-                "Module Length (m):",
-                min_value=0.5,
-                max_value=3.0,
-                value=float(getattr(cfg, "module_length_m", 1.76)),
-                step=0.05,
-                format="%.2f",
-                help="Physical length of panel (standard: 1.76m or 1.2m).",
-                key=f"{key_prefix}_mod_len"
-            )
-        with a2:
-            mod_wid = st.number_input(
-                "Module Width (m):",
-                min_value=0.3,
-                max_value=2.0,
-                value=float(getattr(cfg, "module_width_m", 1.13)),
-                step=0.05,
-                format="%.2f",
-                help="Physical width of panel (standard: 1.13m or 0.7m).",
-                key=f"{key_prefix}_mod_wid"
-            )
-        with a3:
-            area_factor = st.number_input(
-                "Area Spacing Factor (Row Pitch):",
-                min_value=1.0,
-                max_value=3.0,
-                value=float(getattr(cfg, "area_factor", 1.40)),
-                step=0.1,
-                format="%.2f",
-                help="1.0 = flush coplanar roof, 1.4 - 1.8 = ground mount / tilted rows with shadow clearance.",
-                key=f"{key_prefix}_area_fact"
-            )
+        # 3. Extended Options & Advanced Parameters Expander
+        with st.expander(":material/tune: Extended Options & Physical Parameters (Technology, Orientation, Dimensions, Inverter)", expanded=False):
+            # A. Cell Technology & Multi-Technology Comparison
+            st.markdown("###### Cell Technology & Comparison Options")
+            col_tech, col_comp = st.columns([5, 7])
 
-        gross_panel_area = mod_count * mod_len * mod_wid
-        req_total_area = gross_panel_area * area_factor
-        st.caption(f"**Net Active Panel Area:** `{gross_panel_area:,.1f} m²` | **Total Required Installation Area:** `{req_total_area:,.1f} m²` (Pitch Factor: {area_factor:.2f})")
+            with col_tech:
+                tech_options = [
+                    "TOPCon (450 Wp - N-Type Modern Standard)",
+                    "PERC (410 Wp - P-Type Standard)",
+                    "Backcontact / IBC (470 Wp - Premium)",
+                    "Custom Parameters"
+                ]
+                current_tech_idx = 0
+                preset_name = getattr(cfg, "technology_preset", "TOPCon")
+                if preset_name == "PERC":
+                    current_tech_idx = 1
+                elif preset_name == "Backcontact":
+                    current_tech_idx = 2
+                elif preset_name == "Custom":
+                    current_tech_idx = 3
 
-        # 4. Temperature Physics & 2-Stage Degradation
-        st.markdown("##### 4. Temperature Physics & 2-Stage Degradation")
-        d1_col, d2_col, d3_col = st.columns(3)
-        with d1_col:
-            temp_coeff = st.number_input(
-                "Temperature Coeff. γ (%/°C above 25°C):",
-                min_value=-1.0,
-                max_value=0.0,
-                value=float(def_gamma),
-                step=0.01,
-                format="%.2f",
-                help="Derate coefficient per °C above 25°C cell temp. Standard: -0.25%/°C to -0.29%/°C.",
-                key=f"{key_prefix}_temp_coeff"
-            )
-        with d2_col:
-            first_yr_deg = st.number_input(
-                "Year 1 Degradation (%):",
-                min_value=0.0,
-                max_value=10.0,
-                value=float(def_d1),
-                step=0.1,
-                format="%.2f",
-                help="Initial light-induced degradation (LID) in year 1.",
-                key=f"{key_prefix}_deg_y1"
-            )
-        with d3_col:
-            annual_deg = st.number_input(
-                "Annual Degradation (%/year, Y2+):",
-                min_value=0.0,
-                max_value=5.0,
-                value=float(def_d2),
-                step=0.05,
-                format="%.2f",
-                help="Linear degradation per year for years 2 through 15.",
-                key=f"{key_prefix}_deg_annual"
+                selected_tech = st.selectbox(
+                    "Active Cell Technology:",
+                    options=tech_options,
+                    index=current_tech_idx,
+                    key=f"{key_prefix}_tech_choice",
+                    help="Select your PV cell architecture preset. Default is modern TOPCon (450 Wp)."
+                )
+
+            # Technology Parameter Presets
+            if "TOPCon" in selected_tech:
+                preset_key = "TOPCon"
+                def_gamma = -0.29
+                def_d1 = 1.50
+                def_d2 = 0.40
+            elif "PERC" in selected_tech:
+                preset_key = "PERC"
+                def_gamma = -0.35
+                def_d1 = 2.00
+                def_d2 = 0.55
+            elif "Backcontact" in selected_tech:
+                preset_key = "Backcontact"
+                def_gamma = -0.26
+                def_d1 = 1.00
+                def_d2 = 0.35
+            else:
+                preset_key = "Custom"
+                def_gamma = getattr(cfg, "temp_coefficient_pct_c", -0.29)
+                def_d1 = getattr(cfg, "first_year_degradation_pct", 1.50)
+                def_d2 = getattr(cfg, "annual_degradation_pct", 0.40)
+
+            with col_comp:
+                st.write("")
+                enable_tech_comp = st.checkbox(
+                    "Enable 15-Year Multi-Technology Comparison (PERC vs. TOPCon vs. Backcontact)",
+                    value=getattr(cfg, "enable_technology_comparison", False),
+                    key=f"{key_prefix}_enable_tech_comp",
+                    help="When enabled, runs an automated 15-year lifetime yield comparison for PERC, TOPCon, and Backcontact on the identical module count."
+                )
+
+            st.caption(
+                "Standard presets: **TOPCon** (450 Wp, modern N-Type) | **PERC** (410 Wp, legacy P-Type) | **Backcontact / IBC** (470 Wp, premium tier). "
+                "The comparison matrix evaluates production differences over a 15-year lifetime."
             )
 
-        # 5. Mounting Orientation & Inverter Limits
-        st.markdown("##### 5. Mounting Orientation & Inverter Limits")
-        g1, g2, g3, g4 = st.columns(4)
-        with g1:
-            tilt_deg = st.number_input(
-                "Tilt Angle β (°):",
-                min_value=0.0,
-                max_value=90.0,
-                value=float(default_tilt),
-                step=1.0,
-                format="%.1f",
-                key=f"{key_prefix}_tilt"
+            # B. Physical Dimensions & Area Requirements
+            st.divider()
+            st.markdown("###### Physical Dimensions & Required Area")
+            a1, a2, a3 = st.columns(3)
+            with a1:
+                mod_len = st.number_input(
+                    "Module Length (m):",
+                    min_value=0.5,
+                    max_value=3.0,
+                    value=float(getattr(cfg, "module_length_m", 1.76)),
+                    step=0.05,
+                    format="%.2f",
+                    help="Physical length of panel (standard: 1.76m or 1.2m).",
+                    key=f"{key_prefix}_mod_len"
+                )
+            with a2:
+                mod_wid = st.number_input(
+                    "Module Width (m):",
+                    min_value=0.3,
+                    max_value=2.0,
+                    value=float(getattr(cfg, "module_width_m", 1.13)),
+                    step=0.05,
+                    format="%.2f",
+                    help="Physical width of panel (standard: 1.13m or 0.7m).",
+                    key=f"{key_prefix}_mod_wid"
+                )
+            with a3:
+                area_factor = st.number_input(
+                    "Area Spacing Factor (Row Pitch):",
+                    min_value=1.0,
+                    max_value=3.0,
+                    value=float(getattr(cfg, "area_factor", 1.40)),
+                    step=0.1,
+                    format="%.2f",
+                    help="1.0 = flush coplanar roof, 1.4 - 1.8 = ground mount / tilted rows with shadow clearance.",
+                    key=f"{key_prefix}_area_fact"
+                )
+
+            gross_panel_area = mod_count * mod_len * mod_wid
+            req_total_area = gross_panel_area * area_factor
+            st.caption(f"**Net Active Panel Area:** `{gross_panel_area:,.1f} m²` | **Total Required Installation Area:** `{req_total_area:,.1f} m²` (Pitch Factor: {area_factor:.2f})")
+
+            # C. Mounting Orientation & Inverter Limits
+            st.divider()
+            st.markdown("###### Mounting Orientation & Inverter Limits")
+            g1, g2, g3, g4 = st.columns(4)
+            with g1:
+                tilt_deg = st.number_input(
+                    "Tilt Angle β (°):",
+                    min_value=0.0,
+                    max_value=90.0,
+                    value=float(default_tilt),
+                    step=1.0,
+                    format="%.1f",
+                    key=f"{key_prefix}_tilt"
+                )
+            with g2:
+                azimuth_deg = st.number_input(
+                    "Azimuth Orientation α (°):",
+                    min_value=-180.0,
+                    max_value=360.0,
+                    value=float(default_azimuth),
+                    step=5.0,
+                    format="%.1f",
+                    help="0° = North (Optimal for South Hemisphere like Mendoza), 180° = South.",
+                    key=f"{key_prefix}_azimuth"
+                )
+            with g3:
+                # Dynamically auto-scale recommended inverter size if not manually customized
+                rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1)) if calc_dc_kwp > 0 else 380.0
+                init_inv_kw = float(getattr(cfg, "inverter_capacity_kw", 0.0) or 0.0)
+                if init_inv_kw <= 0.0 and rec_inv_kw > 0.0:
+                    init_inv_kw = rec_inv_kw
+                inverter_kw = st.number_input(
+                    "Inverter AC Limit (kW):",
+                    min_value=0.0,
+                    max_value=50000.0,
+                    value=float(init_inv_kw),
+                    step=10.0,
+                    format="%.1f",
+                    help="Maximum AC inverter power (DC/AC ~ 1.175). Power exceeding this rating is clipped.",
+                    key=f"{key_prefix}_inv_kw"
+                )
+            with g4:
+                inverter_eff = st.number_input(
+                    "Inverter Efficiency (%):",
+                    min_value=80.0,
+                    max_value=100.0,
+                    value=98.0,
+                    step=0.1,
+                    format="%.1f",
+                    key=f"{key_prefix}_inv_eff"
+                )
+
+            # D. Temperature Physics & 2-Stage Degradation
+            st.divider()
+            st.markdown("###### Temperature Physics & 2-Stage Degradation")
+            d1_col, d2_col, d3_col = st.columns(3)
+            with d1_col:
+                temp_coeff = st.number_input(
+                    "Temperature Coeff. γ (%/°C above 25°C):",
+                    min_value=-1.0,
+                    max_value=0.0,
+                    value=float(def_gamma),
+                    step=0.01,
+                    format="%.2f",
+                    help="Derate coefficient per °C above 25°C cell temp. Standard: -0.25%/°C to -0.29%/°C.",
+                    key=f"{key_prefix}_temp_coeff"
+                )
+            with d2_col:
+                first_yr_deg = st.number_input(
+                    "Year 1 Degradation (%):",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=float(def_d1),
+                    step=0.1,
+                    format="%.2f",
+                    help="Initial light-induced degradation (LID) in year 1.",
+                    key=f"{key_prefix}_deg_y1"
+                )
+            with d3_col:
+                annual_deg = st.number_input(
+                    "Annual Degradation (%/year, Y2+):",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=float(def_d2),
+                    step=0.05,
+                    format="%.2f",
+                    help="Linear degradation per year for years 2 through 15.",
+                    key=f"{key_prefix}_deg_annual"
+                )
+
+        # 4. Solar Financial & Investment Parameters (DRACBV Kosten-/Berechnungs-Dashboard)
+        with st.expander(":material/payments: Solar Financial & Turn-Key Investment Costs (Optional)", expanded=False):
+            st.caption("Enter investment costs to calculate CAPEX breakdown, LCOE (€/kWh), and 15-year life-cycle ROI. *Leave empty/unchecked if you wish to run technical generation only.*")
+
+            existing_fin = (
+                current_fin_config or 
+                st.session_state.get(f"{key_prefix}_fin_config") or 
+                st.session_state.get("solar_financial_config") or 
+                st.session_state.get("app_tab3_fin_config") or 
+                SolarFinancialConfig(is_enabled=True)
             )
-        with g2:
-            azimuth_deg = st.number_input(
-                "Azimuth Orientation α (°):",
-                min_value=-180.0,
-                max_value=360.0,
-                value=float(default_azimuth),
-                step=5.0,
-                format="%.1f",
-                help="0° = North (Optimal for South Hemisphere like Mendoza), 180° = South.",
-                key=f"{key_prefix}_azimuth"
-            )
-        with g3:
-            # Dynamically auto-scale recommended inverter size if not manually customized
-            rec_inv_kw = float(round(calc_dc_kwp / 1.175, 1)) if calc_dc_kwp > 0 else 380.0
-            init_inv_kw = float(getattr(cfg, "inverter_capacity_kw", 0.0) or 0.0)
-            if init_inv_kw <= 0.0 and rec_inv_kw > 0.0:
-                init_inv_kw = rec_inv_kw
-            inverter_kw = st.number_input(
-                "Inverter AC Limit (kW):",
-                min_value=0.0,
-                max_value=50000.0,
-                value=float(init_inv_kw),
-                step=10.0,
-                format="%.1f",
-                help="Maximum AC inverter power (DC/AC ~ 1.175). Power exceeding this rating is clipped.",
-                key=f"{key_prefix}_inv_kw"
-            )
-        with g4:
-            inverter_eff = st.number_input(
-                "Inverter Efficiency (%):",
-                min_value=80.0,
-                max_value=100.0,
-                value=98.0,
-                step=0.1,
-                format="%.1f",
-                key=f"{key_prefix}_inv_eff"
+            is_fin_active = st.checkbox(
+                "Enable Solar Financial Assessment & Turn-Key CAPEX Calculation",
+                value=getattr(existing_fin, "is_enabled", True),
+                key=f"{key_prefix}_enable_financials",
+                help="When checked, computes itemized CAPEX (modules, inverters, substructure, installation), LCOE, and cash-flow timeline."
             )
 
-        # 6. Solar Financial & Investment Parameters (DRACBV Kosten-/Berechnungs-Dashboard)
-        st.markdown("##### 6. Solar Financial & Turn-Key Investment Costs (Optional)")
-        st.caption("Enter investment costs to calculate CAPEX breakdown, LCOE (€/kWh), and 15-year life-cycle ROI. *Leave empty/unchecked if you wish to run technical generation only.*")
+            fin_curr = getattr(existing_fin, "currency", "EUR")
+            fin_mod_wp = getattr(existing_fin, "cost_modules_per_wp", None)
+            fin_inv_w = getattr(existing_fin, "cost_inverter_per_w", None)
+            fin_sub_wp = getattr(existing_fin, "cost_substructure_per_wp", None)
+            fin_inst_wp = getattr(existing_fin, "cost_installation_per_wp", None)
+            fin_switch = getattr(existing_fin, "fixed_switchgear_cost", 0.0)
+            fin_travel = getattr(existing_fin, "fixed_travel_fee", 0.0)
+            fin_opex = getattr(existing_fin, "annual_opex_pct", 1.0)
+            fin_infl = getattr(existing_fin, "electricity_price_inflation_pct", 3.0)
+            fin_disc = getattr(existing_fin, "discount_rate_pct", 5.0)
+            fin_feed = getattr(existing_fin, "feed_in_tariff_per_kwh", 0.06)
 
-        existing_fin = (
-            current_fin_config or 
-            st.session_state.get(f"{key_prefix}_fin_config") or 
-            st.session_state.get("solar_financial_config") or 
-            st.session_state.get("app_tab3_fin_config") or 
-            SolarFinancialConfig(is_enabled=True)
-        )
-        is_fin_active = st.checkbox(
-            "Enable Solar Financial Assessment & Turn-Key CAPEX Calculation",
-            value=getattr(existing_fin, "is_enabled", True),
-            key=f"{key_prefix}_enable_financials",
-            help="When checked, computes itemized CAPEX (modules, inverters, substructure, installation), LCOE, and cash-flow timeline."
-        )
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                inp_curr = st.text_input("Currency Code / Symbol:", value=fin_curr, key=f"{key_prefix}_fin_curr")
+                inp_mod_wp = st.number_input(
+                    f"Solar Modules ({inp_curr}/Wp):",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=float(fin_mod_wp if fin_mod_wp is not None else 1.00),
+                    step=0.05,
+                    format="%.2f",
+                    help="Turn-key cost per Watt-peak for modules (e.g. 1.00 €/Wp).",
+                    key=f"{key_prefix}_fin_mod_wp"
+                )
+                inp_switch = st.number_input(
+                    f"Switchgear Cabinet ({inp_curr}):",
+                    min_value=0.0,
+                    value=float(fin_switch),
+                    step=250.0,
+                    help="Fixed meter and switchgear cabinet fee (e.g. 2,500 €).",
+                    key=f"{key_prefix}_fin_switch"
+                )
 
-        fin_curr = getattr(existing_fin, "currency", "EUR")
-        fin_mod_wp = getattr(existing_fin, "cost_modules_per_wp", None)
-        fin_inv_w = getattr(existing_fin, "cost_inverter_per_w", None)
-        fin_sub_wp = getattr(existing_fin, "cost_substructure_per_wp", None)
-        fin_inst_wp = getattr(existing_fin, "cost_installation_per_wp", None)
-        fin_switch = getattr(existing_fin, "fixed_switchgear_cost", 0.0)
-        fin_travel = getattr(existing_fin, "fixed_travel_fee", 0.0)
-        fin_opex = getattr(existing_fin, "annual_opex_pct", 1.0)
-        fin_infl = getattr(existing_fin, "electricity_price_inflation_pct", 3.0)
-        fin_disc = getattr(existing_fin, "discount_rate_pct", 5.0)
-        fin_feed = getattr(existing_fin, "feed_in_tariff_per_kwh", 0.06)
+            with fc2:
+                inp_inv_w = st.number_input(
+                    f"Inverter AC Power ({inp_curr}/W AC):",
+                    min_value=0.0,
+                    max_value=2.0,
+                    value=float(fin_inv_w if fin_inv_w is not None else 0.07),
+                    step=0.01,
+                    format="%.2f",
+                    help="Cost per Watt AC for inverters (e.g. 0.07 €/W = 70 €/kW).",
+                    key=f"{key_prefix}_fin_inv_w"
+                )
+                inp_sub_wp = st.number_input(
+                    f"Substructure / Racking ({inp_curr}/Wp):",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=float(fin_sub_wp if fin_sub_wp is not None else 0.15),
+                    step=0.01,
+                    format="%.2f",
+                    help="Mounting racks, substructure & trackers (e.g. 0.15 €/Wp).",
+                    key=f"{key_prefix}_fin_sub_wp"
+                )
+                inp_travel = st.number_input(
+                    f"Mobilization Fee ({inp_curr}):",
+                    min_value=0.0,
+                    value=float(fin_travel),
+                    step=100.0,
+                    help="Fixed site mobilization & travel charge (e.g. 1,000 €).",
+                    key=f"{key_prefix}_fin_travel"
+                )
 
-        fc1, fc2, fc3 = st.columns(3)
-        with fc1:
-            inp_curr = st.text_input("Currency Code / Symbol:", value=fin_curr, key=f"{key_prefix}_fin_curr")
-            inp_mod_wp = st.number_input(
-                f"Solar Modules ({inp_curr}/Wp):",
-                min_value=0.0,
-                max_value=10.0,
-                value=float(fin_mod_wp if fin_mod_wp is not None else 1.00),
-                step=0.05,
-                format="%.2f",
-                help="Turn-key cost per Watt-peak for modules (e.g. 1.00 €/Wp).",
-                key=f"{key_prefix}_fin_mod_wp"
-            )
-            inp_switch = st.number_input(
-                f"Switchgear Cabinet ({inp_curr}):",
-                min_value=0.0,
-                value=float(fin_switch),
-                step=250.0,
-                help="Fixed meter and switchgear cabinet fee (e.g. 2,500 €).",
-                key=f"{key_prefix}_fin_switch"
-            )
-
-        with fc2:
-            inp_inv_w = st.number_input(
-                f"Inverter AC Power ({inp_curr}/W AC):",
-                min_value=0.0,
-                max_value=2.0,
-                value=float(fin_inv_w if fin_inv_w is not None else 0.07),
-                step=0.01,
-                format="%.2f",
-                help="Cost per Watt AC for inverters (e.g. 0.07 €/W = 70 €/kW).",
-                key=f"{key_prefix}_fin_inv_w"
-            )
-            inp_sub_wp = st.number_input(
-                f"Substructure / Racking ({inp_curr}/Wp):",
-                min_value=0.0,
-                max_value=5.0,
-                value=float(fin_sub_wp if fin_sub_wp is not None else 0.15),
-                step=0.01,
-                format="%.2f",
-                help="Mounting racks, substructure & trackers (e.g. 0.15 €/Wp).",
-                key=f"{key_prefix}_fin_sub_wp"
-            )
-            inp_travel = st.number_input(
-                f"Mobilization Fee ({inp_curr}):",
-                min_value=0.0,
-                value=float(fin_travel),
-                step=100.0,
-                help="Fixed site mobilization & travel charge (e.g. 1,000 €).",
-                key=f"{key_prefix}_fin_travel"
-            )
-
-        with fc3:
-            inp_inst_wp = st.number_input(
-                f"Installation & AC Connect ({inp_curr}/Wp):",
-                min_value=0.0,
-                max_value=5.0,
-                value=float(fin_inst_wp if fin_inst_wp is not None else 0.35),
-                step=0.01,
-                format="%.2f",
-                help="Electrical wiring, assembly and certification (e.g. 0.35 €/Wp).",
-                key=f"{key_prefix}_fin_inst_wp"
-            )
-            inp_opex = st.number_input(
-                "Annual O&M & Insurance (% of CAPEX/a):",
-                min_value=0.0,
-                max_value=10.0,
-                value=float(fin_opex),
-                step=0.1,
-                format="%.1f",
-                help="Annual operational expenditure and maintenance reserve.",
-                key=f"{key_prefix}_fin_opex"
-            )
-            inp_disc = st.number_input(
-                "Discount Rate / Kalkulationszins (%):",
-                min_value=0.0,
-                max_value=20.0,
-                value=float(fin_disc),
-                step=0.5,
-                format="%.1f",
-                help="Capital interest rate used for NPV and LCOE discounting.",
-                key=f"{key_prefix}_fin_disc"
-            )
+            with fc3:
+                inp_inst_wp = st.number_input(
+                    f"Installation & AC Connect ({inp_curr}/Wp):",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=float(fin_inst_wp if fin_inst_wp is not None else 0.35),
+                    step=0.01,
+                    format="%.2f",
+                    help="Electrical wiring, assembly and certification (e.g. 0.35 €/Wp).",
+                    key=f"{key_prefix}_fin_inst_wp"
+                )
+                inp_opex = st.number_input(
+                    "Annual O&M & Insurance (% of CAPEX/a):",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=float(fin_opex),
+                    step=0.1,
+                    format="%.1f",
+                    help="Annual operational expenditure and maintenance reserve.",
+                    key=f"{key_prefix}_fin_opex"
+                )
+                inp_disc = st.number_input(
+                    "Discount Rate / Kalkulationszins (%):",
+                    min_value=0.0,
+                    max_value=20.0,
+                    value=float(fin_disc),
+                    step=0.5,
+                    format="%.1f",
+                    help="Capital interest rate used for NPV and LCOE discounting.",
+                    key=f"{key_prefix}_fin_disc"
+                )
 
         submitted = st.form_submit_button(
-            "Calculate Solar PV Generation & Multi-Technology Comparison",
+            "Calculate Solar PV Generation",
             icon=":material/calculate:",
             type="primary",
             use_container_width=True
@@ -732,7 +741,8 @@ def render_solar_config_form(
         dc_wiring_loss_pct=1.5,
         economic_lifetime_years=15,
         weather_mode=selected_mode,
-        selected_weather_year=int(selected_year)
+        selected_weather_year=int(selected_year),
+        enable_technology_comparison=bool(enable_tech_comp)
     )
 
     fin_config = SolarFinancialConfig(

@@ -1,6 +1,5 @@
 # To Run: python -m streamlit run current_model/app.py
 # Updated: 2026-09-07 17:36 - Solar PV Sizing & Reactive Form Synchronization
-
 """
 ========================================================================================
 Energy Simulator & Load Profile Analyzer (current_model/app.py)

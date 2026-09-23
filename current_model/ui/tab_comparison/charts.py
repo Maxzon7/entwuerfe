@@ -588,3 +588,206 @@ def create_multi_scenario_peak_and_co2_figure(
     fig.update_xaxes(gridcolor="#1E293B", row=1, col=2)
 
     return fig
+
+
+def create_residual_grid_load_comparison_figure(
+    records: List[Dict[str, Any]],
+    chart_mode: str = "monthly_curve"
+) -> go.Figure:
+    """
+    Constructs a dedicated comparison figure focusing on Facility Total Demand
+    versus the Residual Grid Load (übrig gebliebene Netzlast / remaining utility grid imports)
+    across the full year (January - December) and overall annual totals.
+
+    Supported chart modes:
+      - 'monthly_curve': Multi-line spline curves comparing Facility Load across Jan-Dec
+                         with each Sub-Scenario's residual grid consumption curve.
+      - 'monthly_grouped': 12-month grouped bar chart comparing monthly grid demands.
+      - 'annual_totals': Direct Benchmark Bar Chart of annual MWh totals.
+    """
+    fig = go.Figure()
+
+    if not records:
+        return fig
+
+    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    base_rec = records[0]
+    base_demand = float(base_rec.get("total_load_mwh", 0.0))
+    base_monthly = base_rec.get("monthly_load_mwh") or [round(base_demand / 12.0, 1)] * 12
+    sub_recs = records[1:] if len(records) > 1 else []
+
+    if chart_mode in ["monthly_curve", "monthly_trajectory", "curves"]:
+        # 1. Baseline Facility Demand Curve (Top Benchmark)
+        fig.add_trace(go.Scatter(
+            x=month_labels,
+            y=base_monthly,
+            mode="lines+markers",
+            name="Facility Total Demand (Status Quo)",
+            line=dict(color="#CBD5E1", width=3, dash="dash"),
+            marker=dict(size=7, color="#CBD5E1", symbol="circle"),
+            hovertemplate="<b>Facility Demand (Status Quo)</b><br>Month: <b>%{x}</b><br>Consumption: <b>%{y:,.1f} MWh</b><extra></extra>"
+        ))
+
+        # 2. Each Sub-Scenario Residual Grid Curve
+        for r in sub_recs:
+            sub_res_monthly = r.get("monthly_residual_mwh") or list(base_monthly)
+            sc_name = r.get("name", "Sub-Scenario")
+            sc_color = r.get("color", "#38BDF8")
+
+            custom_data = []
+            for bm, sm in zip(base_monthly, sub_res_monthly):
+                saved = max(0.0, bm - sm)
+                pct = (saved / max(0.1, bm)) * 100.0
+                custom_data.append([pct, saved])
+
+            fig.add_trace(go.Scatter(
+                x=month_labels,
+                y=sub_res_monthly,
+                mode="lines+markers",
+                name=f"{sc_name} (Residual Grid)",
+                line=dict(color=sc_color, width=3.5, shape="spline"),
+                marker=dict(size=8, color=sc_color, symbol="diamond"),
+                customdata=custom_data,
+                hovertemplate=(
+                    f"<b>{sc_name}</b><br>"
+                    f"Month: <b>%{{x}}</b><br>"
+                    f"Remaining Grid Import: <b>%{{y:,.1f}} MWh</b><br>"
+                    f"Grid Reduction: <b>▼ -%{{customdata[0]:.1f}}%</b> (-%{{customdata[1]:,.1f}} MWh saved)<extra></extra>"
+                )
+            ))
+
+        max_val = max([max(base_monthly or [10.0])] + [max(r.get("monthly_residual_mwh", [10.0])) for r in sub_recs])
+        y_range = [0, max_val * 1.25]
+        y_title = "Monthly Electricity Demand (MWh/Month)"
+        x_title = "Month of Year (January – December)"
+        barmode = None
+
+    elif chart_mode in ["monthly_grouped", "grouped"]:
+        # Grouped Bar Chart across 12 months
+        fig.add_trace(go.Bar(
+            name="Facility Total Demand",
+            x=month_labels,
+            y=base_monthly,
+            marker_color="#64748B",
+            text=[f"{v:,.1f}" for v in base_monthly],
+            textposition="outside",
+            textfont=dict(color="#64748B", size=9),
+            hovertemplate="<b>Facility Demand</b><br>%{x}: <b>%{y:,.1f} MWh</b><extra></extra>"
+        ))
+
+        for r in sub_recs:
+            sub_res_monthly = r.get("monthly_residual_mwh") or list(base_monthly)
+            sc_name = r.get("name", "Sub-Scenario")
+            sc_color = r.get("color", "#38BDF8")
+            fig.add_trace(go.Bar(
+                name=f"{sc_name} (Residual)",
+                x=month_labels,
+                y=sub_res_monthly,
+                marker_color=sc_color,
+                text=[f"{v:,.1f}" for v in sub_res_monthly],
+                textposition="outside",
+                textfont=dict(color=sc_color, size=9),
+                hovertemplate=f"<b>{sc_name}</b><br>%{{x}}: <b>%{{y:,.1f}} MWh</b><extra></extra>"
+            ))
+
+        max_val = max([max(base_monthly or [10.0])] + [max(r.get("monthly_residual_mwh", [10.0])) for r in sub_recs])
+        y_range = [0, max_val * 1.3]
+        y_title = "Monthly Electricity Demand (MWh/Month)"
+        x_title = "Month of Year"
+        barmode = "group"
+
+    else:
+        # Annual Totals Benchmark Bar Chart
+        bar_names = ["Facility Total Demand<br>(Status Quo)"]
+        bar_vals = [base_demand]
+        bar_colors = ["#94A3B8"]
+        bar_texts = [f"<b>{base_demand:,.1f} MWh</b><br>(100% Grid)"]
+        hover_texts = [
+            f"<b>Status Quo Facility Demand</b><br>Total Consumption: <b>{base_demand:,.1f} MWh/a</b><extra></extra>"
+        ]
+
+        for r in sub_recs:
+            res_mwh = float(r.get("residual_grid_mwh", base_demand))
+            avoided_mwh = max(0.0, base_demand - res_mwh)
+            red_pct = (avoided_mwh / max(0.1, base_demand)) * 100.0
+            sc_name = r.get("name", "Sub-Scenario")
+
+            bar_names.append(f"{sc_name}<br>(Residual Grid)")
+            bar_vals.append(res_mwh)
+            bar_colors.append(r.get("color", "#38BDF8"))
+
+            if avoided_mwh > 0:
+                bar_texts.append(f"<b>{res_mwh:,.1f} MWh</b><br><span style='color:#10B981; font-weight:bold;'>▼ -{red_pct:.1f}%</span>")
+            else:
+                bar_texts.append(f"<b>{res_mwh:,.1f} MWh</b><br>(0.0%)")
+
+            hover_texts.append(
+                f"<b>{sc_name}</b><br>"
+                f"Remaining Grid Import: <b>{res_mwh:,.1f} MWh/a</b><br>"
+                f"Avoided Grid Energy: <b>{avoided_mwh:,.1f} MWh/a</b><br>"
+                f"Grid Import Reduction: <b>-{red_pct:.1f}%</b><extra></extra>"
+            )
+
+        fig.add_trace(go.Bar(
+            name="Residual Grid Import (Netzbezug)",
+            x=bar_names,
+            y=bar_vals,
+            marker_color=bar_colors,
+            text=bar_texts,
+            textposition="outside",
+            textfont=dict(size=11),
+            hovertext=hover_texts,
+            hoverinfo="text"
+        ))
+
+        fig.add_hline(
+            y=base_demand,
+            line_dash="dash",
+            line_color="#CBD5E1",
+            line_width=2,
+            annotation_text=f"Baseline Facility Demand: {base_demand:,.1f} MWh/a",
+            annotation_position="top right",
+            annotation_font=dict(color="#CBD5E1", size=11)
+        )
+
+        max_y = max(max(bar_vals or [100.0]), base_demand)
+        y_range = [0, max_y * 1.25]
+        y_title = "Annual Electrical Energy (MWh/a)"
+        x_title = "Scenario"
+        barmode = "group"
+
+    layout_kwargs = dict(
+        template="plotly_dark",
+        title=dict(
+            text="<b>Annual Grid Demand Trajectory: Facility Load vs. Sub-Scenario Residual Grid Imports (Jan – Dec)</b>" if chart_mode in ["monthly_curve", "monthly_trajectory", "curves"] else ("<b>Monthly Grid Demand Comparison by Scenario (Jan – Dec)</b>" if chart_mode in ["monthly_grouped", "grouped"] else "<b>Facility Total Demand vs. Remaining Residual Grid Load (MWh/Year)</b>"),
+            font=dict(size=14, color="#F8FAFC")
+        ),
+        xaxis=dict(title=x_title, gridcolor="#1E293B"),
+        yaxis=dict(
+            title=y_title,
+            gridcolor="#1E293B",
+            zerolinecolor="#334155",
+            range=y_range
+        ),
+        paper_bgcolor="#0B0F19",
+        plot_bgcolor="#0B0F19",
+        font=dict(color="#E2E8F0"),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.03,
+            xanchor="right",
+            x=1,
+            bgcolor="rgba(15, 23, 42, 0.8)",
+            font=dict(size=11)
+        ),
+        margin=dict(l=50, r=30, t=75, b=50),
+        height=420
+    )
+
+    if barmode:
+        layout_kwargs["barmode"] = barmode
+
+    fig.update_layout(**layout_kwargs)
+
+    return fig
