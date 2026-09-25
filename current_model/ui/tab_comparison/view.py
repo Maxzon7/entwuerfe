@@ -1098,19 +1098,6 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
 
         st.divider()
 
-        # Scenario Architecture & Delta Matrix
-        st.markdown("### :material/compare_arrows: Scenario Architecture & Parameter Delta Matrix")
-        st.caption("Side-by-side technical and economic parameter matrix highlighting baseline-inherited constants versus scenario-specific interventions.")
-
-        df_delta = _build_scenario_delta_matrix(project, records)
-        st.dataframe(
-            df_delta,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        st.divider()
-
         # Master Comparison Leaderboard Table
         st.markdown("### :material/table_chart: Scenario Ranking Leaderboard")
         st.caption("Objective performance ranking comparing turn-key investments against 15-year cumulative liabilities.")
@@ -1149,21 +1136,14 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
         with chart_tab1:
             st.caption("Break-even trajectory: Intersection point where cumulative investment curves cross below the Status Quo utility line marks the amortization year.")
             
-            c_scope = st.radio(
-                "Trajectory Analysis Scope:",
-                options=["Facility Total TCO (All Utility Billing Included)", "Solar PV Investment Scope (Direct Match with Tab 3.1)"],
-                horizontal=True,
-                key=f"{key_prefix}_traj_scope_radio"
-            )
-            mode_key = "facility" if "Facility" in c_scope else "solar"
-            base_s = base_rec.get(f"{mode_key}_cum_costs") or base_rec.get("cumulative_costs")
+            base_s = base_rec.get("facility_cum_costs") or base_rec.get("cumulative_costs")
 
             fig_curves = create_multi_scenario_cumulative_cost_figure(
                 scenarios_data=sub_records,
-                base_annual_cost=base_annual_cost if mode_key == "facility" else 112762.96,
+                base_annual_cost=base_annual_cost,
                 baseline_series=base_s,
                 currency=currency,
-                scope_mode=mode_key
+                scope_mode="facility"
             )
             st.plotly_chart(fig_curves, use_container_width=True)
 
@@ -1201,6 +1181,19 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                 st.dataframe(pd.DataFrame(dt_rows), use_container_width=True, hide_index=True)
             else:
                 st.info("Configure and calculate solar generation on sub-scenarios to inspect itemized cashflow tables.")
+
+        st.divider()
+
+        # Scenario Architecture & Delta Matrix
+        st.markdown("### :material/compare_arrows: Scenario Architecture & Parameter Delta Matrix")
+        st.caption("Side-by-side technical and economic parameter matrix highlighting baseline-inherited constants versus scenario-specific interventions.")
+
+        df_delta = _build_scenario_delta_matrix(project, records)
+        st.dataframe(
+            df_delta,
+            use_container_width=True,
+            hide_index=True
+        )
 
         st.divider()
 
