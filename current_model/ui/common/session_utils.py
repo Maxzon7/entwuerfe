@@ -11,7 +11,7 @@ Provides robust session-state discovery and cross-tab data synchronization:
   - Generates fast summary metrics for load data (total energy, peak power, interval duration).
 """
 
-from typing import Tuple, Optional, Any, Dict
+from typing import Tuple, Optional, Any, Dict, List
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -206,9 +206,46 @@ def find_active_contract_in_session() -> Optional[Any]:
     return None
 
 
+def detect_load_profile_gaps(df: pd.DataFrame, max_gap_hours: float = 2.0) -> List[Dict[str, Any]]:
+    """
+    Detects significant temporal discontinuities (gaps) in a load profile timeseries.
+    Returns a list of detected gap intervals with start, end, and duration.
+    """
+    if df is None or df.empty or "timestamp" not in df.columns:
+        return []
+
+    try:
+        ts = pd.to_datetime(df["timestamp"])
+        if len(ts) < 2:
+            return []
+
+        # Compute intervals in hours
+        deltas = ts.diff().dt.total_seconds() / 3600.0
+        gap_indices = deltas[deltas > max_gap_hours].index
+
+        gaps = []
+        for idx in gap_indices:
+            prev_idx = idx - 1 if (idx - 1) in df.index else df.index[df.index.get_loc(idx) - 1]
+            gap_start = ts.loc[prev_idx]
+            gap_end = ts.loc[idx]
+            gap_h = float(deltas.loc[idx])
+            gaps.append({
+                "start": gap_start,
+                "end": gap_end,
+                "duration_hours": round(gap_h, 1),
+                "duration_days": round(gap_h / 24.0, 1),
+                "start_str": gap_start.strftime("%d.%m.%Y %H:%M"),
+                "end_str": gap_end.strftime("%d.%m.%Y %H:%M")
+            })
+        return gaps
+    except Exception:
+        return []
+
+
 def get_load_profile_summary(df: pd.DataFrame, power_col: str) -> Dict[str, Any]:
     """
-    Extracts high-level summary metrics from an electrical load profile dataframe.
+    Extracts high-level summary metrics from an electrical load profile dataframe,
+    including calendar duration, gaps, and effective data coverage.
     """
     if df is None or df.empty or power_col not in df.columns:
         return {
@@ -218,7 +255,10 @@ def get_load_profile_summary(df: pd.DataFrame, power_col: str) -> Dict[str, Any]
             "avg_kw": 0.0,
             "data_points": 0,
             "duration_days": 0.0,
-            "hours_per_step": 0.25
+            "calendar_days": 0.0,
+            "hours_per_step": 0.25,
+            "gaps": [],
+            "total_gap_days": 0.0
         }
 
     p_arr = df[power_col].to_numpy(dtype=float)
@@ -226,17 +266,22 @@ def get_load_profile_summary(df: pd.DataFrame, power_col: str) -> Dict[str, Any]
 
     # Estimate time step
     dt_hours = 0.25
+    calendar_days = 0.0
+    gaps = []
     if "timestamp" in df.columns:
         ts = pd.to_datetime(df["timestamp"])
         if len(ts) > 1:
             diff_sec = (ts.iloc[1] - ts.iloc[0]).total_seconds()
             if diff_sec > 0:
                 dt_hours = diff_sec / 3600.0
+            calendar_days = (ts.max() - ts.min()).total_seconds() / 86400.0
+        gaps = detect_load_profile_gaps(df, max_gap_hours=max(1.0, dt_hours * 3))
 
     total_kwh = float(np.sum(p_arr) * dt_hours)
     peak_kw = float(np.max(p_arr)) if len(p_arr) > 0 else 0.0
     avg_kw = float(np.mean(p_arr)) if len(p_arr) > 0 else 0.0
     duration_days = (len(p_arr) * dt_hours) / 24.0
+    total_gap_days = sum(g.get("duration_days", 0.0) for g in gaps)
 
     return {
         "total_kwh": round(total_kwh, 1),
@@ -245,5 +290,8 @@ def get_load_profile_summary(df: pd.DataFrame, power_col: str) -> Dict[str, Any]
         "avg_kw": round(avg_kw, 1),
         "data_points": len(p_arr),
         "duration_days": round(duration_days, 1),
-        "hours_per_step": dt_hours
+        "calendar_days": round(calendar_days, 1) if calendar_days > 0 else round(duration_days, 1),
+        "hours_per_step": dt_hours,
+        "gaps": gaps,
+        "total_gap_days": round(total_gap_days, 1)
     }

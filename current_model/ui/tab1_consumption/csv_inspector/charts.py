@@ -48,6 +48,7 @@ def create_csv_inspector_figure(
                         y=df_clean[col_name],
                         mode="lines",
                         name=col_name,
+                        connectgaps=False,
                         line=dict(width=1.0, color=palette[idx % len(palette)]),
                         hovertemplate=f"<b>{col_name}</b>: %{{y:.2f}} kW<extra></extra>"
                     )
@@ -60,6 +61,7 @@ def create_csv_inspector_figure(
             y=df_clean[total_col],
             mode="lines",
             name="Total Grid Demand (kW)",
+            connectgaps=False,
             line=dict(color="#FFFFFF", width=2.0),
             fill="tozeroy" if len(selected_power_cols) == 1 else "none",
             fillcolor="rgba(56, 189, 248, 0.15)",

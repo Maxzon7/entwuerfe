@@ -162,7 +162,19 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
 
     load_summary = get_load_profile_summary(df_load, power_col=p_col)
 
-    # --------------------------------------------------------------------------
+    # Data gaps notice for BESS simulation
+    bess_gaps = load_summary.get("gaps", [])
+    if bess_gaps:
+        gaps_text = ", ".join([f"{g['start_str']} to {g['end_str']} ({g['duration_days']:.1f} days)" for g in bess_gaps[:3]])
+        if len(bess_gaps) > 3:
+            gaps_text += f" and {len(bess_gaps) - 3} additional intervals"
+        st.warning(
+            f":material/warning: **Data Gaps Detected in Active Profile:** Due to missing meter data, "
+            f"the period(s) from **{gaps_text}** cannot be accurately resolved. "
+            f"During these intervals, BESS charging and discharging are bypassed and excluded from peak shaving calculations "
+            f"to prevent unphysical battery cycling.",
+            icon=":material/warning:"
+        )
     # 2. Pre-Configuration Grid Overload & Peak Diagnostic Panel (Above st.form)
     # --------------------------------------------------------------------------
     st.markdown("##### 1. Grid Connection Limit & Overload Diagnostics")

@@ -196,6 +196,16 @@ def simulate_bess_dispatch(
         load_kw = p_load[i]
         hour = ts_series[i].hour if hasattr(ts_series[i], "hour") else (int(i * step_hours) % 24)
 
+        # Bypass BESS dispatch if step data is missing or non-physical NaN / <= 0
+        if np.isnan(load_kw) or load_kw <= 0.0:
+            p_dis[i] = 0.0
+            p_chg[i] = 0.0
+            p_grid[i] = 0.0 if np.isnan(load_kw) else 0.0
+            p_unmet[i] = 0.0
+            soc_kwh[i] = curr_soc
+            soc_pct[i] = (curr_soc / cap_kwh) * 100.0
+            continue
+
         if load_kw > target_cap_kw:
             # --- DISCHARGE (Peak Shaving) ---
             req_shave_kw = load_kw - target_cap_kw

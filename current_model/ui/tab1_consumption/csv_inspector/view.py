@@ -29,6 +29,7 @@ from current_model.core.csv_parser import read_raw_content, parse_csv_content, d
 from current_model.core.load_processor import process_load_profile_data
 from current_model.core.metrics_engine import compute_load_profile_kpis
 from current_model.ui.common.cards import render_kpi_card
+from current_model.ui.common.session_utils import detect_load_profile_gaps
 from current_model.ui.tab1_consumption.csv_inspector.charts import create_csv_inspector_figure
 from current_model.ui.tab1_consumption.csv_inspector.forms import render_csv_uploader_section
 
@@ -197,6 +198,8 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                         pass
 
             st.subheader("3. Active Date Range Filter (Day-Accurate)")
+            st.caption("By default, the complete uploaded recording is analyzed. You can optionally restrict the evaluation window to a specific single year or custom date interval.")
+            
             f_col1, f_col2 = st.columns(2)
             with f_col1:
                 start_date = st.date_input(
@@ -288,10 +291,10 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             range_suffix = f" [{c_start.strftime('%d.%m.%Y')} - {c_end.strftime('%d.%m.%Y')}]" if is_filtered and c_start and c_end else ""
             st.session_state["active_csv_filename"] = f"{file_name}{range_suffix}"
 
-            # Filter Status Badge
+            # Status Badges and Data Integrity Warnings
             if is_filtered and c_start and c_end:
                 st.info(
-                    f":material/filter_alt: **Active Filter:** {c_start.strftime('%d.%m.%Y')} to {c_end.strftime('%d.%m.%Y')} "
+                    f":material/filter_alt: **Active Filter Applied:** {c_start.strftime('%d.%m.%Y')} to {c_end.strftime('%d.%m.%Y')} "
                     f"| **{len(df_clean):,}** of {len(df_full):,} data points active "
                     f"({(len(df_clean)/len(df_full)*100.0):.1f}% of total data, {kpis.duration_days:.0f} days)"
                 )
@@ -299,6 +302,35 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 st.caption(
                     f":material/date_range: **Full Dataset Range:** {min_full.strftime('%d.%m.%Y')} to {max_full.strftime('%d.%m.%Y')} "
                     f"| **{len(df_clean):,} Data Points** ({kpis.duration_days:.0f} days)"
+                )
+
+            # 1. Multi-Year Duration & Wrapping Notice (> 365 Days)
+            cal_days = float(getattr(kpis, "duration_days", 0.0) or 0.0)
+            if min_full and max_full:
+                actual_cal_span = (c_end - c_start).days if (c_start and c_end) else (max_full - min_full).days
+            else:
+                actual_cal_span = int(cal_days)
+
+            if actual_cal_span > 366:
+                st.info(
+                    f":material/history: **Multi-Year Timeseries Detected ({actual_cal_span} calendar days):** "
+                    f"Full period is utilized for high-resolution historical baseline evaluation. "
+                    f"For subsequent multi-year project horizons and life-cycle simulations, annualized base metrics "
+                    f"and rolling sequence wrapping will project forward while preserving authentic load dynamics.",
+                    icon=":material/info:"
+                )
+
+            # 2. Data Discontinuity / Gap Detection Warning
+            detected_gaps = detect_load_profile_gaps(df_clean, max_gap_hours=max(1.0, kpis.hours_per_step * 3))
+            if detected_gaps:
+                gap_desc = ", ".join([f"{g['start_str']} to {g['end_str']} ({g['duration_days']:.1f} days)" for g in detected_gaps[:3]])
+                if len(detected_gaps) > 3:
+                    gap_desc += f" and {len(detected_gaps) - 3} further intervals"
+                st.warning(
+                    f":material/warning: **Data Gaps Detected:** {len(detected_gaps)} measurement interruption(s) found "
+                    f"({gap_desc}). Missing intervals are displayed as breaks in the time series chart without artificial interpolation. "
+                    f"BESS and coupled dispatch engines will automatically neutralise these periods to protect simulation integrity.",
+                    icon=":material/warning:"
                 )
 
 
