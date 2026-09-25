@@ -207,7 +207,7 @@ def load_example1_scenario() -> None:
     # 1. TAB 1: Consumption Profile Modeling
     # --------------------------------------------------------------------------
     st.session_state["tab1_active_source"] = "synthetic"
-    st.session_state["app_tab1_mode_radio"] = "⚡ Synthetic Load Simulator (24h / 365-Day)"
+    st.session_state["app_tab1_mode_radio"] = ":material/bolt: Synthetic Load Simulator (24h / 365-Day)"
     st.session_state["app_tab1_synthetic_horizon"] = "Full Year (365 Days / 35,040 Steps)"
 
     consumers = get_example1_consumers()

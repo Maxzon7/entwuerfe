@@ -41,7 +41,13 @@ def export_project_from_session(
     Captures Tab 1 load consumers/data, Tab 2 contracts, Tab 3 solar configs, and any configured sub-scenarios.
     """
     # 1. Inspect Base Scenario Load
-    load_source_type = st.session_state.get("tab1_active_source", "synthetic")
+    load_source_type = st.session_state.get("tab1_active_source")
+    if not load_source_type:
+        if "active_csv_df" in st.session_state and isinstance(st.session_state["active_csv_df"], pd.DataFrame) and not st.session_state["active_csv_df"].empty:
+            load_source_type = "csv"
+        else:
+            load_source_type = "synthetic"
+    st.session_state["tab1_active_source"] = load_source_type
     synthetic_horizon = st.session_state.get("app_tab1_synthetic_horizon", "Full Year (365 Days / 35,040 Steps)")
     load_profile_name = st.session_state.get("app_tab1_synthetic_profile_name_input", "Baseline Facility Load")
     
@@ -299,6 +305,13 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
     active_sub = project.get_active_scenario()
     base = project.base_scenario
 
+    # Retain project-level baseline consumption profile across all sub-scenarios
+    if base and getattr(base, "load_source_type", None):
+        st.session_state["tab1_active_source"] = base.load_source_type
+        if base.load_source_type == "csv":
+            if base.csv_filename and "active_csv_filename" not in st.session_state:
+                st.session_state["active_csv_filename"] = base.csv_filename
+
     # Synchronize canonical scenario selector widget keys in session state
     active_id = active_sub.id if active_sub else "base"
     try:
@@ -443,9 +456,8 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
             st.session_state["solar_kpis"] = sim_res.kpis
 
             # Coupled dispatch with baseline load
-            df_load_active = st.session_state.get("app_tab1_synthetic_active_df")
-            if df_load_active is None or not isinstance(df_load_active, pd.DataFrame):
-                df_load_active = st.session_state.get("active_csv_df")
+            from current_model.ui.common.session_utils import find_active_load_data_in_session
+            df_load_active, _, _ = find_active_load_data_in_session()
 
             if df_load_active is not None and isinstance(df_load_active, pd.DataFrame) and not df_load_active.empty:
                 sim_res_coupled = simulate_solar_pv_generation(
@@ -491,9 +503,8 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
 
         if auto_execute:
             from current_model.core.bess_engine import simulate_bess_dispatch
-            df_load_active = st.session_state.get("app_tab1_synthetic_active_df")
-            if df_load_active is None or not isinstance(df_load_active, pd.DataFrame):
-                df_load_active = st.session_state.get("active_csv_df")
+            from current_model.ui.common.session_utils import find_active_load_data_in_session
+            df_load_active, _, _ = find_active_load_data_in_session()
 
             if df_load_active is not None and isinstance(df_load_active, pd.DataFrame) and not df_load_active.empty:
                 g_lim = float(b_cfg.peak_shaving_threshold_kw)

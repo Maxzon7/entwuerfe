@@ -73,13 +73,23 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                     files_to_process.append((fname, content))
                 except Exception as e:
                     st.error(f"Error reading {fname}: {e}")
+        if files_to_process:
+            st.session_state[f"{key_prefix}_cached_files"] = files_to_process
     elif is_demo:
         demo_name, demo_content = generate_sample_demo_csv(days=14)
         files_to_process = [(demo_name, demo_content)]
+        st.session_state[f"{key_prefix}_cached_files"] = files_to_process
+    elif f"{key_prefix}_cached_files" in st.session_state and st.session_state[f"{key_prefix}_cached_files"]:
+        files_to_process = st.session_state[f"{key_prefix}_cached_files"]
 
     if not files_to_process:
         st.info("Upload a CSV file above or click **'Load 15-Min Demo CSV'** to begin inspecting meter data.")
         return
+
+    # Inform user if dataset was restored from active session
+    if not uploaded_files and not is_demo and files_to_process:
+        fnames = ", ".join([f[0] for f in files_to_process])
+        st.caption(f":material/check_circle: Active Dataset: **{fnames}** (Retained from active session)")
 
     for file_name, raw_csv_text in files_to_process:
         st.caption(f"Active Dataset: **{file_name}**")
@@ -270,6 +280,10 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 st.session_state["active_csv_df"] = df_clean
                 range_suffix = f" [{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}]" if is_filtered else ""
                 st.session_state["active_csv_filename"] = f"{file_name}{range_suffix}"
+                st.session_state["tab1_active_source"] = "csv"
+                if "project_container" in st.session_state and getattr(st.session_state["project_container"], "base_scenario", None):
+                    st.session_state["project_container"].base_scenario.load_source_type = "csv"
+                    st.session_state["project_container"].base_scenario.csv_filename = f"{file_name}{range_suffix}"
             except Exception as err:
                 st.error(f"Timestamp / Data Processing Error: {err}")
                 continue
@@ -290,6 +304,10 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             st.session_state["active_csv_df"] = df_clean
             range_suffix = f" [{c_start.strftime('%d.%m.%Y')} - {c_end.strftime('%d.%m.%Y')}]" if is_filtered and c_start and c_end else ""
             st.session_state["active_csv_filename"] = f"{file_name}{range_suffix}"
+            st.session_state["tab1_active_source"] = "csv"
+            if "project_container" in st.session_state and getattr(st.session_state["project_container"], "base_scenario", None):
+                st.session_state["project_container"].base_scenario.load_source_type = "csv"
+                st.session_state["project_container"].base_scenario.csv_filename = f"{file_name}{range_suffix}"
 
             # Status Badges and Data Integrity Warnings
             if is_filtered and c_start and c_end:

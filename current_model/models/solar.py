@@ -276,6 +276,14 @@ class SolarKPIs:
     residual_load_kwh: float = 0.0                 # Remaining facility load from grid / generator (kWh)
     self_consumption_rate_pct: float = 0.0         # Self-consumption rate: Direct / Solar Total (%)
     solar_fraction_autarky_pct: float = 0.0        # Autarky / Solar Fraction: Direct / Load Total (%)
+    has_load_gaps: bool = False                    # True if measurement gaps were detected in coupled load
+    gap_count: int = 0                             # Number of measurement interruptions detected
+    total_gap_days: float = 0.0                    # Total duration of missing load measurements in days
+    data_coverage_pct: float = 100.0               # Valid measured days / total calendar days (%)
+    gap_handling_mode: str = "bypass"              # "bypass" (real breaks, solar to export) or "impute" (synthetically filled)
+    annualized_load_kwh: Optional[float] = None    # Pro-rata annualized facility load (kWh)
+    annualized_direct_kwh: Optional[float] = None  # Pro-rata annualized direct self-consumption (kWh)
+    annualized_residual_kwh: Optional[float] = None # Pro-rata annualized residual grid import (kWh)
 
 
 @dataclass

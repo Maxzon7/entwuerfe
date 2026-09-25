@@ -51,6 +51,7 @@ def create_solar_load_dispatch_figure(
                 y=plot_df["P_Load_kW"],
                 name="Facility Load (kW)",
                 line=dict(color="#94A3B8", width=1.5),
+                connectgaps=False,
                 hovertemplate="<b>%{x|%d %b %Y %H:%M}</b><br>Facility Load: <b>%{y:,.1f} kW</b><extra></extra>",
                 showlegend=True
             )
@@ -64,6 +65,7 @@ def create_solar_load_dispatch_figure(
                 y=plot_df["P_AC_kW"],
                 name="Solar AC Output (kW)",
                 line=dict(color="#F59E0B", width=1.5, dash="dot"),
+                connectgaps=False,
                 hovertemplate="Solar AC Output: <b>%{y:,.1f} kW</b><extra></extra>",
                 showlegend=True
             )
@@ -78,7 +80,8 @@ def create_solar_load_dispatch_figure(
                 name="Direct Self-Consumption (kW)",
                 line=dict(color="#10B981", width=2.0),
                 fill="tozeroy",
-                fillcolor="rgba(16, 185, 129, 0.25)",
+                fillcolor="rgba(16, 185, 129, 0.35)",
+                connectgaps=False,
                 hovertemplate="Direct Solar Use: <b>%{y:,.1f} kW</b><extra></extra>",
                 showlegend=True
             )
@@ -91,7 +94,8 @@ def create_solar_load_dispatch_figure(
                 x=timestamps,
                 y=plot_df["P_Surplus_kW"],
                 name="PV Surplus / Export (kW)",
-                line=dict(color="#F97316", width=1.2),
+                line=dict(color="#F97316", width=1.5),
+                connectgaps=False,
                 hovertemplate="PV Surplus: <b>%{y:,.1f} kW</b><extra></extra>",
                 showlegend=True
             )
@@ -105,6 +109,7 @@ def create_solar_load_dispatch_figure(
                 y=plot_df["P_Residual_kW"],
                 name="Residual Grid Import (kW)",
                 line=dict(color="#38BDF8", width=1.2, dash="dash"),
+                connectgaps=False,
                 hovertemplate="Residual Grid Import: <b>%{y:,.1f} kW</b><extra></extra>",
                 showlegend=True
             )
@@ -120,6 +125,17 @@ def create_solar_load_dispatch_figure(
         xaxis=dict(
             title="Date & Time",
             rangeslider=dict(visible=True, thickness=0.06),
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=7, label="7D", step="day", stepmode="backward"),
+                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=3, label="3M", step="month", stepmode="backward"),
+                    dict(step="all", label="All")
+                ]),
+                bgcolor="#1E293B",
+                activecolor="#2563EB",
+                font=dict(color="#F8FAFC", size=10)
+            ),
             type="date",
             gridcolor="#1E293B"
         ),

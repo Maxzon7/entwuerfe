@@ -146,6 +146,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         return
 
     load_summary = get_load_profile_summary(df_load, power_col=p_col)
+    gaps = load_summary.get("gaps", [])
 
     # Status Banner: Active Consumption Foundation & Active Scenario
     st.markdown(
@@ -167,6 +168,22 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         """,
         unsafe_allow_html=True
     )
+
+    if gaps:
+        total_gap_d = load_summary.get("total_gap_days", 0.0)
+        dur_d = load_summary.get("duration_days", 0.0)
+        cal_d = load_summary.get("calendar_days", dur_d)
+        cov_pct = (dur_d / max(1.0, cal_d) * 100.0)
+        gap_desc_items = [f"{g['start_str']} to {g['end_str']} ({g['duration_days']:.1f} days)" for g in gaps[:2]]
+        gap_desc_str = ", ".join(gap_desc_items)
+        if len(gaps) > 2:
+            gap_desc_str += f" (+{len(gaps)-2} more)"
+        st.warning(
+            f":material/timeline: **Load Profile Discontinuity Detected:** {len(gaps)} measurement interruption(s) found ({gap_desc_str}, totaling {total_gap_d:.1f} missing days / {cov_pct:.1f}% data coverage). "
+            f"Coupled solar dispatch maintains strict diurnal calendar synchronization (preventing day/night phase shift). "
+            f"Configure your gap strategy in the calculation options below.",
+            icon=":material/warning:"
+        )
 
     # Inherit location from Tab 3.1 parent simulation, project container, or session state
     parent_sim: Optional[SolarSimulationResult] = st.session_state.get("app_tab3_sim_result") or st.session_state.get("tab3_solar_sim_result")
@@ -414,6 +431,29 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     state_res_key = f"{key_prefix}_sim_result"
     sim_res: Optional[SolarSimulationResult] = st.session_state.get(state_res_key)
 
+    # Discontinuity Strategy Selection (if load profile has gaps)
+    gap_strat_key = f"{key_prefix}_gap_strategy"
+    if gaps:
+        if gap_strat_key not in st.session_state:
+            st.session_state[gap_strat_key] = "Real Measured Breaks (Solar Export Surplus)"
+        gap_opt = st.radio(
+            "Load Profile Discontinuity Strategy:",
+            options=[
+                "Real Measured Breaks (Solar Export Surplus)",
+                "Synthetically Impute Gaps (Typical Day Pattern)"
+            ],
+            key=gap_strat_key,
+            horizontal=True,
+            help="Real Measured Breaks: Displays authentic data gaps with zero load, routing unmonitored solar power to grid feed-in without distorting diurnal phase alignment. Synthetically Impute Gaps: Replaces missing intervals with the facility's average weekday/weekend load pattern."
+        )
+        gap_handling = "impute" if "Impute" in gap_opt else "bypass"
+    else:
+        gap_handling = "bypass"
+
+    load_signature = f"{load_desc}_{len(df_load)}_{round(float(load_summary.get('total_mwh', 0.0)), 2)}_{gap_handling}"
+    last_coupled_load_sig = st.session_state.get(f"{key_prefix}_last_coupled_load_sig")
+    load_has_changed = bool(last_coupled_load_sig is not None and last_coupled_load_sig != load_signature)
+
     # Automatic Fast-Coupling from Sub-Tab 3.1:
     # When in 'Live Mirror from Sub-Tab 3.1' mode and Sub-Tab 3.1 has an active simulation,
     # automatically couple it with the facility load profile in milliseconds!
@@ -432,15 +472,26 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         needs_auto_coupling = (
             sim_res is None or
             "P_Load_kW" not in getattr(sim_res, "df_timeseries", pd.DataFrame()).columns or
-            getattr(sim_res, "config", None) != curr_cfg
+            getattr(sim_res, "config", None) != curr_cfg or
+            getattr(getattr(sim_res, "kpis", None), "gap_handling_mode", "bypass") != gap_handling or
+            load_has_changed
         )
         if is_same_config and needs_auto_coupling:
-            sim_res = couple_solar_simulation_with_load(parent_sim, df_load)
+            sim_res = couple_solar_simulation_with_load(parent_sim, df_load, gap_handling=gap_handling)
             st.session_state[state_res_key] = sim_res
+            st.session_state[f"{key_prefix}_last_coupled_load_sig"] = load_signature
+            load_has_changed = False
             if active_sub is not None:
                 active_sub.solar_config = curr_cfg
                 active_sub.include_solar = True
                 st.session_state["project_container"] = project
+
+    if load_has_changed:
+        st.warning(
+            f":material/sync_problem: **Active Consumption Profile Updated:** Tab 2 load profile has changed to **{load_desc}**. "
+            f"Click **'Recalculate Coupled Solar & Consumption Dispatch'** below to re-align dispatch and savings.",
+            icon=":material/warning:"
+        )
 
     auto_trigger = st.session_state.pop(f"{key_prefix}_trigger_calc", False)
     btn_label = "Recalculate Coupled Solar & Consumption Dispatch" if sim_res is not None else "Calculate Coupled Solar & Consumption Dispatch"
@@ -475,18 +526,20 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                     parent_sim.config.module_count == curr_cfg.module_count and
                     parent_sim.config.module_power_wp == curr_cfg.module_power_wp and
                     parent_sim.config.tilt_deg == curr_cfg.tilt_deg):
-                    sim_res = couple_solar_simulation_with_load(parent_sim, df_load)
+                    sim_res = couple_solar_simulation_with_load(parent_sim, df_load, gap_handling=gap_handling)
                 else:
                     sim_res = simulate_solar_pv_generation(
                         config=curr_cfg,
                         location=location,
-                        load_df=df_load
+                        load_df=df_load,
+                        gap_handling=gap_handling
                     )
                     # Also keep Sub-Tab 3.1 in sync
                     st.session_state["app_tab3_sim_result"] = sim_res
                     st.session_state["solar_kw_15min"] = sim_res.df_timeseries["P_AC_kW"]
 
                 st.session_state[state_res_key] = sim_res
+                st.session_state[f"{key_prefix}_last_coupled_load_sig"] = load_signature
                 config_changed = False
                 if active_sub is not None:
                     active_sub.solar_config = curr_cfg
@@ -531,6 +584,21 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     peak_shaved_kw = max(0.0, p_orig_max - p_res_max)
     peak_shaved_pct = (peak_shaved_kw / p_orig_max * 100.0) if p_orig_max > 0 else 0.0
 
+    # Discontinuity Banner above KPIs if gaps present
+    if getattr(kpis, "has_load_gaps", False):
+        if getattr(kpis, "gap_handling_mode", "bypass") == "bypass":
+            ann_load_mwh = (kpis.annualized_load_kwh or 0.0) / 1000.0
+            st.caption(
+                f":material/info: **Discontinuity Reconciliation:** Baseline load contains **{kpis.total_gap_days:.1f} unmonitored days** "
+                f"({kpis.data_coverage_pct:.1f}% measured data availability). Solar generation during interruptions is accounted as grid export. "
+                f"Annualized load equivalent: **{ann_load_mwh:,.1f} MWh/year**."
+            )
+        else:
+            st.caption(
+                f":material/auto_fix_high: **Synthetically Imputed Load Discontinuities:** Missing {kpis.total_gap_days:.1f} days "
+                f"were filled using the facility's typical weekday/weekend load pattern for a continuous 8,760-hour projection."
+            )
+
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         render_kpi_card(
@@ -540,17 +608,29 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
             status="ok"
         )
     with k2:
+        if getattr(kpis, "has_load_gaps", False) and getattr(kpis, "gap_handling_mode", "bypass") == "bypass":
+            sub_k2 = f"Covers {kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.total_load_kwh / 1000.0:,.1f} MWh measured ({kpis.data_coverage_pct:.0f}% coverage)"
+        elif getattr(kpis, "has_load_gaps", False):
+            sub_k2 = f"Covers {kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.total_load_kwh / 1000.0:,.1f} MWh (Imputed)"
+        else:
+            sub_k2 = f"Covers {kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.total_load_kwh / 1000.0:,.1f} MWh facility demand"
+
         render_kpi_card(
             "Autarky / Solar Fraction",
             f"{kpis.solar_fraction_autarky_pct:.1f} %",
-            f"Covers {kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.total_load_kwh / 1000.0:,.1f} MWh facility demand",
+            sub_k2,
             status="ok"
         )
     with k3:
+        if getattr(kpis, "has_load_gaps", False) and getattr(kpis, "gap_handling_mode", "bypass") == "bypass":
+            sub_k3 = f"{(kpis.surplus_generation_kwh / max(1.0, kpis.annual_energy_kwh) * 100.0):.1f}% of generation (includes {kpis.total_gap_days:.1f}d unmonitored export)"
+        else:
+            sub_k3 = f"{(kpis.surplus_generation_kwh / max(1.0, kpis.annual_energy_kwh) * 100.0):.1f}% of generation available for feed-in / BESS"
+
         render_kpi_card(
             "PV Surplus / Grid Export",
             f"{kpis.surplus_generation_kwh / 1000.0:,.1f} MWh",
-            f"{(kpis.surplus_generation_kwh / max(1.0, kpis.annual_energy_kwh) * 100.0):.1f}% of generation available for feed-in / BESS",
+            sub_k3,
             status="default"
         )
     with k4:
@@ -572,10 +652,11 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         )
     with s2:
         net_cov_pct = (kpis.annual_energy_kwh / max(1.0, kpis.total_load_kwh) * 100.0)
+        cov_info = f" ({kpis.data_coverage_pct:.0f}% data)" if getattr(kpis, "has_load_gaps", False) and getattr(kpis, "gap_handling_mode", "bypass") == "bypass" else ""
         render_kpi_card(
             "Annual Net Energy Coverage",
             f"{net_cov_pct:.1f} %",
-            f"Generation: {kpis.annual_energy_mwh:,.1f} MWh vs. Demand: {kpis.total_load_kwh/1000.0:,.1f} MWh"
+            f"Generation: {kpis.annual_energy_mwh:,.1f} MWh vs. Demand: {kpis.total_load_kwh/1000.0:,.1f} MWh{cov_info}"
         )
     with s3:
         render_kpi_card(

@@ -237,6 +237,85 @@ class TestSolarIntegrationTab(unittest.TestCase):
         self.assertEqual(resolved.contracted_capacity_kw, 500.0)
         self.assertEqual(resolved.name, "Special Custom Tariff")
 
+    def test_load_profile_gap_alignment_bypass(self):
+        """Verify that couple_solar_simulation_with_load correctly handles load profile gaps in bypass mode without phase shifts."""
+        from current_model.core.solar_engine import couple_solar_simulation_with_load
+
+        # Standalone solar simulation
+        standalone_res = simulate_solar_pv_generation(
+            config=self.config,
+            location=self.location
+        )
+
+        # Create multi-day load dataframe with an explicit 10-day gap:
+        # Part 1: Jan 1 to Jan 15 (14 days)
+        # GAP: Jan 15 00:00 to Jan 25 00:00 (10 days missing)
+        # Part 2: Jan 25 to Feb 28
+        idx_p1 = pd.date_range("2025-01-01 00:00:00", "2025-01-14 23:45:00", freq="15min")
+        idx_p2 = pd.date_range("2025-01-25 00:00:00", "2025-02-28 23:45:00", freq="15min")
+        combined_idx = idx_p1.union(idx_p2)
+
+        hours = combined_idx.hour + combined_idx.minute / 60.0
+        load_kw = np.where((hours >= 11) & (hours <= 13), 150.0, 30.0)
+        df_load = pd.DataFrame({"timestamp": combined_idx, "Total_Demand_kW": load_kw})
+
+        coupled_res = couple_solar_simulation_with_load(standalone_res, df_load, gap_handling="bypass")
+        df = coupled_res.df_timeseries
+        kpis = coupled_res.kpis
+
+        # 1. Gaps are detected in KPIs
+        self.assertTrue(kpis.has_load_gaps)
+        self.assertGreaterEqual(kpis.gap_count, 1)
+        self.assertGreater(kpis.total_gap_days, 9.0)
+        self.assertLess(kpis.data_coverage_pct, 100.0)
+        self.assertIsNotNone(kpis.annualized_load_kwh)
+
+        # 2. Check gap period: Jan 18 12:00 (inside gap)
+        mask_gap_noon = df["timestamp"] == pd.Timestamp("2025-01-18 12:00:00")
+        row_gap = df.loc[mask_gap_noon].iloc[0]
+        self.assertTrue(np.isnan(row_gap["P_Load_kW"]))
+        self.assertTrue(np.isnan(row_gap["P_Direct_kW"]))
+        self.assertGreater(row_gap["P_Surplus_kW"], 0.0)
+
+        # 3. Check post-gap alignment: Jan 26 12:00 (noon after gap)
+        # Solar noon and load noon MUST align with NO phase shift!
+        mask_post_noon = df["timestamp"] == pd.Timestamp("2025-01-26 12:00:00")
+        row_post = df.loc[mask_post_noon].iloc[0]
+        self.assertFalse(np.isnan(row_post["P_Load_kW"]))
+        self.assertAlmostEqual(row_post["P_Load_kW"], 150.0, delta=1.0)
+        self.assertGreater(row_post["P_Direct_kW"], 0.0)
+
+    def test_load_profile_gap_alignment_impute(self):
+        """Verify that couple_solar_simulation_with_load fills gaps with typical profiles in impute mode."""
+        from current_model.core.solar_engine import couple_solar_simulation_with_load
+
+        standalone_res = simulate_solar_pv_generation(
+            config=self.config,
+            location=self.location
+        )
+
+        idx_p1 = pd.date_range("2025-01-01 00:00:00", "2025-01-14 23:45:00", freq="15min")
+        idx_p2 = pd.date_range("2025-01-25 00:00:00", "2025-02-28 23:45:00", freq="15min")
+        combined_idx = idx_p1.union(idx_p2)
+        hours = combined_idx.hour + combined_idx.minute / 60.0
+        load_kw = np.where((hours >= 11) & (hours <= 13), 150.0, 30.0)
+        df_load = pd.DataFrame({"timestamp": combined_idx, "Total_Demand_kW": load_kw})
+
+        coupled_res = couple_solar_simulation_with_load(standalone_res, df_load, gap_handling="impute")
+        df = coupled_res.df_timeseries
+        kpis = coupled_res.kpis
+
+        self.assertEqual(kpis.gap_handling_mode, "impute")
+        # In impute mode, there are no NaNs in P_Load_kW
+        self.assertFalse(df["P_Load_kW"].isna().any())
+        self.assertFalse(df["P_Direct_kW"].isna().any())
+
+        # Jan 18 12:00 was imputed with typical noon load
+        mask_gap_noon = df["timestamp"] == pd.Timestamp("2025-01-18 12:00:00")
+        row_gap = df.loc[mask_gap_noon].iloc[0]
+        self.assertGreater(row_gap["P_Load_kW"], 0.0)
+        self.assertGreater(row_gap["P_Direct_kW"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

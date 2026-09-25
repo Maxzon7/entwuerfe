@@ -758,10 +758,246 @@ def compute_technology_comparison(
     return items
 
 
+def align_load_to_solar_timeseries(
+    solar_df: pd.DataFrame,
+    load_df: Optional[pd.DataFrame],
+    gap_handling: str = "bypass"
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Chronologically aligns a facility load profile to a solar simulation timeseries.
+    
+    Eliminates diurnal phase shifts (e.g. noon-to-midnight inversion) caused by naive
+    array slicing over data gaps or differing sample counts.
+    
+    If timestamps are present in both dataframes:
+      - Aligns interval-by-interval using nearest timestamp matching within half a step tolerance.
+      - Normalizes calendar year if solar and load differ in year, preserving seasonality, weekdays, and hours.
+      - Discontinuities / gaps in the load profile are marked as NaN (in "bypass" mode)
+        or synthetically filled using typical weekday/weekend diurnal profiles (in "impute" mode).
+    
+    If timestamps are not present in load_df:
+      - Falls back gracefully to array-length alignment.
+      
+    Returns:
+      (aligned_load_array, gap_metadata_dict)
+    """
+    n_solar = len(solar_df)
+    if load_df is None or load_df.empty:
+        return np.zeros(n_solar, dtype=float), {
+            "has_load_gaps": False,
+            "gap_count": 0,
+            "total_gap_days": 0.0,
+            "data_coverage_pct": 100.0,
+            "valid_steps": 0,
+            "gap_steps": 0,
+            "gaps": [],
+            "gap_handling_mode": gap_handling
+        }
+
+    p_load_col = get_load_power_column_name(load_df)
+
+    # Check for timestamp column in load_df
+    ts_load_col = None
+    for c in ["timestamp", "Datum", "Date", "time", "Zeitstempel", "Datetime", "date", "Time"]:
+        if c in load_df.columns:
+            ts_load_col = c
+            break
+    if ts_load_col is None:
+        for c in load_df.columns:
+            if pd.api.types.is_datetime64_any_dtype(load_df[c]):
+                ts_load_col = c
+                break
+
+    has_solar_ts = "timestamp" in solar_df.columns and len(solar_df) > 0
+    has_load_ts = ts_load_col is not None and len(load_df) > 0
+
+    if not (has_solar_ts and has_load_ts):
+        # Fallback to length-based alignment
+        raw_load_arr = pd.to_numeric(load_df[p_load_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        if len(raw_load_arr) == n_solar:
+            p_load_aligned = raw_load_arr
+        elif len(raw_load_arr) < n_solar and len(raw_load_arr) > 0:
+            reps = int(math.ceil(n_solar / len(raw_load_arr)))
+            p_load_aligned = np.tile(raw_load_arr, reps)[:n_solar]
+        else:
+            p_load_aligned = raw_load_arr[:n_solar]
+        return p_load_aligned, {
+            "has_load_gaps": False,
+            "gap_count": 0,
+            "total_gap_days": 0.0,
+            "data_coverage_pct": 100.0,
+            "valid_steps": len(p_load_aligned),
+            "gap_steps": 0,
+            "gaps": [],
+            "gap_handling_mode": gap_handling
+        }
+
+    # High-precision timestamp matching
+    ts_solar = pd.to_datetime(solar_df["timestamp"])
+    ts_load = pd.to_datetime(load_df[ts_load_col], errors="coerce")
+
+    valid_mask = ts_load.notna()
+    if not valid_mask.any():
+        return np.zeros(n_solar, dtype=float), {
+            "has_load_gaps": False,
+            "gap_count": 0,
+            "total_gap_days": 0.0,
+            "data_coverage_pct": 100.0,
+            "valid_steps": 0,
+            "gap_steps": 0,
+            "gaps": [],
+            "gap_handling_mode": gap_handling
+        }
+
+    df_l = pd.DataFrame({
+        "_ts": ts_load[valid_mask],
+        "_p": pd.to_numeric(load_df.loc[valid_mask, p_load_col], errors="coerce").fillna(0.0)
+    }).sort_values("_ts").drop_duplicates(subset=["_ts"])
+
+    # Calendar year normalization if needed
+    solar_start = ts_solar.min()
+    solar_end = ts_solar.max()
+    load_start = df_l["_ts"].min()
+    load_end = df_l["_ts"].max()
+
+    has_temporal_overlap = not (load_end < solar_start or load_start > solar_end)
+    if not has_temporal_overlap and len(df_l) > 0:
+        year_offset = solar_start.year - load_start.year
+        df_l["_ts"] = df_l["_ts"] + pd.DateOffset(years=year_offset)
+
+    # Check if load_df is a single-day representative profile (e.g. 24 hours, <= 96 intervals)
+    load_duration_sec = (load_end - load_start).total_seconds() if len(df_l) > 1 else 0.0
+    is_single_day_profile = len(df_l) <= 96 or load_duration_sec <= 86400 * 1.5
+
+    if is_single_day_profile:
+        df_l["_tod"] = df_l["_ts"].dt.hour * 60 + df_l["_ts"].dt.minute
+        tod_map = df_l.groupby("_tod")["_p"].mean()
+        solar_tod = ts_solar.dt.hour * 60 + ts_solar.dt.minute
+        p_load_aligned = solar_tod.map(tod_map).fillna(0.0).to_numpy(dtype=float)
+        return p_load_aligned, {
+            "has_load_gaps": False,
+            "gap_count": 0,
+            "total_gap_days": 0.0,
+            "data_coverage_pct": 100.0,
+            "valid_steps": len(p_load_aligned),
+            "gap_steps": 0,
+            "gaps": [],
+            "gap_handling_mode": gap_handling
+        }
+
+    # Calculate step size
+    if len(ts_solar) > 1:
+        step_sec = (ts_solar.iloc[1] - ts_solar.iloc[0]).total_seconds()
+        step_sec = step_sec if step_sec > 0 else 900.0
+    else:
+        step_sec = 900.0
+    dt_hours = step_sec / 3600.0
+    tolerance = pd.Timedelta(seconds=max(300.0, step_sec * 0.5))
+
+    df_s = pd.DataFrame({"_ts_solar": ts_solar})
+    merged = pd.merge_asof(
+        df_s,
+        df_l,
+        left_on="_ts_solar",
+        right_on="_ts",
+        direction="nearest",
+        tolerance=tolerance
+    )
+    raw_aligned = merged["_p"].to_numpy(dtype=float)
+
+    # Discontinuity & gap detection
+    is_nan = np.isnan(raw_aligned)
+    nan_count = int(np.sum(is_nan))
+    valid_count = int(np.sum(~is_nan))
+    total_count = len(raw_aligned)
+    has_gaps = nan_count > 0
+    coverage_pct = (valid_count / total_count * 100.0) if total_count > 0 else 100.0
+    total_gap_days = (nan_count * dt_hours) / 24.0
+
+    gaps_list = []
+    if has_gaps:
+        in_gap = False
+        gap_start_idx = 0
+        for i, val in enumerate(is_nan):
+            if val and not in_gap:
+                in_gap = True
+                gap_start_idx = i
+            elif not val and in_gap:
+                in_gap = False
+                g_len = i - gap_start_idx
+                if g_len >= 4:  # At least 1 hour
+                    g_start = ts_solar.iloc[gap_start_idx]
+                    g_end = ts_solar.iloc[i - 1]
+                    g_hours = g_len * dt_hours
+                    gaps_list.append({
+                        "start": g_start,
+                        "end": g_end,
+                        "start_str": g_start.strftime("%d.%m.%Y %H:%M"),
+                        "end_str": g_end.strftime("%d.%m.%Y %H:%M"),
+                        "duration_hours": round(g_hours, 1),
+                        "duration_days": round(g_hours / 24.0, 1)
+                    })
+        if in_gap:
+            g_len = total_count - gap_start_idx
+            if g_len >= 4:
+                g_start = ts_solar.iloc[gap_start_idx]
+                g_end = ts_solar.iloc[-1]
+                g_hours = g_len * dt_hours
+                gaps_list.append({
+                    "start": g_start,
+                    "end": g_end,
+                    "start_str": g_start.strftime("%d.%m.%Y %H:%M"),
+                    "end_str": g_end.strftime("%d.%m.%Y %H:%M"),
+                    "duration_hours": round(g_hours, 1),
+                    "duration_days": round(g_hours / 24.0, 1)
+                })
+
+    # Optional Imputation with typical weekday/weekend diurnal load profiles
+    if gap_handling == "impute" and has_gaps and valid_count > 0:
+        aligned_df = pd.DataFrame({
+            "ts": ts_solar,
+            "p_load": raw_aligned,
+            "dow": ts_solar.dt.dayofweek,
+            "tod": ts_solar.dt.hour * 60 + ts_solar.dt.minute
+        })
+        valid_subset = aligned_df.dropna(subset=["p_load"])
+        typical_dow_tod = valid_subset.groupby(["dow", "tod"])["p_load"].median()
+        overall_tod = valid_subset.groupby("tod")["p_load"].median()
+        overall_median = valid_subset["p_load"].median() if not valid_subset.empty else 0.0
+
+        def _impute_val(row):
+            if pd.notna(row["p_load"]):
+                return row["p_load"]
+            k = (row["dow"], row["tod"])
+            if k in typical_dow_tod.index and pd.notna(typical_dow_tod.loc[k]):
+                return typical_dow_tod.loc[k]
+            if row["tod"] in overall_tod.index and pd.notna(overall_tod.loc[row["tod"]]):
+                return overall_tod.loc[row["tod"]]
+            return overall_median
+
+        p_load_out = aligned_df.apply(_impute_val, axis=1).to_numpy(dtype=float)
+    else:
+        p_load_out = raw_aligned
+
+    info_dict = {
+        "has_load_gaps": has_gaps,
+        "gap_count": len(gaps_list),
+        "total_gap_days": round(total_gap_days, 1),
+        "data_coverage_pct": round(coverage_pct, 1),
+        "valid_steps": valid_count,
+        "gap_steps": nan_count,
+        "gaps": gaps_list,
+        "gap_handling_mode": gap_handling
+    }
+
+    return p_load_out, info_dict
+
+
 def compute_solar_load_dispatch(
     solar_power_kw: np.ndarray,
     load_power_kw: np.ndarray,
-    hours_per_step: float = 0.25
+    hours_per_step: float = 0.25,
+    gap_info: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Computes interval-by-interval electrical power dispatch between Solar PV generation and Facility Load:
@@ -770,44 +1006,87 @@ def compute_solar_load_dispatch(
       - Residual load (Grid / Generator): P_residual(t) = P_load(t) - P_direct(t)
       - Self-consumption rate (SCR %): Direct Energy / Total Solar Energy
       - Solar fraction / Autarky (SF %): Direct Energy / Total Facility Demand
+
+    Gracefully accounts for load profile gaps:
+      - Where load is missing (NaN), solar generation continues as surplus grid export.
+      - Produces clean NaN-masked plotting series so charts display distinct breaks without artificial interpolation.
+      - Provides annualized (pro-rata scaled) equivalent metrics alongside measured totals.
     """
     n_len = min(len(solar_power_kw), len(load_power_kw))
-    p_solar = np.maximum(0.0, solar_power_kw[:n_len])
-    p_load = np.maximum(0.0, load_power_kw[:n_len])
+    p_solar = np.maximum(0.0, np.nan_to_num(solar_power_kw[:n_len], nan=0.0))
+    p_load_raw = load_power_kw[:n_len]
 
-    p_direct = np.minimum(p_load, p_solar)
-    p_surplus = np.maximum(0.0, p_solar - p_load)
-    p_residual = np.maximum(0.0, p_load - p_direct)
+    is_gap = np.isnan(p_load_raw)
+    valid_mask = ~is_gap
+    p_load_clean = np.where(valid_mask, np.maximum(0.0, p_load_raw), 0.0)
+
+    p_direct = np.where(valid_mask, np.minimum(p_load_clean, p_solar), 0.0)
+    p_surplus = np.where(valid_mask, np.maximum(0.0, p_solar - p_load_clean), p_solar)
+    p_residual = np.where(valid_mask, np.maximum(0.0, p_load_clean - p_direct), 0.0)
+
+    # Series for plotting (with clean NaNs for breaks)
+    p_load_plot = np.where(valid_mask, p_load_clean, np.nan)
+    p_direct_plot = np.where(valid_mask, p_direct, np.nan)
+    p_residual_plot = np.where(valid_mask, p_residual, np.nan)
 
     # Energy calculations (kWh)
-    direct_kwh = float(np.sum(p_direct) * hours_per_step)
+    direct_kwh = float(np.sum(p_direct[valid_mask]) * hours_per_step)
     surplus_kwh = float(np.sum(p_surplus) * hours_per_step)
-    residual_kwh = float(np.sum(p_residual) * hours_per_step)
-    total_load_kwh = float(np.sum(p_load) * hours_per_step)
+    residual_kwh = float(np.sum(p_residual[valid_mask]) * hours_per_step)
+    total_load_kwh = float(np.sum(p_load_clean[valid_mask]) * hours_per_step)
     total_solar_kwh = float(np.sum(p_solar) * hours_per_step)
 
     # Metrics
     scr_pct = (direct_kwh / total_solar_kwh * 100.0) if total_solar_kwh > 0 else 0.0
     sf_pct = (direct_kwh / total_load_kwh * 100.0) if total_load_kwh > 0 else 0.0
 
+    valid_steps = int(np.sum(valid_mask))
+    gap_steps = int(np.sum(is_gap))
+    has_load_gaps = bool(gap_steps > 0 or (gap_info and gap_info.get("has_load_gaps", False)))
+    coverage_pct = (valid_steps / n_len * 100.0) if n_len > 0 else 100.0
+    valid_days = (valid_steps * hours_per_step) / 24.0
+    gap_days = (gap_steps * hours_per_step) / 24.0
+
+    if valid_days > 0 and has_load_gaps and gap_days > 0:
+        annual_scale = 365.0 / valid_days
+        annualized_load_kwh = round(total_load_kwh * annual_scale, 1)
+        annualized_direct_kwh = round(direct_kwh * annual_scale, 1)
+        annualized_residual_kwh = round(residual_kwh * annual_scale, 1)
+    else:
+        annualized_load_kwh = round(total_load_kwh, 1)
+        annualized_direct_kwh = round(direct_kwh, 1)
+        annualized_residual_kwh = round(residual_kwh, 1)
+
     return {
         "p_direct_kw": p_direct,
         "p_surplus_kw": p_surplus,
         "p_residual_kw": p_residual,
-        "p_load_kw": p_load,
+        "p_load_kw": p_load_clean,
+        "p_load_plot_kw": p_load_plot,
+        "p_direct_plot_kw": p_direct_plot,
+        "p_residual_plot_kw": p_residual_plot,
         "direct_kwh": round(direct_kwh, 1),
         "surplus_kwh": round(surplus_kwh, 1),
         "residual_kwh": round(residual_kwh, 1),
         "total_load_kwh": round(total_load_kwh, 1),
         "total_solar_kwh": round(total_solar_kwh, 1),
         "self_consumption_rate_pct": round(scr_pct, 1),
-        "solar_fraction_autarky_pct": round(sf_pct, 1)
+        "solar_fraction_autarky_pct": round(sf_pct, 1),
+        "has_load_gaps": has_load_gaps,
+        "gap_count": gap_info.get("gap_count", 0) if gap_info else (1 if gap_steps > 0 else 0),
+        "total_gap_days": gap_info.get("total_gap_days", round(gap_days, 1)) if gap_info else round(gap_days, 1),
+        "data_coverage_pct": gap_info.get("data_coverage_pct", round(coverage_pct, 1)) if gap_info else round(coverage_pct, 1),
+        "gap_handling_mode": gap_info.get("gap_handling_mode", "bypass") if gap_info else "bypass",
+        "annualized_load_kwh": annualized_load_kwh,
+        "annualized_direct_kwh": annualized_direct_kwh,
+        "annualized_residual_kwh": annualized_residual_kwh
     }
 
 
 def couple_solar_simulation_with_load(
     solar_res: SolarSimulationResult,
-    load_df: pd.DataFrame
+    load_df: pd.DataFrame,
+    gap_handling: str = "bypass"
 ) -> SolarSimulationResult:
     """
     Rapidly couples an existing physical Solar PV simulation result with a facility load dataframe.
@@ -828,36 +1107,40 @@ def couple_solar_simulation_with_load(
         dt_hours = 0.25
 
     p_solar_arr = df["P_AC_kW"].to_numpy(dtype=float)
-    if load_df is not None and not load_df.empty:
-        p_load_col = get_load_power_column_name(load_df)
-        raw_load_arr = pd.to_numeric(load_df[p_load_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-
-        if len(raw_load_arr) == len(p_solar_arr):
-            p_load_aligned = raw_load_arr
-        elif len(raw_load_arr) < len(p_solar_arr) and len(raw_load_arr) > 0:
-            reps = int(math.ceil(len(p_solar_arr) / len(raw_load_arr)))
-            p_load_aligned = np.tile(raw_load_arr, reps)[:len(p_solar_arr)]
-        else:
-            p_load_aligned = raw_load_arr[:len(p_solar_arr)]
-    else:
-        p_load_aligned = np.zeros(len(p_solar_arr), dtype=float)
+    p_load_aligned, gap_info = align_load_to_solar_timeseries(
+        solar_df=df,
+        load_df=load_df,
+        gap_handling=gap_handling
+    )
 
     dispatch_res = compute_solar_load_dispatch(
         solar_power_kw=p_solar_arr,
         load_power_kw=p_load_aligned,
-        hours_per_step=dt_hours
+        hours_per_step=dt_hours,
+        gap_info=gap_info
     )
 
-    df["P_Load_kW"] = np.round(dispatch_res["p_load_kw"], 2)
-    df["P_Direct_kW"] = np.round(dispatch_res["p_direct_kw"], 2)
+    df["P_Load_kW"] = np.round(dispatch_res["p_load_plot_kw"], 2)
+    df["P_Direct_kW"] = np.round(dispatch_res["p_direct_plot_kw"], 2)
     df["P_Surplus_kW"] = np.round(dispatch_res["p_surplus_kw"], 2)
-    df["P_Residual_kW"] = np.round(dispatch_res["p_residual_kw"], 2)
+    df["P_Residual_kW"] = np.round(dispatch_res["p_residual_plot_kw"], 2)
 
     # Clone and update KPIs with dispatch values
     kpis = copy.copy(solar_res.kpis)
     kpis.total_load_kwh = dispatch_res["total_load_kwh"]
     kpis.direct_consumption_kwh = dispatch_res["direct_kwh"]
     kpis.surplus_generation_kwh = dispatch_res["surplus_kwh"]
+    kpis.residual_load_kwh = dispatch_res["residual_kwh"]
+    kpis.self_consumption_rate_pct = dispatch_res["self_consumption_rate_pct"]
+    kpis.solar_fraction_autarky_pct = dispatch_res["solar_fraction_autarky_pct"]
+    kpis.has_load_gaps = dispatch_res["has_load_gaps"]
+    kpis.gap_count = dispatch_res["gap_count"]
+    kpis.total_gap_days = dispatch_res["total_gap_days"]
+    kpis.data_coverage_pct = dispatch_res["data_coverage_pct"]
+    kpis.gap_handling_mode = dispatch_res["gap_handling_mode"]
+    kpis.annualized_load_kwh = dispatch_res["annualized_load_kwh"]
+    kpis.annualized_direct_kwh = dispatch_res["annualized_direct_kwh"]
+    kpis.annualized_residual_kwh = dispatch_res["annualized_residual_kwh"]
     kpis.residual_load_kwh = dispatch_res["residual_kwh"]
     kpis.self_consumption_rate_pct = dispatch_res["self_consumption_rate_pct"]
     kpis.solar_fraction_autarky_pct = dispatch_res["solar_fraction_autarky_pct"]
@@ -894,7 +1177,8 @@ def simulate_solar_pv_generation(
     config: SolarPVConfig,
     location: SolarLocation,
     weather_df: Optional[pd.DataFrame] = None,
-    load_df: Optional[pd.DataFrame] = None
+    load_df: Optional[pd.DataFrame] = None,
+    gap_handling: str = "bypass"
 ) -> SolarSimulationResult:
     """
     Executes physical Solar PV generation simulation across 15-minute intervals (35,040 steps/year):
@@ -971,30 +1255,23 @@ def simulate_solar_pv_generation(
 
     # 5. Electrical Load Dispatch Coupling (if load data exists)
     p_solar_arr = df["P_AC_kW"].to_numpy(dtype=float)
-    if load_df is not None and not load_df.empty:
-        p_load_col = get_load_power_column_name(load_df)
-        raw_load_arr = pd.to_numeric(load_df[p_load_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-
-        if len(raw_load_arr) == len(p_solar_arr):
-            p_load_aligned = raw_load_arr
-        elif len(raw_load_arr) < len(p_solar_arr) and len(raw_load_arr) > 0:
-            reps = int(math.ceil(len(p_solar_arr) / len(raw_load_arr)))
-            p_load_aligned = np.tile(raw_load_arr, reps)[:len(p_solar_arr)]
-        else:
-            p_load_aligned = raw_load_arr[:len(p_solar_arr)]
-    else:
-        p_load_aligned = np.zeros(len(p_solar_arr), dtype=float)
+    p_load_aligned, gap_info = align_load_to_solar_timeseries(
+        solar_df=df,
+        load_df=load_df,
+        gap_handling=gap_handling
+    )
 
     dispatch_res = compute_solar_load_dispatch(
         solar_power_kw=p_solar_arr,
         load_power_kw=p_load_aligned,
-        hours_per_step=dt_hours
+        hours_per_step=dt_hours,
+        gap_info=gap_info
     )
 
-    df["P_Load_kW"] = np.round(dispatch_res["p_load_kw"], 2)
-    df["P_Direct_kW"] = np.round(dispatch_res["p_direct_kw"], 2)
+    df["P_Load_kW"] = np.round(dispatch_res["p_load_plot_kw"], 2)
+    df["P_Direct_kW"] = np.round(dispatch_res["p_direct_plot_kw"], 2)
     df["P_Surplus_kW"] = np.round(dispatch_res["p_surplus_kw"], 2)
-    df["P_Residual_kW"] = np.round(dispatch_res["p_residual_kw"], 2)
+    df["P_Residual_kW"] = np.round(dispatch_res["p_residual_plot_kw"], 2)
 
     # 6. Monthly Aggregations
     df["month"] = timestamps.dt.month
@@ -1081,7 +1358,15 @@ def simulate_solar_pv_generation(
         surplus_generation_kwh=dispatch_res["surplus_kwh"],
         residual_load_kwh=dispatch_res["residual_kwh"],
         self_consumption_rate_pct=dispatch_res["self_consumption_rate_pct"],
-        solar_fraction_autarky_pct=dispatch_res["solar_fraction_autarky_pct"]
+        solar_fraction_autarky_pct=dispatch_res["solar_fraction_autarky_pct"],
+        has_load_gaps=dispatch_res["has_load_gaps"],
+        gap_count=dispatch_res["gap_count"],
+        total_gap_days=dispatch_res["total_gap_days"],
+        data_coverage_pct=dispatch_res["data_coverage_pct"],
+        gap_handling_mode=dispatch_res["gap_handling_mode"],
+        annualized_load_kwh=dispatch_res["annualized_load_kwh"],
+        annualized_direct_kwh=dispatch_res["annualized_direct_kwh"],
+        annualized_residual_kwh=dispatch_res["annualized_residual_kwh"]
     )
 
     # 8. Loss Waterfall Breakdown
