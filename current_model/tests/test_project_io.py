@@ -102,6 +102,34 @@ class TestProjectIO(unittest.TestCase):
         self.assertEqual(st.session_state.get("sidebar_target_scenario_select"), "base")
         self.assertEqual(st.session_state.get("app_scenarios_target_scenario_select"), "base")
 
+    def test_load_project_with_string_timestamps_and_compute_bill(self):
+        import streamlit as st
+        import pandas as pd
+        from current_model.core.project_io import load_project_into_session
+        from current_model.core.financial_engine import compute_financial_bill
+
+        # Simulate restored project with string timestamps in csv_data_records
+        records = [
+            {"timestamp": "2025-01-01 00:00:00", "Total_Demand_kW": 100.0},
+            {"timestamp": "2025-01-01 00:15:00", "Total_Demand_kW": 120.0},
+            {"timestamp": "2025-01-01 00:30:00", "Total_Demand_kW": 110.0},
+            {"timestamp": "2025-01-01 00:45:00", "Total_Demand_kW": 90.0},
+        ]
+        self.project.base_scenario.csv_data_records = records
+        self.project.base_scenario.load_source_type = "csv"
+
+        load_project_into_session(self.project, auto_execute=False)
+
+        # active_csv_df must have been parsed to datetime
+        self.assertIn("active_csv_df", st.session_state)
+        df_csv = st.session_state["active_csv_df"]
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(df_csv["timestamp"]))
+
+        # Financial bill computation should not raise TypeError
+        bill = compute_financial_bill(load_data=df_csv, contract=self.project.base_scenario.base_contract)
+        self.assertIsNotNone(bill)
+        self.assertGreater(bill.total_gross_period, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -63,18 +63,24 @@ def compute_load_profile_kpis(
     peak_idx = power_series.idxmax()
     peak_time = df_clean.loc[peak_idx, "timestamp"] if "timestamp" in df_clean.columns else None
 
-    start_date = df_clean["timestamp"].min() if "timestamp" in df_clean.columns else None
-    end_date = df_clean["timestamp"].max() if "timestamp" in df_clean.columns else None
+    ts_series = None
+    if "timestamp" in df_clean.columns:
+        ts_series = pd.to_datetime(df_clean["timestamp"], errors="coerce")
+        start_date = ts_series.min() if pd.notnull(ts_series.min()) else None
+        end_date = ts_series.max() if pd.notnull(ts_series.max()) else None
+    else:
+        start_date = None
+        end_date = None
 
-    if start_date and end_date:
+    if start_date is not None and end_date is not None and pd.notnull(start_date) and pd.notnull(end_date):
         duration_seconds = (end_date - start_date).total_seconds()
         duration_days = max(1.0, duration_seconds / 86400.0)
     else:
         duration_days = max(1.0, (count * 15.0) / 1440.0)
 
     # Estimate sampling interval in hours
-    if count > 1 and "timestamp" in df_clean.columns:
-        dt_sec = (df_clean["timestamp"].iloc[1] - df_clean["timestamp"].iloc[0]).total_seconds()
+    if count > 1 and ts_series is not None and len(ts_series) > 1 and pd.notnull(ts_series.iloc[0]) and pd.notnull(ts_series.iloc[1]):
+        dt_sec = (ts_series.iloc[1] - ts_series.iloc[0]).total_seconds()
         hours_per_step = (dt_sec / 3600.0) if dt_sec > 0 else 0.25
     else:
         hours_per_step = 0.25

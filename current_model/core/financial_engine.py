@@ -87,24 +87,31 @@ def compute_financial_bill(
 
         count = len(load_data)
 
-        if duration_days is None:
-            if "timestamp" in load_data.columns and count > 1:
-                t_min = load_data["timestamp"].min()
-                t_max = load_data["timestamp"].max()
-                if pd.notnull(t_min) and pd.notnull(t_max):
+        if "timestamp" in load_data.columns and count > 0:
+            ts_series = pd.to_datetime(load_data["timestamp"], errors="coerce")
+            t_min = ts_series.min()
+            t_max = ts_series.max()
+            if duration_days is None:
+                if count > 1 and pd.notnull(t_min) and pd.notnull(t_max):
                     sec_diff = (t_max - t_min).total_seconds()
                     duration_days = max(1.0, sec_diff / 86400.0)
-                    dt_sec = (load_data["timestamp"].iloc[1] - load_data["timestamp"].iloc[0]).total_seconds()
-                    if dt_sec > 0:
-                        step_hours = dt_sec / 3600.0
+                    if len(ts_series) > 1 and pd.notnull(ts_series.iloc[0]) and pd.notnull(ts_series.iloc[1]):
+                        dt_sec = (ts_series.iloc[1] - ts_series.iloc[0]).total_seconds()
+                        if dt_sec > 0:
+                            step_hours = dt_sec / 3600.0
                 else:
                     duration_days = max(1.0, (count * step_hours) / 24.0)
-            else:
-                duration_days = max(1.0, (count * step_hours) / 24.0)
 
-        timestamps = load_data["timestamp"].tolist() if "timestamp" in load_data.columns else None
+            timestamps = ts_series.tolist()
+            df_clean_ref = load_data.copy()
+            df_clean_ref["timestamp"] = ts_series
+        else:
+            if duration_days is None:
+                duration_days = max(1.0, (count * step_hours) / 24.0)
+            timestamps = None
+            df_clean_ref = None
+
         powers = power_series.to_numpy(dtype=float)
-        df_clean_ref = load_data if "timestamp" in load_data.columns else None
 
     else:
         powers = np.asarray(load_data, dtype=float)

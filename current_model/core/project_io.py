@@ -267,6 +267,8 @@ def load_project_into_session(project: ProjectContainer, auto_execute: bool = Tr
 
     if base.csv_data_records:
         df_csv = pd.DataFrame(base.csv_data_records)
+        if "timestamp" in df_csv.columns:
+            df_csv["timestamp"] = pd.to_datetime(df_csv["timestamp"], errors="coerce")
         st.session_state["active_csv_df"] = df_csv
         st.session_state["active_csv_filename"] = base.csv_filename or "Restored_Meter_Data.csv"
 
