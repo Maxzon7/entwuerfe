@@ -60,11 +60,6 @@ def render_sidebar_scenario_controller() -> None:
         current_idx = 0
 
     sb_key = "sidebar_target_scenario_select"
-    # Ensure selectbox key in session state stays strictly synchronized with current_active_id
-    if sb_key not in st.session_state or st.session_state[sb_key] not in scenario_ids:
-        st.session_state[sb_key] = current_active_id
-    elif project.active_sub_scenario_id and st.session_state[sb_key] != current_active_id:
-        st.session_state[sb_key] = current_active_id
 
     def _on_sidebar_scenario_change() -> None:
         new_target = st.session_state.get(sb_key)

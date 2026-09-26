@@ -146,9 +146,21 @@ def export_project_from_session(
             project.author = author
         project.currency = currency
 
-    # 6. Ensure active Tab 3 Solar config is represented in at least one Sub-Scenario if active
+    # 6. Ensure active Tab 3 Solar & Tab 4 BESS configs are represented in active Sub-Scenario if active
     solar_cfg = st.session_state.get("app_tab3_config") or st.session_state.get("solar_config")
     solar_fin = st.session_state.get("app_tab3_fin_config") or st.session_state.get("solar_financial_config")
+    bess_cfg = st.session_state.get("app_tab4_bess_config") or st.session_state.get("app_tab4_bess_tech_config")
+
+    active_sub = project.get_active_scenario()
+    if active_sub is not None:
+        if solar_cfg is not None and getattr(solar_cfg, "module_count", 0) > 0:
+            active_sub.solar_config = solar_cfg
+            active_sub.include_solar = True
+        if solar_fin is not None:
+            active_sub.solar_financial = solar_fin
+        if bess_cfg is not None and getattr(bess_cfg, "capacity_kwh", 0) > 0:
+            active_sub.bess_config = bess_cfg
+            active_sub.include_bess = True
 
     if not project.sub_scenarios and solar_cfg is not None and getattr(solar_cfg, "module_count", 0) > 0:
         sub_default = SubScenario(
@@ -502,6 +514,13 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
         st.session_state["app_tab4_bess_tech_soc_max"] = float(b_cfg.soc_max_pct)
         st.session_state["app_tab4_bess_tech_init_soc"] = float(b_cfg.initial_soc_pct)
         st.session_state["app_tab4_bess_tech_shaving_cap"] = float(b_cfg.peak_shaving_threshold_kw)
+
+        # Restore BESS financial fields
+        st.session_state["app_tab4_bess_fin_cost_per_kwh"] = float(b_cfg.cost_per_kwh)
+        st.session_state["app_tab4_bess_fin_fixed_fee"] = float(b_cfg.fixed_installation_cost)
+        st.session_state["app_tab4_bess_fin_annual_om_pct"] = float(b_cfg.annual_om_pct)
+        st.session_state["app_tab4_bess_fin_cell_rep_yr"] = int(b_cfg.cell_replacement_year)
+        st.session_state["app_tab4_bess_fin_cell_rep_cost_pct"] = float(b_cfg.cell_replacement_cost_pct)
 
         if auto_execute:
             from current_model.core.bess_engine import simulate_bess_dispatch

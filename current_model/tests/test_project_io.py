@@ -131,6 +131,73 @@ class TestProjectIO(unittest.TestCase):
         self.assertGreater(bill.total_gross_period, 0.0)
 
 
+    def test_bess_scenario_persistence_and_sync(self):
+        import streamlit as st
+        from current_model.models.bess import BESSConfig
+        from current_model.core.project_io import sync_active_scenario_into_session, export_project_from_session, load_project_into_session
+
+        custom_bess = BESSConfig(
+            capacity_kwh=300.0,
+            unit_count=3,
+            unit_capacity_kwh=100.0,
+            max_charge_power_kw=150.0,
+            max_discharge_power_kw=150.0,
+            round_trip_efficiency_pct=92.0,
+            soc_min_pct=15.0,
+            soc_max_pct=90.0,
+            initial_soc_pct=40.0,
+            peak_shaving_threshold_kw=250.0,
+            cost_per_kwh=320.0,
+            fixed_installation_cost=6000.0,
+            annual_om_pct=1.8,
+            cell_replacement_year=8,
+            cell_replacement_cost_pct=45.0
+        )
+
+        bess_sub = SubScenario(
+            id="sub_bess_test",
+            name="Sub-Scenario BESS Test",
+            include_bess=True,
+            bess_config=custom_bess
+        )
+        self.project.sub_scenarios.append(bess_sub)
+        self.project.active_sub_scenario_id = "sub_bess_test"
+
+        # 1. Sync scenario into session
+        sync_active_scenario_into_session(self.project, auto_execute=False)
+
+        # Check BESS config and widget state keys
+        self.assertIn("app_tab4_bess_config", st.session_state)
+        bess_in_state = st.session_state["app_tab4_bess_config"]
+        self.assertEqual(bess_in_state.capacity_kwh, 300.0)
+        self.assertEqual(bess_in_state.unit_count, 3)
+        self.assertEqual(bess_in_state.max_discharge_power_kw, 150.0)
+        self.assertEqual(bess_in_state.peak_shaving_threshold_kw, 250.0)
+        self.assertEqual(st.session_state.get("app_tab4_bess_fin_cost_per_kwh"), 320.0)
+
+        # 2. Export project from session and verify BESS is preserved
+        exported_proj = export_project_from_session()
+        active_exported_sub = exported_proj.get_active_scenario()
+        self.assertIsNotNone(active_exported_sub)
+        self.assertTrue(active_exported_sub.include_bess)
+        self.assertIsNotNone(active_exported_sub.bess_config)
+        self.assertEqual(active_exported_sub.bess_config.capacity_kwh, 300.0)
+        self.assertEqual(active_exported_sub.bess_config.unit_count, 3)
+        self.assertEqual(active_exported_sub.bess_config.peak_shaving_threshold_kw, 250.0)
+
+        # 3. Export to JSON, deserialize and verify
+        json_str = export_project_json(exported_proj)
+        loaded_proj = ProjectContainer.from_json(json_str)
+        sub_loaded = loaded_proj.get_sub_scenario("sub_bess_test")
+        self.assertIsNotNone(sub_loaded)
+        self.assertTrue(sub_loaded.include_bess)
+        self.assertEqual(sub_loaded.bess_config.capacity_kwh, 300.0)
+        self.assertEqual(sub_loaded.bess_config.unit_count, 3)
+        self.assertEqual(sub_loaded.bess_config.max_discharge_power_kw, 150.0)
+        self.assertEqual(sub_loaded.bess_config.cost_per_kwh, 320.0)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
