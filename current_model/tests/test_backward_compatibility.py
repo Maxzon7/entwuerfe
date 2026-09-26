@@ -57,6 +57,25 @@ class TestBackwardCompatibility(unittest.TestCase):
         self.assertEqual(len(legacy_ct.tou_rates), 1)
         self.assertEqual(legacy_ct.tou_rates[0]["rate"], 0.25)
 
+    def test_legacy_bess_config_migration(self):
+        """Emulate an old serialized BESS dictionary missing newly added fields."""
+        from current_model.models.bess import BESSConfig
+        old_bess_dict = {
+            "capacity_kwh": 150.0,
+            "max_charge_power_kw": 75.0,
+            "max_discharge_power_kw": 75.0,
+            "cost_per_kwh": 360.0
+            # Missing unit_count, arbitrage times, cell replacement, etc.
+        }
+        bess = BESSConfig.from_dict(old_bess_dict)
+        self.assertEqual(bess.capacity_kwh, 150.0)
+        self.assertEqual(bess.unit_count, 1)
+        self.assertEqual(bess.unit_capacity_kwh, 150.0)
+        self.assertEqual(bess.round_trip_efficiency_pct, 90.0)
+        self.assertEqual(bess.annual_om_pct, 1.5)
+        self.assertEqual(bess.total_capex, 150.0 * 360.0 + 5000.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

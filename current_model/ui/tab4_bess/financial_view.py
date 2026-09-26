@@ -343,39 +343,45 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
         b_rows = [
             {
                 "Bill Component": "Peak Demand / Capacity Charges",
-                "Status Quo": f"{fin_metrics.annual_demand_charge_savings:,.2f} {currency}",
-                "With BESS": f"0.00 {currency}",
-                "Annual Savings": f"-{fin_metrics.annual_demand_charge_savings:,.2f} {currency}"
+                "Status Quo": f"{fin_metrics.annual_status_quo_demand_cost:,.2f} {currency}",
+                "With BESS": f"{fin_metrics.annual_with_bess_demand_cost:,.2f} {currency}",
+                "Annual Delta": f"-{fin_metrics.annual_demand_charge_savings:,.2f} {currency} (Savings)" if fin_metrics.annual_demand_charge_savings >= 0 else f"+{abs(fin_metrics.annual_demand_charge_savings):,.2f} {currency} (Cost)"
             },
             {
                 "Bill Component": "Grid Overload Penalties",
-                "Status Quo": f"{fin_metrics.annual_penalty_savings:,.2f} {currency}",
-                "With BESS": f"0.00 {currency}",
-                "Annual Savings": f"-{fin_metrics.annual_penalty_savings:,.2f} {currency}"
+                "Status Quo": f"{fin_metrics.annual_status_quo_penalty_cost:,.2f} {currency}",
+                "With BESS": f"{fin_metrics.annual_with_bess_penalty_cost:,.2f} {currency}",
+                "Annual Delta": f"-{fin_metrics.annual_penalty_savings:,.2f} {currency} (Avoided)" if fin_metrics.annual_penalty_savings >= 0 else f"+{abs(fin_metrics.annual_penalty_savings):,.2f} {currency}"
             },
             {
                 "Bill Component": "Active Energy Charges",
-                "Status Quo": f"{fin_metrics.annual_energy_savings:,.2f} {currency}",
-                "With BESS": f"0.00 {currency}",
-                "Annual Savings": f"-{fin_metrics.annual_energy_savings:,.2f} {currency}"
+                "Status Quo": f"{fin_metrics.annual_status_quo_energy_cost:,.2f} {currency}",
+                "With BESS": f"{fin_metrics.annual_with_bess_energy_cost:,.2f} {currency}",
+                "Annual Delta": f"-{fin_metrics.annual_energy_savings:,.2f} {currency} (Savings)" if fin_metrics.annual_energy_savings >= 0 else f"+{abs(fin_metrics.annual_energy_savings):,.2f} {currency} (Cost)"
             },
             {
                 "Bill Component": "Total Gross Electricity Bill",
-                "Status Quo": f"{fin_metrics.annual_gross_savings:,.2f} {currency}",
-                "With BESS": f"0.00 {currency}",
-                "Annual Savings": f"-{fin_metrics.annual_gross_savings:,.2f} {currency}"
+                "Status Quo": f"{fin_metrics.annual_status_quo_total_bill:,.2f} {currency}",
+                "With BESS": f"{fin_metrics.annual_with_bess_total_bill:,.2f} {currency}",
+                "Annual Delta": f"-{fin_metrics.annual_gross_savings:,.2f} {currency} (Gross Savings)" if fin_metrics.annual_gross_savings >= 0 else f"+{abs(fin_metrics.annual_gross_savings):,.2f} {currency}"
             },
             {
-                "Bill Component": "BESS Annual O&M Expenses",
+                "Bill Component": "BESS Annual OPEX (Fixed O&M + Conversion Losses)",
                 "Status Quo": f"0.00 {currency}",
                 "With BESS": f"{fin_metrics.annual_opex_year1:,.2f} {currency}",
-                "Annual Savings": f"+{fin_metrics.annual_opex_year1:,.2f} {currency} (Cost)"
+                "Annual Delta": f"+{fin_metrics.annual_opex_year1:,.2f} {currency} (Cost)"
             },
             {
                 "Bill Component": "Net Annual Commercial Benefit",
                 "Status Quo": f"0.00 {currency}",
                 "With BESS": f"{fin_metrics.annual_net_savings_year1:,.2f} {currency}",
-                "Annual Savings": f"+{fin_metrics.annual_net_savings_year1:,.2f} {currency}/Year"
+                "Annual Delta": f"+{fin_metrics.annual_net_savings_year1:,.2f} {currency}/Year" if fin_metrics.annual_net_savings_year1 >= 0 else f"-{abs(fin_metrics.annual_net_savings_year1):,.2f} {currency}/Year"
             }
         ]
         st.table(pd.DataFrame(b_rows))
+        if fin_metrics.annual_loss_kwh > 0:
+            st.caption(
+                f"ℹ️ **OPEX Note:** Includes {fin_metrics.annual_fixed_om:,.2f} {currency} fixed O&M plus "
+                f"{fin_metrics.annual_loss_cost:,.2f} {currency} variable cost from round-trip conversion efficiency losses ({fin_metrics.annual_loss_kwh:,.1f} kWh/year)."
+            )
+

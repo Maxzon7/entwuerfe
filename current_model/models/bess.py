@@ -162,6 +162,19 @@ class BESSFinancialMetrics:
     total_capex: float = 0.0
     capex_per_kwh: float = 0.0
     annual_opex_year1: float = 0.0
+    annual_fixed_om: float = 0.0
+    annual_loss_kwh: float = 0.0
+    annual_loss_cost: float = 0.0
+
+    # Itemized Real Bill Components (Status Quo vs. With BESS)
+    annual_status_quo_demand_cost: float = 0.0
+    annual_with_bess_demand_cost: float = 0.0
+    annual_status_quo_energy_cost: float = 0.0
+    annual_with_bess_energy_cost: float = 0.0
+    annual_status_quo_penalty_cost: float = 0.0
+    annual_with_bess_penalty_cost: float = 0.0
+    annual_status_quo_total_bill: float = 0.0
+    annual_with_bess_total_bill: float = 0.0
 
     # Annual Savings Breakdown
     annual_energy_savings: float = 0.0

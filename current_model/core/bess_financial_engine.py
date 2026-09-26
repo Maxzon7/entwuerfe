@@ -181,18 +181,35 @@ def compute_bess_financial_metrics(
     bill_base = compute_financial_bill(df_base, contract, step_hours=step_hours)
     bill_bess = compute_financial_bill(df_bess, contract, step_hours=step_hours)
 
-    base_annual_cost = float(bill_base.total_gross_monthly * 12.0)
-    bess_annual_cost = float(bill_bess.total_gross_monthly * 12.0)
+    dur = getattr(bill_base, "duration_days", 365.0) or 365.0
+    ann_factor = (365.0 / dur) if (0.01 < dur < 360.0) else 1.0
 
-    # Component annual savings (normalized to 12 months)
-    energy_savings = max(0.0, float((bill_base.energy_cost_monthly - bill_bess.energy_cost_monthly) * 12.0))
-    demand_savings = max(0.0, float((bill_base.capacity_cost_monthly - bill_bess.capacity_cost_monthly) * 12.0))
-    penalty_savings = max(0.0, float((bill_base.penalty_cost_monthly - bill_bess.penalty_cost_monthly) * 12.0))
-    tax_savings = max(0.0, float((bill_base.total_taxes_monthly - bill_bess.total_taxes_monthly) * 12.0))
+    sq_demand_cost = float(bill_base.capacity_cost_period * ann_factor)
+    wb_demand_cost = float(bill_bess.capacity_cost_period * ann_factor)
+    demand_savings = max(0.0, sq_demand_cost - wb_demand_cost)
 
-    annual_gross_savings = max(0.0, base_annual_cost - bess_annual_cost)
-    annual_opex_y1 = round(total_capex * (bess_config.annual_om_pct / 100.0), 2)
-    annual_net_savings_y1 = round(annual_gross_savings - annual_opex_y1, 2)
+    sq_energy_cost = float(bill_base.energy_cost_period * ann_factor)
+    wb_energy_cost = float(bill_bess.energy_cost_period * ann_factor)
+    energy_savings = float(sq_energy_cost - wb_energy_cost)
+
+    sq_penalty_cost = float(bill_base.penalty_cost_period * ann_factor)
+    wb_penalty_cost = float(bill_bess.penalty_cost_period * ann_factor)
+    penalty_savings = max(0.0, sq_penalty_cost - wb_penalty_cost)
+
+    sq_total_bill = float(bill_base.total_gross_period * ann_factor)
+    wb_total_bill = float(bill_bess.total_gross_period * ann_factor)
+    annual_gross_savings = max(0.0, sq_total_bill - wb_total_bill)
+
+    # Conversion efficiency losses
+    annual_discharged_kwh = float(np.sum(p_dis) * step_hours) * ann_factor
+    rte = max(0.50, min(1.0, float(bess_config.round_trip_efficiency_pct) / 100.0))
+    annual_loss_kwh = annual_discharged_kwh * ((1.0 / rte) - 1.0)
+    avg_energy_rate = float(getattr(contract, "default_energy_rate", 0.20) or 0.20)
+    annual_loss_cost = float(annual_loss_kwh * avg_energy_rate)
+
+    annual_fixed_om = round(total_capex * (bess_config.annual_om_pct / 100.0), 2)
+    annual_opex_y1 = round(annual_fixed_om + annual_loss_cost, 2)
+    annual_net_savings_y1 = round(annual_gross_savings - annual_fixed_om, 2)
 
     # 4. Multi-Year Cash Flow Projection (1 to Horizon Years)
     horizon_years = max(1, analysis_horizon_years)
@@ -217,8 +234,6 @@ def compute_bess_financial_metrics(
     npv = -total_capex
     raw_cash_flows: List[float] = [-total_capex]
 
-    # For LCOS:
-    annual_discharged_kwh = float(np.sum(p_dis) * step_hours)
     disc_costs_sum = total_capex
     disc_energy_sum = 0.0
 
@@ -227,7 +242,6 @@ def compute_bess_financial_metrics(
 
     for y in range(1, horizon_years + 1):
         # Physical battery capacity factor (degrades slightly each year)
-        # Year 1 = 1.0, Year 2 = (1 - deg), ...
         deg_factor = max(0.60, 1.0 - (y - 1) * deg)
         # After cell replacement, capacity restored to 95%
         if y > cell_rep_year:
@@ -237,11 +251,11 @@ def compute_bess_financial_metrics(
         price_factor = (1.0 + infl) ** (y - 1)
 
         # Scaled annual bill and savings
-        y_sq_cost = base_annual_cost * price_factor
+        y_sq_cost = sq_total_bill * price_factor
         y_gross_savings = annual_gross_savings * deg_factor * price_factor
         y_wb_bill = y_sq_cost - y_gross_savings
 
-        y_opex = annual_opex_y1 * ((1.0 + infl * 0.8) ** (y - 1))
+        y_opex = annual_fixed_om * ((1.0 + infl * 0.8) ** (y - 1)) + (annual_loss_cost * price_factor)
         y_extra_capex = cell_rep_cost if (y == cell_rep_year) else 0.0
 
         y_total_bess_cost = y_wb_bill + y_opex + y_extra_capex
@@ -314,11 +328,22 @@ def compute_bess_financial_metrics(
         total_capex=round(total_capex, 2),
         capex_per_kwh=round(total_capex / cap_kwh, 2),
         annual_opex_year1=annual_opex_y1,
-        annual_energy_savings=round(energy_savings, 2),
+        annual_fixed_om=annual_fixed_om,
+        annual_loss_kwh=round(annual_loss_kwh, 1),
+        annual_loss_cost=round(annual_loss_cost, 2),
+        annual_status_quo_demand_cost=round(sq_demand_cost, 2),
+        annual_with_bess_demand_cost=round(wb_demand_cost, 2),
+        annual_status_quo_energy_cost=round(sq_energy_cost, 2),
+        annual_with_bess_energy_cost=round(wb_energy_cost, 2),
+        annual_status_quo_penalty_cost=round(sq_penalty_cost, 2),
+        annual_with_bess_penalty_cost=round(wb_penalty_cost, 2),
+        annual_status_quo_total_bill=round(sq_total_bill, 2),
+        annual_with_bess_total_bill=round(wb_total_bill, 2),
         annual_demand_charge_savings=round(demand_savings, 2),
         annual_penalty_savings=round(penalty_savings, 2),
+        annual_energy_savings=round(energy_savings, 2),
         annual_gross_savings=round(annual_gross_savings, 2),
-        annual_net_savings_year1=annual_net_savings_y1,
+        annual_net_savings_year1=round(annual_net_savings_y1, 2),
         simple_payback_years=payback_years,
         discounted_payback_years=disc_payback_years,
         net_present_value=round(npv, 2),

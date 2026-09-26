@@ -31,6 +31,8 @@ from current_model.models.scenario import BaseScenario, SubScenario, ProjectCont
 from current_model.models.solar import SolarFinancialConfig
 from current_model.core.project_io import export_project_from_session, export_project_json, sync_active_scenario_into_session
 from current_model.core.solar_financial_engine import compute_solar_financial_metrics
+from current_model.core.bess_engine import simulate_bess_dispatch
+from current_model.core.bess_financial_engine import compute_bess_financial_metrics
 from current_model.ui.tab_comparison.charts import (
     create_multi_scenario_cumulative_cost_figure,
     create_capex_opex_breakdown_figure,
@@ -168,6 +170,9 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
     active_fin_m = st.session_state.get("solar_financial_metrics")
     active_sub_id = project.active_sub_scenario_id
 
+    contract = project.base_scenario.base_contract or st.session_state.get("contract") or st.session_state.get("app_tab2_contract")
+    grid_limit_kw = getattr(contract, "contracted_capacity_kw", None) or float(base_peak_kw) or 100.0
+
     for idx, sub in enumerate(project.sub_scenarios):
         # 1. Solar Capacity & Generation Sizing
         kwp = 0.0
@@ -186,6 +191,9 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         self_cons = 0.0
         peak_shaved = 0.0
         has_valid_int = False
+        direct_kwh = 0.0
+        surplus_kwh = 0.0
+        residual_kwh = base_total_kwh
 
         if sub.include_solar and kwp > 0:
             # Check if active sub-scenario has an exact coupled dispatch result matching current sizing
@@ -231,11 +239,39 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             direct_kwh = min(direct_kwh, base_total_kwh, annual_gen_kwh)
             residual_kwh = max(0.0, base_total_kwh - direct_kwh)
             surplus_kwh = max(0.0, annual_gen_kwh - direct_kwh)
+        elif sub.include_bess and sub.bess_config:
+            direct_kwh = 0.0
+            surplus_kwh = 0.0
+            bess_cfg = sub.bess_config
+            bess_sim_tmp = None
+            if df_load is not None and not df_load.empty:
+                try:
+                    bess_sim_tmp = simulate_bess_dispatch(
+                        bess_config=bess_cfg,
+                        load_df=df_load,
+                        grid_limit_kw=grid_limit_kw,
+                        power_col=p_col
+                    )
+                except Exception:
+                    bess_sim_tmp = None
+
+            if bess_sim_tmp and bess_sim_tmp.kpis:
+                peak_shaved = float(getattr(bess_sim_tmp.kpis, "peak_shaved_kw", 0.0))
+                loss_kwh = float(getattr(bess_sim_tmp.kpis, "round_trip_loss_kwh", 0.0))
+            else:
+                peak_shaved = min(float(bess_cfg.max_discharge_power_kw), float(base_peak_kw * 0.35))
+                loss_kwh = float(bess_cfg.capacity_kwh * 250.0 * (1.0 - bess_cfg.round_trip_efficiency_pct / 100.0))
+
+            residual_kwh = max(0.0, base_total_kwh + loss_kwh)
+            autarky = 0.0
+            self_cons = 0.0
         else:
             direct_kwh = 0.0
             surplus_kwh = 0.0
             residual_kwh = base_total_kwh
-            peak_shaved = 50.0 if (sub.include_bess or sub.include_generator) else 0.0
+            peak_shaved = 0.0
+            autarky = 0.0
+            self_cons = 0.0
 
         direct_mwh = direct_kwh / 1000.0
         residual_mwh = residual_kwh / 1000.0
@@ -297,15 +333,59 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             opex_y1 = fin_m_fac.annual_opex_year1
             tco_15y = cum_costs_fac[-1] if cum_costs_fac else (capex + opex_y1 * 18.5989)
             cash_table = fin_m_fac.cash_flow_table
-        else:
-            capex = 0.0
-            if sub.include_bess and sub.bess_config:
-                capex += sub.bess_config.total_capex
+        elif sub.include_bess and sub.bess_config:
+            bess_cfg = sub.bess_config
+            if df_load is not None and not df_load.empty:
+                try:
+                    bess_sim = simulate_bess_dispatch(
+                        bess_config=bess_cfg,
+                        load_df=df_load,
+                        grid_limit_kw=grid_limit_kw,
+                        power_col=p_col
+                    )
+                    df_bess_ts = bess_sim.df_timeseries
+                except Exception:
+                    df_bess_ts = pd.DataFrame({
+                        "P_Load_kW": [base_peak_kw] * 4,
+                        "P_Grid_kW": [max(0.0, base_peak_kw - bess_cfg.max_discharge_power_kw)] * 4,
+                        "P_BESS_Discharge_kW": [min(bess_cfg.max_discharge_power_kw, base_peak_kw)] * 4,
+                        "P_BESS_Charge_kW": [0.0] * 4
+                    })
+            else:
+                df_bess_ts = pd.DataFrame({
+                    "P_Load_kW": [base_peak_kw] * 4,
+                    "P_Grid_kW": [max(0.0, base_peak_kw - bess_cfg.max_discharge_power_kw)] * 4,
+                    "P_BESS_Discharge_kW": [min(bess_cfg.max_discharge_power_kw, base_peak_kw)] * 4,
+                    "P_BESS_Charge_kW": [0.0] * 4
+                })
+
+            fin_m_bess = compute_bess_financial_metrics(
+                bess_config=bess_cfg,
+                df_timeseries=df_bess_ts,
+                contract=contract,
+                grid_limit_kw=grid_limit_kw
+            )
+
+            capex = fin_m_bess.total_capex
             if sub.include_generator and sub.generator_config:
                 capex += sub.generator_config.capital_cost
 
-            annual_benefit = 15000.0 if capex > 0 else 0.0
-            residual_annual_cost = base_annual_cost - annual_benefit
+            payback = fin_m_bess.simple_payback_years or 0.0
+            npv = fin_m_bess.net_present_value
+            cum_costs_fac = fin_m_bess.cumulative_with_bess if fin_m_bess.cumulative_with_bess else fac_cum_series
+            base_costs_fac = fin_m_bess.cumulative_status_quo if fin_m_bess.cumulative_status_quo else fac_cum_series
+            tco_15y = cum_costs_fac[-1] if cum_costs_fac else (capex + (fin_m_bess.annual_with_bess_total_bill + fin_m_bess.annual_opex_year1) * 18.5989)
+            net_savings = base_15y_facility_tco - tco_15y
+            cum_costs_sol = [capex] * 16 if capex > 0 else solar_cum_series
+            base_costs_sol = solar_cum_series
+            opex_y1 = fin_m_bess.annual_with_bess_total_bill + fin_m_bess.annual_opex_year1
+            cash_table = fin_m_bess.cash_flow_table
+        else:
+            capex = 0.0
+            if sub.include_generator and sub.generator_config:
+                capex += sub.generator_config.capital_cost
+
+            residual_annual_cost = base_annual_cost
             
             # Proper 15-year cumulative trajectory (accumulating year over year)
             cum_costs_fac = [capex]
@@ -315,8 +395,8 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
                 cum_costs_fac.append(round(cum_track, 2))
 
             tco_15y = cum_costs_fac[-1]
-            payback = (capex / annual_benefit) if annual_benefit > 0 else 0.0
-            npv = ((annual_benefit * 10.3796) - capex) if capex > 0 else 0.0
+            payback = 0.0
+            npv = -capex if capex > 0 else 0.0
             net_savings = base_15y_facility_tco - tco_15y
             base_costs_fac = fac_cum_series
             cum_costs_sol = [capex] * 16 if capex > 0 else solar_cum_series
@@ -1166,21 +1246,44 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
             if lead_sub and lead_sub.get("cash_flow_table"):
                 dt_rows = []
                 for row in lead_sub["cash_flow_table"]:
-                    dt_rows.append({
-                        "Year": f"Year {row['year']}",
-                        "Aging Factor": f"{row['aging_factor'] * 100.0:.2f} %",
-                        "Generation (MWh)": f"{row['generation_mwh']:,.2f}",
-                        f"Status Quo Bill ({currency})": f"{row['status_quo_bill']:,.2f}",
-                        f"Residual Bill ({currency})": f"{row['residual_bill']:,.2f}",
-                        f"OPEX ({currency})": f"{row['opex_annual']:,.2f}",
-                        f"Export Rev ({currency})": f"{row['export_revenue']:,.2f}",
-                        f"Net Cashflow ({currency})": f"{row['net_cash_flow']:+,.2f}",
-                        f"Cumulative Net CF ({currency})": f"{row['cumulative_cash_flow']:+,.2f}",
-                        f"Discounted CF ({currency})": f"{row['discounted_cash_flow']:+,.2f}"
-                    })
+                    if "aging_factor" in row or "generation_mwh" in row:
+                        dt_rows.append({
+                            "Year": f"Year {row.get('year', 0)}",
+                            "Aging Factor": f"{row.get('aging_factor', 1.0) * 100.0:.2f} %",
+                            "Generation (MWh)": f"{row.get('generation_mwh', 0.0):,.2f}",
+                            f"Status Quo Bill ({currency})": f"{row.get('status_quo_bill', 0.0):,.2f}",
+                            f"Residual Bill ({currency})": f"{row.get('residual_bill', 0.0):,.2f}",
+                            f"OPEX ({currency})": f"{row.get('opex_annual', 0.0):,.2f}",
+                            f"Export Rev ({currency})": f"{row.get('export_revenue', 0.0):,.2f}",
+                            f"Net Cashflow ({currency})": f"{row.get('net_cash_flow', 0.0):+,.2f}",
+                            f"Cumulative Net CF ({currency})": f"{row.get('cumulative_cash_flow', 0.0):+,.2f}",
+                            f"Discounted CF ({currency})": f"{row.get('discounted_cash_flow', 0.0):+,.2f}"
+                        })
+                    elif "with_bess_bill" in row or "bess_opex" in row:
+                        dt_rows.append({
+                            "Year": f"Year {row.get('year', 0)}",
+                            f"Status Quo Bill ({currency})": f"{row.get('status_quo_bill', 0.0):,.2f}",
+                            f"With BESS Bill ({currency})": f"{row.get('with_bess_bill', 0.0):,.2f}",
+                            f"Gross Savings ({currency})": f"{row.get('gross_savings', 0.0):+,.2f}",
+                            f"BESS OPEX ({currency})": f"{row.get('bess_opex', 0.0):,.2f}",
+                            f"Cell Refresh ({currency})": f"{row.get('cell_replacement', 0.0):,.2f}",
+                            f"Net Cashflow ({currency})": f"{row.get('net_cash_flow', 0.0):+,.2f}",
+                            f"Cumulative Net CF ({currency})": f"{row.get('cumulative_cash_flow', 0.0):+,.2f}",
+                            f"Discounted CF ({currency})": f"{row.get('discounted_cash_flow', 0.0):+,.2f}"
+                        })
+                    else:
+                        row_dict = {"Year": f"Year {row.get('year', 0)}"}
+                        for k, v in row.items():
+                            if k == "year":
+                                continue
+                            if isinstance(v, (int, float)):
+                                row_dict[k.replace('_', ' ').title()] = f"{v:,.2f}"
+                            else:
+                                row_dict[k.replace('_', ' ').title()] = str(v)
+                        dt_rows.append(row_dict)
                 st.dataframe(pd.DataFrame(dt_rows), use_container_width=True, hide_index=True)
             else:
-                st.info("Configure and calculate solar generation on sub-scenarios to inspect itemized cashflow tables.")
+                st.info("Configure and calculate generation or BESS dispatch on sub-scenarios to inspect itemized cashflow tables.")
 
         st.divider()
 

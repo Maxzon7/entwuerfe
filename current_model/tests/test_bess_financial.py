@@ -101,6 +101,15 @@ class TestBESSFinancialEngine(unittest.TestCase):
         self.assertGreater(fin.annual_gross_savings, 0.0)
         self.assertGreater(fin.levelized_cost_of_storage_eur_kwh, 0.0)
 
+        # Verify new detailed billing component breakdown
+        self.assertGreater(fin.annual_status_quo_total_bill, 0.0)
+        self.assertGreater(fin.annual_with_bess_total_bill, 0.0)
+        self.assertGreater(fin.annual_penalty_savings, 0.0)
+        self.assertGreater(fin.annual_fixed_om, 0.0)
+        self.assertGreater(fin.annual_loss_kwh, 0.0)
+        self.assertGreater(fin.annual_loss_cost, 0.0)
+        self.assertAlmostEqual(fin.annual_opex_year1, fin.annual_fixed_om + fin.annual_loss_cost, places=2)
+
     def test_bess_sensitivity_matrix(self):
         """Verify sensitivity analysis over variations in CAPEX and Demand Tariffs."""
         matrix = compute_bess_sensitivity_matrix(
@@ -145,6 +154,41 @@ class TestBESSFinancialEngine(unittest.TestCase):
         fig5 = create_bess_sensitivity_figure(sens_matrix)
         self.assertIsNotNone(fig5)
 
+    def test_bess_in_scenario_comparison_records(self):
+        """Verify Master Comparison evaluation dynamically processes standalone BESS scenarios."""
+        from current_model.models.scenario import ProjectContainer, BaseScenario, SubScenario
+        from current_model.ui.tab_comparison.view import _build_scenario_evaluation_records
+
+        proj = ProjectContainer(
+            project_name="Test Comparison Project",
+            base_scenario=BaseScenario(
+                name="Base",
+                baseline_annual_kwh=1000000.0,
+                baseline_peak_kw=200.0,
+                baseline_annual_cost=200000.0,
+                base_contract=self.contract
+            )
+        )
+        sub_bess = SubScenario(
+            name="BESS Peak Shaving Branch",
+            include_solar=False,
+            include_bess=True,
+            bess_config=self.bess_cfg
+        )
+        proj.sub_scenarios.append(sub_bess)
+
+        records = _build_scenario_evaluation_records(proj)
+        self.assertEqual(len(records), 2)  # Base + BESS sub-scenario
+        bess_rec = records[1]
+
+        self.assertEqual(bess_rec["name"], "BESS Peak Shaving Branch")
+        self.assertEqual(bess_rec["capex"], 75000.0)
+        self.assertGreater(bess_rec["shaved_peak_kw"], 0.0)
+        self.assertGreater(bess_rec["total_15y_tco"], 0.0)
+        self.assertEqual(len(bess_rec["facility_cum_costs"]), 16)
+
+
 
 if __name__ == "__main__":
     unittest.main()
+
