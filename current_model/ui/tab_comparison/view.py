@@ -33,16 +33,26 @@ from current_model.core.project_io import export_project_from_session, export_pr
 from current_model.core.solar_financial_engine import compute_solar_financial_metrics
 from current_model.core.bess_engine import simulate_bess_dispatch
 from current_model.core.bess_financial_engine import compute_bess_financial_metrics
+from current_model.core.solar_engine import simulate_solar_pv_generation
 from current_model.ui.tab_comparison.charts import (
     create_multi_scenario_cumulative_cost_figure,
     create_capex_opex_breakdown_figure,
     create_autarky_payback_figure,
     create_multi_scenario_energy_balance_figure,
     create_multi_scenario_peak_and_co2_figure,
-    create_residual_grid_load_comparison_figure
+    create_residual_grid_load_comparison_figure,
+    create_residual_grid_load_timeseries_figure
 )
 from current_model.ui.common.cards import render_kpi_card
-from current_model.ui.common.session_utils import find_active_load_data_in_session, get_load_profile_summary
+from current_model.ui.common.session_utils import (
+    find_active_load_data_in_session,
+    find_active_contract_in_session,
+    get_load_profile_summary,
+    detect_load_profile_gaps
+)
+
+
+
 
 
 def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[str, Any]]:
@@ -1479,28 +1489,120 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
         with e_tab1:
             st.caption("Direct comparison between original facility electricity demand and remaining utility grid imports (übrig gebliebene Netzlast) across all scenarios:")
             
-            c_mode_col, _ = st.columns([7.5, 4.5])
+            c_mode_col, _ = st.columns([11, 1])
             with c_mode_col:
                 res_chart_mode = st.radio(
                     "Timeline View:",
                     options=[
                         "Monthly Trajectory (Jan – Dec Curves)",
                         "Monthly Grouped (Jan – Dec Bars)",
-                        "Annual Totals Benchmark (MWh/Year)"
+                        "Annual Totals Benchmark (MWh/Year)",
+                        "15-Min Detailed Timeseries (Full Timeline Dispatch)"
                     ],
                     index=0,
                     horizontal=True,
                     key=f"{key_prefix}_res_chart_mode_radio"
                 )
             
-            mode_key = "monthly_curve"
-            if "Monthly Grouped" in res_chart_mode:
-                mode_key = "monthly_grouped"
-            elif "Annual Totals" in res_chart_mode:
-                mode_key = "annual_totals"
+            if "15-Min" in res_chart_mode:
+                df_load, load_desc, p_col = find_active_load_data_in_session()
+                if df_load is None or df_load.empty or p_col not in df_load.columns:
+                    st.info("No active 15-minute load profile time series found. Upload a CSV meter dataset in Tab 1 to inspect the full timeline dispatch.")
+                else:
+                    # Resolve active contracted capacity limit (if configured)
+                    active_contract = find_active_contract_in_session()
+                    grid_limit_kw = getattr(active_contract, "contracted_capacity_kw", None) if active_contract else None
+                    if grid_limit_kw is not None and grid_limit_kw <= 0:
+                        grid_limit_kw = None
 
-            fig_res_comp = create_residual_grid_load_comparison_figure(records, chart_mode=mode_key)
-            st.plotly_chart(fig_res_comp, use_container_width=True)
+                    # 1. Data Discontinuity / Gap Detection Warning
+                    dt_step = 0.25
+                    if "timestamp" in df_load.columns and len(df_load) > 1:
+                        diff_s = (pd.to_datetime(df_load["timestamp"].iloc[1]) - pd.to_datetime(df_load["timestamp"].iloc[0])).total_seconds()
+                        if diff_s > 0:
+                            dt_step = diff_s / 3600.0
+
+                    detected_gaps = detect_load_profile_gaps(df_load, max_gap_hours=max(1.0, dt_step * 3))
+                    if detected_gaps:
+                        gap_desc = ", ".join([f"{g['start_str']} to {g['end_str']} ({g['duration_days']:.1f} days)" for g in detected_gaps[:3]])
+                        if len(detected_gaps) > 3:
+                            gap_desc += f" and {len(detected_gaps) - 3} further intervals"
+                        st.warning(
+                            f":material/warning: **Data Gaps Detected in Time Series:** {len(detected_gaps)} measurement interruption(s) found "
+                            f"({gap_desc}). Missing intervals are displayed as breaks in the time series chart without artificial interpolation.",
+                            icon=":material/warning:"
+                        )
+
+                    # 2. Multi-Year duration note
+                    if "timestamp" in df_load.columns and len(df_load) > 1:
+                        ts_s = pd.to_datetime(df_load["timestamp"])
+                        span_days = (ts_s.max() - ts_s.min()).total_seconds() / 86400.0
+                        if span_days > 366:
+                            st.caption(f":material/history: Displaying full unaggregated chronological timeline ({span_days:.0f} calendar days / {len(df_load):,} intervals) with direct 15-minute dispatch resolution.")
+
+                    # 3. Assemble Sub-Scenario 15-minute residual grid series
+                    sub_ts_list = []
+                    int_sim_res = st.session_state.get("app_tab3_int_sim_result") or st.session_state.get("solar_dispatch_result")
+
+                    for sub in project.sub_scenarios:
+                        res_series = None
+                        # Check if active sub matches cached coupled simulation
+                        if (project.active_sub_scenario_id == sub.id and
+                            int_sim_res is not None and
+                            hasattr(int_sim_res, "df_timeseries") and
+                            int_sim_res.df_timeseries is not None and
+                            "P_Residual_kW" in int_sim_res.df_timeseries.columns and
+                            len(int_sim_res.df_timeseries) == len(df_load)):
+                            res_series = int_sim_res.df_timeseries["P_Residual_kW"]
+                        elif sub.include_solar and sub.solar_config and sub.solar_config.module_count > 0:
+                            try:
+                                sim_tmp = simulate_solar_pv_generation(
+                                    config=sub.solar_config,
+                                    location=getattr(project, "location", None),
+                                    load_df=df_load
+                                )
+                                if sim_tmp and sim_tmp.df_timeseries is not None and "P_Residual_kW" in sim_tmp.df_timeseries.columns:
+                                    res_series = sim_tmp.df_timeseries["P_Residual_kW"]
+                            except Exception:
+                                res_series = None
+                        elif sub.include_bess and sub.bess_config:
+                            try:
+                                bess_tmp = simulate_bess_dispatch(
+                                    bess_config=sub.bess_config,
+                                    load_df=df_load,
+                                    grid_limit_kw=grid_limit_kw,
+                                    power_col=p_col
+                                )
+                                if bess_tmp and bess_tmp.df_timeseries is not None and "P_Grid_kW" in bess_tmp.df_timeseries.columns:
+                                    res_series = bess_tmp.df_timeseries["P_Grid_kW"]
+                            except Exception:
+                                res_series = None
+
+                        if res_series is None:
+                            res_series = df_load[p_col]
+
+                        sub_ts_list.append({
+                            "name": sub.name,
+                            "color": sub.color_code,
+                            "residual_series": res_series
+                        })
+
+                    fig_ts = create_residual_grid_load_timeseries_figure(
+                        df_load=df_load,
+                        sub_scenarios_timeseries=sub_ts_list,
+                        power_col=p_col,
+                        grid_limit_kw=grid_limit_kw
+                    )
+                    st.plotly_chart(fig_ts, use_container_width=True)
+            else:
+                mode_key = "monthly_curve"
+                if "Monthly Grouped" in res_chart_mode:
+                    mode_key = "monthly_grouped"
+                elif "Annual Totals" in res_chart_mode:
+                    mode_key = "annual_totals"
+
+                fig_res_comp = create_residual_grid_load_comparison_figure(records, chart_mode=mode_key)
+                st.plotly_chart(fig_res_comp, use_container_width=True)
 
         with e_tab2:
             st.caption("Detailed physical energy balance including generation, direct self-consumption, grid imports, and surplus feed-in:")

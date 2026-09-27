@@ -15,9 +15,11 @@ Provides interactive Plotly visualization figures for the Master Scenario Compar
 """
 
 from typing import List, Dict, Any, Optional
+import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import numpy as np
+
 
 
 def create_multi_scenario_cumulative_cost_figure(
@@ -791,3 +793,118 @@ def create_residual_grid_load_comparison_figure(
     fig.update_layout(**layout_kwargs)
 
     return fig
+
+
+def create_residual_grid_load_timeseries_figure(
+    df_load: pd.DataFrame,
+    sub_scenarios_timeseries: List[Dict[str, Any]],
+    power_col: str = "Total_Demand_kW",
+    grid_limit_kw: Optional[float] = None
+) -> go.Figure:
+    """
+    Constructs a full-resolution 15-minute interactive dispatch timeseries chart
+    comparing the original measured Facility Total Demand directly against
+    the residual grid load (P_Residual_kW) of all active Sub-Scenarios.
+    Supports rangeslider and rangeselector (7D, 1M, 3M, 6M, All).
+    """
+    fig = go.Figure()
+    if df_load is None or df_load.empty:
+        return fig
+
+    # Downsampling for smooth rendering on very large datasets (>35k points)
+    step = 2 if len(df_load) > 35000 else 1
+    plot_df = df_load.iloc[::step]
+    
+    ts_col = "timestamp" if "timestamp" in plot_df.columns else plot_df.columns[0]
+    timestamps = plot_df[ts_col]
+    
+    # 1. Baseline Facility Demand (Status Quo)
+    p_baseline = plot_df[power_col] if power_col in plot_df.columns else plot_df.iloc[:, -1]
+    
+    fig.add_trace(go.Scattergl(
+        x=timestamps,
+        y=p_baseline,
+        name="Facility Total Demand (Status Quo)",
+        line=dict(color="#CBD5E1", width=1.5),
+        connectgaps=False,
+        hovertemplate="<b>%{x|%d.%m.%Y %H:%M}</b><br>Facility Demand: <b>%{y:,.1f} kW</b><extra></extra>",
+        showlegend=True
+    ))
+
+    # 2. Sub-Scenario Residual Load Curves
+    for sc in sub_scenarios_timeseries:
+        sc_name = sc.get("name", "Sub-Scenario")
+        sc_color = sc.get("color", "#38BDF8")
+        res_series = sc.get("residual_series")
+        if res_series is not None and len(res_series) == len(df_load):
+            plot_res = res_series.iloc[::step] if hasattr(res_series, "iloc") else res_series[::step]
+            fig.add_trace(go.Scattergl(
+                x=timestamps,
+                y=plot_res,
+                name=f"{sc_name} (Residual Grid)",
+                line=dict(color=sc_color, width=1.8),
+                connectgaps=False,
+                hovertemplate=f"<b>%{{x|%d.%m.%Y %H:%M}}</b><br>{sc_name} (Grid Import): <b>%{{y:,.1f}} kW</b><extra></extra>",
+                showlegend=True
+            ))
+
+    # Optional Grid Limit Line
+    if grid_limit_kw and grid_limit_kw > 0:
+        fig.add_hline(
+            y=grid_limit_kw,
+            line_dash="dot",
+            line_color="#EF4444",
+            line_width=1.5,
+            annotation_text=f"Max Grid Limit: {grid_limit_kw:,.0f} kW",
+            annotation_position="top right",
+            annotation_font=dict(color="#EF4444", size=10)
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text="<b>15-Minute Electrical Grid Dispatch: Facility Demand vs. Sub-Scenario Residual Grid Imports</b>",
+            font=dict(size=14, color="#F8FAFC")
+        ),
+        xaxis=dict(
+            title="Date & Time",
+            rangeslider=dict(visible=True, thickness=0.06),
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=7, label="7D", step="day", stepmode="backward"),
+                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                    dict(count=3, label="3M", step="month", stepmode="backward"),
+                    dict(count=6, label="6M", step="month", stepmode="backward"),
+                    dict(step="all", label="All")
+                ]),
+                bgcolor="#1E293B",
+                activecolor="#2563EB",
+                font=dict(color="#F8FAFC", size=10)
+            ),
+            type="date",
+            gridcolor="#1E293B"
+        ),
+        yaxis=dict(
+            title="Active Power (kW)",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155"
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+            bgcolor="rgba(15, 23, 42, 0.8)",
+            bordercolor="#334155",
+            borderwidth=1,
+            font=dict(size=11)
+        ),
+        margin=dict(l=50, r=30, t=75, b=30),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=480
+    )
+
+    return fig
+

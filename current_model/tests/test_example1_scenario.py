@@ -246,6 +246,37 @@ class TestExample1Scenario(unittest.TestCase):
         self.assertIsNotNone(fig_annual)
         self.assertEqual(len(fig_annual.data), 1)
 
+    def test_residual_grid_load_timeseries_figure(self):
+        """Verify create_residual_grid_load_timeseries_figure renders high-resolution 15-minute dispatch."""
+        from current_model.ui.tab_comparison.charts import create_residual_grid_load_timeseries_figure
+        import pandas as pd
+        import numpy as np
+
+        dates = pd.date_range("2025-01-01 00:00", periods=96 * 7, freq="15min")
+        df_load = pd.DataFrame({
+            "timestamp": dates,
+            "Total_Demand_kW": np.random.uniform(50, 150, len(dates))
+        })
+        sub_ts = [
+            {
+                "name": "Option 1: Solar",
+                "color": "#38BDF8",
+                "residual_series": df_load["Total_Demand_kW"] * 0.6
+            }
+        ]
+
+        fig = create_residual_grid_load_timeseries_figure(
+            df_load=df_load,
+            sub_scenarios_timeseries=sub_ts,
+            power_col="Total_Demand_kW",
+            grid_limit_kw=120.0
+        )
+        self.assertIsNotNone(fig)
+        self.assertEqual(len(fig.data), 2)
+        self.assertEqual(fig.data[0].name, "Facility Total Demand (Status Quo)")
+        self.assertIn("Option 1: Solar", fig.data[1].name)
+
+
     def test_build_scenario_evaluation_records_with_various_subscenarios(self):
         """Verify _build_scenario_evaluation_records handles subscenarios with and without solar without UnboundLocalError."""
         from current_model.ui.tab_comparison.view import _build_scenario_evaluation_records
