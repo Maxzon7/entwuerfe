@@ -160,7 +160,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                     </div>
                 </div>
                 <div style="text-align: right;">
-                    <span style="font-size: 0.95rem; color: #38BDF8; font-weight: 600;">{load_summary['total_mwh']:,.2f} MWh/year</span>
+                    <span style="font-size: 0.95rem; color: #38BDF8; font-weight: 600;">{load_summary['total_kwh']:,.0f} kWh/year</span>
                     <span style="font-size: 0.8rem; color: #94A3B8;"> | Peak: {load_summary['peak_kw']:,.1f} kW | {load_summary['data_points']:,} intervals</span>
                 </div>
             </div>
@@ -587,11 +587,11 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
     # Discontinuity Banner above KPIs if gaps present
     if getattr(kpis, "has_load_gaps", False):
         if getattr(kpis, "gap_handling_mode", "bypass") == "bypass":
-            ann_load_mwh = (kpis.annualized_load_kwh or 0.0) / 1000.0
+            ann_load_kwh = (kpis.annualized_load_kwh or 0.0)
             st.caption(
                 f":material/info: **Discontinuity Reconciliation:** Baseline load contains **{kpis.total_gap_days:.1f} unmonitored days** "
                 f"({kpis.data_coverage_pct:.1f}% measured data availability). Solar generation during interruptions is accounted as grid export. "
-                f"Annualized load equivalent: **{ann_load_mwh:,.1f} MWh/year**."
+                f"Annualized load equivalent: **{ann_load_kwh:,.0f} kWh/year**."
             )
         else:
             st.caption(
@@ -604,16 +604,16 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         render_kpi_card(
             "Self-Consumption Rate",
             f"{kpis.self_consumption_rate_pct:.1f} %",
-            f"{kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.annual_energy_mwh:,.1f} MWh used on-site",
+            f"{kpis.direct_consumption_kwh:,.0f} kWh of {kpis.annual_energy_kwh:,.0f} kWh used on-site",
             status="ok"
         )
     with k2:
         if getattr(kpis, "has_load_gaps", False) and getattr(kpis, "gap_handling_mode", "bypass") == "bypass":
-            sub_k2 = f"Covers {kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.total_load_kwh / 1000.0:,.1f} MWh measured ({kpis.data_coverage_pct:.0f}% coverage)"
+            sub_k2 = f"Covers {kpis.direct_consumption_kwh:,.0f} kWh of {kpis.total_load_kwh:,.0f} kWh measured ({kpis.data_coverage_pct:.0f}% coverage)"
         elif getattr(kpis, "has_load_gaps", False):
-            sub_k2 = f"Covers {kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.total_load_kwh / 1000.0:,.1f} MWh (Imputed)"
+            sub_k2 = f"Covers {kpis.direct_consumption_kwh:,.0f} kWh of {kpis.total_load_kwh:,.0f} kWh (Imputed)"
         else:
-            sub_k2 = f"Covers {kpis.direct_consumption_kwh / 1000.0:,.1f} MWh of {kpis.total_load_kwh / 1000.0:,.1f} MWh facility demand"
+            sub_k2 = f"Covers {kpis.direct_consumption_kwh:,.0f} kWh of {kpis.total_load_kwh:,.0f} kWh facility demand"
 
         render_kpi_card(
             "Autarky / Solar Fraction",
@@ -629,14 +629,14 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
 
         render_kpi_card(
             "PV Surplus / Grid Export",
-            f"{kpis.surplus_generation_kwh / 1000.0:,.1f} MWh",
+            f"{kpis.surplus_generation_kwh:,.0f} kWh",
             sub_k3,
             status="default"
         )
     with k4:
         render_kpi_card(
             "Residual Grid Import",
-            f"{kpis.residual_load_kwh / 1000.0:,.1f} MWh",
+            f"{kpis.residual_load_kwh:,.0f} kWh",
             f"Remaining facility demand purchased from grid",
             status="default"
         )
@@ -656,7 +656,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
         render_kpi_card(
             "Annual Net Energy Coverage",
             f"{net_cov_pct:.1f} %",
-            f"Generation: {kpis.annual_energy_mwh:,.1f} MWh vs. Demand: {kpis.total_load_kwh/1000.0:,.1f} MWh{cov_info}"
+            f"Generation: {kpis.annual_energy_kwh:,.0f} kWh vs. Demand: {kpis.total_load_kwh:,.0f} kWh{cov_info}"
         )
     with s3:
         render_kpi_card(
@@ -877,7 +877,7 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
                             detail_rows.append({
                                 "Year": f"Year {row['year']}",
                                 "Aging / Degradation": f"{row['aging_factor'] * 100.0:.1f} %",
-                                "PV Gen (MWh)": f"{row['generation_mwh']:,.2f}",
+                                "PV Gen (kWh)": f"{row.get('generation_kwh', row.get('generation_mwh', 0.0) * 1000.0):,.0f}",
                                 f"Status Quo Bill ({curr})": f"{row.get('status_quo_bill', 0.0):,.2f}",
                                 f"Residual Bill ({curr})": f"{row.get('residual_bill', 0.0):,.2f}",
                                 f"PV OPEX ({curr})": f"{row.get('opex_annual', 0.0):,.2f}",

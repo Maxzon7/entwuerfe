@@ -222,7 +222,7 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         render_kpi_card(
             "Facility Peak Demand",
             f"{pre_diag['peak_load_kw']:,.1f} kW",
-            f"Annual load: {load_summary['total_mwh']:,.1f} MWh",
+            f"Annual load: {load_summary['total_kwh']:,.0f} kWh",
             status="default"
         )
     with d3:
@@ -654,7 +654,7 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
     violations_eliminated = pre_diag["total_violation_intervals"] - d_after["total_violation_intervals"]
     eliminated_pct = (violations_eliminated / max(1, pre_diag["total_violation_intervals"]) * 100.0) if pre_diag["total_violation_intervals"] > 0 else 100.0
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3 = st.columns(3)
     with m1:
         render_kpi_card(
             "Peak Demand Reduction",
@@ -664,19 +664,12 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         )
     with m2:
         render_kpi_card(
-            "Grid Violations Eliminated",
-            f"{eliminated_pct:.1f} %",
-            f"Remaining violations: {d_after['total_violation_intervals']} intervals ({d_after['total_violation_hours']:.1f} h)",
-            status="ok" if eliminated_pct > 95.0 else ("alert" if d_after["total_violation_intervals"] > 0 else "ok")
-        )
-    with m3:
-        render_kpi_card(
             "Annual Energy Discharged",
-            f"{kpis.total_discharged_kwh / 1000.0:,.2f} MWh",
-            f"Total charged: {kpis.total_charged_kwh / 1000.0:,.2f} MWh",
+            f"{kpis.total_discharged_kwh:,.0f} kWh",
+            f"Total charged: {kpis.total_charged_kwh:,.0f} kWh",
             status="ok"
         )
-    with m4:
+    with m3:
         render_kpi_card(
             "Equivalent Full Cycles",
             f"{kpis.equivalent_full_cycles:.1f} EFC/a",
@@ -684,74 +677,46 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         )
 
     # Secondary row of metrics
-    s1, s2, s3, s4 = st.columns(4)
+    s1, s2, s3 = st.columns(3)
     with s1:
-        render_kpi_card(
-            "Round-Trip Conversion Losses",
-            f"{kpis.round_trip_loss_kwh / 1000.0:,.2f} MWh",
-            f"Efficiency: {updated_bess_cfg.round_trip_efficiency_pct:.1f}% AC/AC"
-        )
-    with s2:
-        render_kpi_card(
-            "Effective Usable Capacity",
-            f"{updated_bess_cfg.effective_usable_kwh:,.1f} kWh",
-            f"Nominal: {updated_bess_cfg.capacity_kwh:,.0f} kWh (DoD: {updated_bess_cfg.max_dod_pct:.0f}%)"
-        )
-    with s3:
         render_kpi_card(
             "Unmet Overload Peak",
             f"{d_after['overload_peak_kw']:,.1f} kW",
-            f"Remaining exceedance energy: {d_after['total_exceedance_energy_mwh']:,.2f} MWh",
+            f"Remaining exceedance energy: {d_after['total_exceedance_energy_kwh']:,.0f} kWh",
             status="alert" if d_after["overload_peak_kw"] > 0 else "ok"
         )
-    with s4:
+    with s2:
         render_kpi_card(
             "Longest Residual Overload",
             f"{d_after['longest_violation_run_hours']:.1f} Hours",
             f"Reduced from {pre_diag['longest_violation_run_hours']:.1f} h (Before BESS)",
             status="ok" if d_after["longest_violation_run_hours"] == 0 else "default"
         )
+    with s3:
+        render_kpi_card(
+            "Round-Trip Conversion Losses",
+            f"{kpis.round_trip_loss_kwh:,.0f} kWh",
+            f"Efficiency: {updated_bess_cfg.round_trip_efficiency_pct:.1f}% AC/AC"
+        )
 
     st.write("")
 
     # --------------------------------------------------------------------------
-    # 6. Interactive Visual Dispatch Analytics (4 Modern Tabs)
+    # 6. Visual 15-Minute Dispatch & Battery SoC Dynamics
     # --------------------------------------------------------------------------
-    st.markdown("##### 4. Visual Dispatch & Battery Dynamics Analysis")
+    st.markdown("##### 4. 15-Minute Peak Shaving Dispatch & Battery State of Charge (SoC)")
+    st.caption(":material/info: *High-resolution 15-minute active power dispatch profile and synchronous battery State of Charge (SoC %) dynamics:*")
 
-    tab_avg_week, tab_ts, tab_monthly = st.tabs([
-        ":material/view_week: Representative Average Week (7-Day Dispatch)",
-        ":material/timeline: 15-Minute Timeseries Dispatch & Battery SoC (Zoomable)",
-        ":material/bar_chart: Monthly Throughput & Cycles"
-    ])
+    fig_ts = create_bess_dispatch_timeseries_figure(
+        df=df_ts,
+        grid_limit_kw=grid_limit_val,
+        target_cap_kw=shaving_cap_kw,
+        capacity_kwh=updated_bess_cfg.capacity_kwh
+    )
+    st.plotly_chart(fig_ts, use_container_width=True)
 
-    with tab_avg_week:
-        st.caption(":material/info: *Continuous 168-hour representative Monday–Sunday profile averaged across the full simulation period, showing peak shaving dispatch and recharging.*")
-        df_avg_week = compute_average_week_dispatch(df_ts, step_hours=load_summary.get("hours_per_step", 0.25))
-        fig_avg = create_average_week_dispatch_figure(
-            df_avg_week=df_avg_week,
-            target_cap_kw=shaving_cap_kw,
-            capacity_kwh=updated_bess_cfg.capacity_kwh
-        )
-        st.plotly_chart(fig_avg, use_container_width=True)
-
-    with tab_ts:
-        st.caption(":material/info: *High-resolution 15-minute interval active power dispatch profile, directly coupled with the battery State of Charge (SoC %) dynamics below:*")
-        fig_ts = create_bess_dispatch_timeseries_figure(
-            df=df_ts,
-            grid_limit_kw=grid_limit_val,
-            target_cap_kw=shaving_cap_kw,
-            capacity_kwh=updated_bess_cfg.capacity_kwh
-        )
-        st.plotly_chart(fig_ts, use_container_width=True)
-
-        fig_soc_dyn = create_bess_soc_analysis_figure(df=df_ts, bess_config=updated_bess_cfg)
-        st.plotly_chart(fig_soc_dyn, use_container_width=True)
-
-    with tab_monthly:
-        st.caption(":material/info: *Monthly discharged energy (MWh) and equivalent full cycle counts over the annual operation cycle.*")
-        fig_monthly = create_monthly_bess_throughput_figure(sim_res.monthly_metrics)
-        st.plotly_chart(fig_monthly, use_container_width=True)
+    fig_soc_dyn = create_bess_soc_analysis_figure(df=df_ts, bess_config=updated_bess_cfg)
+    st.plotly_chart(fig_soc_dyn, use_container_width=True)
 
     # --------------------------------------------------------------------------
     # 7. Itemized Comparison Table (Status Quo vs With BESS)
@@ -784,9 +749,9 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
             },
             {
                 "Metric": "Total Overload Exceedance Energy",
-                "Status Quo (No BESS)": f"{pre_diag['total_exceedance_energy_mwh']:,.2f} MWh",
-                "With BESS": f"{d_after['total_exceedance_energy_mwh']:,.2f} MWh",
-                "Reduction / Delta": f"-{(pre_diag['total_exceedance_energy_mwh'] - d_after['total_exceedance_energy_mwh']):,.2f} MWh"
+                "Status Quo (No BESS)": f"{pre_diag['total_exceedance_energy_kwh']:,.0f} kWh",
+                "With BESS": f"{d_after['total_exceedance_energy_kwh']:,.0f} kWh",
+                "Reduction / Delta": f"-{(pre_diag['total_exceedance_energy_kwh'] - d_after['total_exceedance_energy_kwh']):,.0f} kWh"
             }
         ]
         st.dataframe(pd.DataFrame(comp_rows), use_container_width=True, hide_index=True)

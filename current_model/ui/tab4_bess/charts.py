@@ -778,23 +778,23 @@ def create_seasonal_bess_diurnal_figure(df: pd.DataFrame) -> go.Figure:
 
 def create_monthly_bess_throughput_figure(monthly_rows: List[Dict[str, Any]]) -> go.Figure:
     """
-    Constructs a monthly bar chart of discharged energy (MWh) and equivalent full cycle count.
+    Constructs a monthly bar chart of discharged energy (kWh) and equivalent full cycle count.
     """
     months = [MONTH_NAMES[r["month"] - 1] for r in monthly_rows]
-    dis_mwh = [r["discharged_mwh"] for r in monthly_rows]
+    dis_kwh = [r.get("discharged_kwh", r.get("discharged_mwh", 0.0) * 1000.0) for r in monthly_rows]
     cycles = [r["cycles"] for r in monthly_rows]
     peak_shaved = [r["peak_shaved_kw"] for r in monthly_rows]
 
     fig = go.Figure()
 
-    # Bar: Monthly Discharged Energy (MWh)
+    # Bar: Monthly Discharged Energy (kWh)
     fig.add_trace(
         go.Bar(
-            name="Discharged Energy (MWh)",
+            name="Discharged Energy (kWh)",
             x=months,
-            y=dis_mwh,
+            y=dis_kwh,
             marker_color="#10B981",
-            hovertemplate="<b>%{x}</b> Discharged: <b>%{y:,.1f} MWh</b><extra></extra>"
+            hovertemplate="<b>%{x}</b> Discharged: <b>%{y:,.0f} kWh</b><extra></extra>"
         )
     )
 
@@ -821,7 +821,7 @@ def create_monthly_bess_throughput_figure(monthly_rows: List[Dict[str, Any]]) ->
         ),
         xaxis=dict(gridcolor="#1E293B"),
         yaxis=dict(
-            title="Discharged Energy (MWh)",
+            title="Discharged Energy (kWh)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),

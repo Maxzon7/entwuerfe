@@ -177,9 +177,11 @@ def create_monthly_energy_balance_figure(df: pd.DataFrame, dt_hours: float = 0.2
     months_idx = list(range(1, 13))
     direct_mwh = []
     residual_mwh = []
-    surplus_mwh = []
-    total_load_mwh = []
-    total_solar_mwh = []
+    direct_kwh_list = []
+    residual_kwh_list = []
+    surplus_kwh_list = []
+    total_load_kwh_list = []
+    total_solar_kwh_list = []
     autarky_pct_list = []
     self_cons_pct_list = []
 
@@ -197,11 +199,11 @@ def create_monthly_energy_balance_figure(df: pd.DataFrame, dt_hours: float = 0.2
         else:
             d_kwh, r_kwh, s_kwh, l_kwh, pv_kwh, autarky, self_cons = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
-        direct_mwh.append(d_kwh / 1000.0)
-        residual_mwh.append(r_kwh / 1000.0)
-        surplus_mwh.append(s_kwh / 1000.0)
-        total_load_mwh.append(l_kwh / 1000.0)
-        total_solar_mwh.append(pv_kwh / 1000.0)
+        direct_kwh_list.append(d_kwh)
+        residual_kwh_list.append(r_kwh)
+        surplus_kwh_list.append(s_kwh)
+        total_load_kwh_list.append(l_kwh)
+        total_solar_kwh_list.append(pv_kwh)
         autarky_pct_list.append(autarky)
         self_cons_pct_list.append(self_cons)
 
@@ -212,10 +214,10 @@ def create_monthly_energy_balance_figure(df: pd.DataFrame, dt_hours: float = 0.2
         go.Bar(
             name="Direct Solar in Load",
             x=MONTH_NAMES,
-            y=direct_mwh,
+            y=direct_kwh_list,
             marker_color="#10B981",
             offsetgroup=0,
-            hovertemplate="<b>%{x}</b> - Direct Solar: <b>%{y:,.1f} MWh</b><extra></extra>"
+            hovertemplate="<b>%{x}</b> - Direct Solar: <b>%{y:,.0f} kWh</b><extra></extra>"
         )
     )
 
@@ -224,11 +226,11 @@ def create_monthly_energy_balance_figure(df: pd.DataFrame, dt_hours: float = 0.2
         go.Bar(
             name="Residual Grid Import",
             x=MONTH_NAMES,
-            y=residual_mwh,
+            y=residual_kwh_list,
             marker_color="#38BDF8",
             offsetgroup=0,
-            base=direct_mwh,
-            hovertemplate="<b>%{x}</b> - Residual Grid Import: <b>%{y:,.1f} MWh</b><extra></extra>"
+            base=direct_kwh_list,
+            hovertemplate="<b>%{x}</b> - Residual Grid Import: <b>%{y:,.0f} kWh</b><extra></extra>"
         )
     )
 
@@ -237,11 +239,11 @@ def create_monthly_energy_balance_figure(df: pd.DataFrame, dt_hours: float = 0.2
         go.Bar(
             name="Direct Solar (in PV)",
             x=MONTH_NAMES,
-            y=direct_mwh,
+            y=direct_kwh_list,
             marker_color="#059669",
             offsetgroup=1,
             showlegend=False,
-            hovertemplate="<b>%{x}</b> - Direct Solar: <b>%{y:,.1f} MWh</b><extra></extra>"
+            hovertemplate="<b>%{x}</b> - Direct Solar: <b>%{y:,.0f} kWh</b><extra></extra>"
         )
     )
 
@@ -250,11 +252,11 @@ def create_monthly_energy_balance_figure(df: pd.DataFrame, dt_hours: float = 0.2
         go.Bar(
             name="PV Surplus / Grid Export",
             x=MONTH_NAMES,
-            y=surplus_mwh,
+            y=surplus_kwh_list,
             marker_color="#F59E0B",
             offsetgroup=1,
-            base=direct_mwh,
-            hovertemplate="<b>%{x}</b> - PV Surplus / Export: <b>%{y:,.1f} MWh</b><extra></extra>"
+            base=direct_kwh_list,
+            hovertemplate="<b>%{x}</b> - PV Surplus / Export: <b>%{y:,.0f} kWh</b><extra></extra>"
         )
     )
 
@@ -275,14 +277,14 @@ def create_monthly_energy_balance_figure(df: pd.DataFrame, dt_hours: float = 0.2
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text="<b>Monthly Energy Balance: Facility Load vs. Solar Generation (MWh)</b><br>"
+            text="<b>Monthly Energy Balance: Facility Load vs. Solar Generation (kWh)</b><br>"
                  "<span style='font-size:11px; color:#94A3B8;'>Left bar: Facility Load (Direct Solar + Grid) | Right bar: Solar Generation (Direct Solar + Surplus Export) | Line: Autarky %</span>",
             font=dict(size=14, color="#F8FAFC")
         ),
         barmode="group",
         xaxis=dict(gridcolor="#1E293B"),
         yaxis=dict(
-            title="Energy (MWh)",
+            title="Energy (kWh)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
@@ -428,11 +430,11 @@ def create_energy_flow_sankey_figure(kpis: SolarKPIs) -> go.Figure:
     # 3: Total Facility Demand
     # 4: PV Surplus / Grid Export
     nodes_labels = [
-        f"<b>Solar PV Generation</b><br>{solar_kwh/1000:,.1f} MWh (100%)",
-        f"<b>Grid Electricity</b><br>{residual_kwh/1000:,.1f} MWh ({grid_pct:.1f}% load)",
-        f"<b>Direct Solar Self-Use</b><br>{direct_kwh/1000:,.1f} MWh ({scr_pct:.1f}% PV)",
-        f"<b>Total Facility Demand</b><br>{load_kwh/1000:,.1f} MWh (100%)",
-        f"<b>PV Surplus / Grid Export</b><br>{surplus_kwh/1000:,.1f} MWh ({surplus_pct:.1f}% PV)"
+        f"<b>Solar PV Generation</b><br>{solar_kwh:,.0f} kWh (100%)",
+        f"<b>Grid Electricity</b><br>{residual_kwh:,.0f} kWh ({grid_pct:.1f}% load)",
+        f"<b>Direct Solar Self-Use</b><br>{direct_kwh:,.0f} kWh ({scr_pct:.1f}% PV)",
+        f"<b>Total Facility Demand</b><br>{load_kwh:,.0f} kWh (100%)",
+        f"<b>PV Surplus / Grid Export</b><br>{surplus_kwh:,.0f} kWh ({surplus_pct:.1f}% PV)"
     ]
 
     nodes_colors = [
@@ -446,10 +448,10 @@ def create_energy_flow_sankey_figure(kpis: SolarKPIs) -> go.Figure:
     links_source = [0, 0, 1, 2]
     links_target = [2, 4, 3, 3]
     links_value = [
-        max(0.1, direct_kwh / 1000.0),
-        max(0.1, surplus_kwh / 1000.0),
-        max(0.1, residual_kwh / 1000.0),
-        max(0.1, direct_kwh / 1000.0)
+        max(1.0, direct_kwh),
+        max(1.0, surplus_kwh),
+        max(1.0, residual_kwh),
+        max(1.0, direct_kwh)
     ]
     links_color = [
         "rgba(16, 185, 129, 0.45)",  # Solar to Direct
@@ -495,7 +497,7 @@ def create_energy_flow_sankey_figure(kpis: SolarKPIs) -> go.Figure:
 def create_bess_readiness_figure(df: pd.DataFrame, dt_hours: float = 0.25) -> go.Figure:
     """
     Constructs a BESS storage readiness chart:
-      - Monthly surplus energy available for battery storage (MWh).
+      - Monthly surplus energy available for battery storage (kWh).
       - Peak hourly surplus charging power (kW).
     """
     df_calc = df.copy()
@@ -504,7 +506,7 @@ def create_bess_readiness_figure(df: pd.DataFrame, dt_hours: float = 0.25) -> go
     else:
         df_calc["month"] = 1
 
-    surplus_mwh = []
+    surplus_kwh_list = []
     peak_surplus_kw = []
 
     for m in range(1, 13):
@@ -514,19 +516,19 @@ def create_bess_readiness_figure(df: pd.DataFrame, dt_hours: float = 0.25) -> go
             p_kw = float(m_df["P_Surplus_kW"].max())
         else:
             s_kwh, p_kw = 0.0, 0.0
-        surplus_mwh.append(s_kwh / 1000.0)
+        surplus_kwh_list.append(s_kwh)
         peak_surplus_kw.append(p_kw)
 
     fig = go.Figure()
 
-    # Bar: Monthly Surplus MWh
+    # Bar: Monthly Surplus kWh
     fig.add_trace(
         go.Bar(
-            name="Monthly Surplus Energy (MWh)",
+            name="Monthly Surplus Energy (kWh)",
             x=MONTH_NAMES,
-            y=surplus_mwh,
+            y=surplus_kwh_list,
             marker_color="#F97316",
-            hovertemplate="<b>%{x}</b> Surplus Energy: <b>%{y:,.1f} MWh</b><extra></extra>"
+            hovertemplate="<b>%{x}</b> Surplus Energy: <b>%{y:,.0f} kWh</b><extra></extra>"
         )
     )
 
@@ -553,7 +555,7 @@ def create_bess_readiness_figure(df: pd.DataFrame, dt_hours: float = 0.25) -> go
         ),
         xaxis=dict(gridcolor="#1E293B"),
         yaxis=dict(
-            title="Surplus Energy (MWh)",
+            title="Surplus Energy (kWh)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),

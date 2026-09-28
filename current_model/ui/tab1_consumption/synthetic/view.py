@@ -282,7 +282,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     else:
         k1, k2, k3, k4 = st.columns(4)
         with k1:
-            render_kpi_card("Annual Energy", f"{metrics_year['annual_energy_mwh']:,.2f} MWh", f"{metrics_year['annual_energy_kwh']:,.0f} kWh")
+            render_kpi_card("Annual Energy", f"{metrics_year['annual_energy_kwh']:,.0f} kWh", "Total annual energy demand")
         with k2:
             render_kpi_card("Annual Peak Demand", f"{metrics_year['peak_demand_kw']:.1f} kW", "Max measured power")
         with k3:
@@ -373,7 +373,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
             with o2:
                 render_kpi_card("Annual Overload Duration", f"{overload_hours:,.1f} hrs", f"{(overload_hours / 8760.0 * 100.0):.1f}% of year")
             with o3:
-                render_kpi_card("Annual Overload Energy", f"{overload_kwh:,.0f} kWh", f"{(overload_kwh / 1000.0):.2f} MWh excess")
+                render_kpi_card("Annual Overload Energy", f"{overload_kwh:,.0f} kWh", "Total excess energy over limit")
 
     # 8. Consumer Management Forms (Left: Add, Right: Edit/Delete)
     st.divider()

@@ -278,7 +278,7 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
         render_kpi_card(
             "Levelized Cost (LCOS)",
             f"{fin_metrics.levelized_cost_of_storage_eur_kwh:.3f} {currency}/kWh",
-            f"{fin_metrics.levelized_cost_of_storage_eur_kwh * 1000.0:,.1f} {currency}/MWh throughput",
+            f"Storage cost per kWh discharged",
             status="ok" if fin_metrics.levelized_cost_of_storage_eur_kwh < 0.25 else "default"
         )
 

@@ -114,7 +114,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     # --------------------------------------------------------------------------
     st.markdown(f"### Photovoltaic Solar Generation Simulator")
     st.caption(
-        f"Active Branch: **{active_sub.name}** | Calculate exact electrical solar power (kW) and energy yield (kWh / MWh) based on "
+        f"Active Branch: **{active_sub.name}** | Calculate exact electrical solar power (kW) and energy yield (kWh) based on "
         f"15-minute radiation data, panel count × wattage, cell technologies, mounting area, and inverter efficiency."
     )
 
@@ -397,8 +397,8 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
         with k1:
             render_kpi_card(
                 "Total Annual Yield",
-                f"{kpis.annual_energy_mwh:,.2f} MWh",
-                f"{kpis.annual_energy_kwh:,.0f} kWh total AC generation"
+                f"{kpis.annual_energy_kwh:,.0f} kWh",
+                "Total annual AC electricity generation"
             )
         with k2:
             render_kpi_card(
@@ -456,8 +456,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                 table_rows.append({
                     "Month": m.month_name,
                     "Days": m.days_count,
-                    "Energy (MWh)": f"{m.energy_mwh:,.3f}",
-                    "Energy (kWh)": f"{m.energy_kwh:,.1f}",
+                    "Energy (kWh)": f"{m.energy_kwh:,.0f}",
                     "Specific Yield (kWh/kWp)": f"{m.specific_yield_kwh_kwp:.1f}",
                     "Avg Daily (kWh/d)": f"{m.avg_daily_kwh:,.1f}",
                     "Peak Power (kW)": f"{m.peak_power_kw:,.1f}",
@@ -499,26 +498,26 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
             with r1:
                 render_kpi_card(
                     "P50 Expected Median",
-                    f"{risk['p50_kwh'] / 1000.0:,.2f} MWh/a",
-                    f"{risk['p50_kwh']:,.0f} kWh (50% exceedance baseline)"
+                    f"{risk['p50_kwh']:,.0f} kWh/a",
+                    "50% exceedance baseline"
                 )
             with r2:
                 render_kpi_card(
                     "P90 Debt Financing Limit",
-                    f"{risk['p90_kwh'] / 1000.0:,.2f} MWh/a",
-                    f"{risk['p90_kwh']:,.0f} kWh (90% exceedance bankable)"
+                    f"{risk['p90_kwh']:,.0f} kWh/a",
+                    "90% exceedance bankable"
                 )
             with r3:
                 render_kpi_card(
                     "P95 High Security Limit",
-                    f"{risk['p95_kwh'] / 1000.0:,.2f} MWh/a",
-                    f"{risk['p95_kwh']:,.0f} kWh (95% exceedance conservative)"
+                    f"{risk['p95_kwh']:,.0f} kWh/a",
+                    "95% exceedance conservative"
                 )
             with r4:
                 render_kpi_card(
                     "Historical Volatility Bandwidth",
                     f"{risk['volatility_pct']:.1f} %",
-                    f"Min: {risk['min_kwh']/1000.0:,.1f} MWh | Max: {risk['max_kwh']/1000.0:,.1f} MWh"
+                    f"Min: {risk['min_kwh']:,.0f} kWh | Max: {risk['max_kwh']:,.0f} kWh"
                 )
 
             with st.expander("Historical Multi-Year Generation Breakdown (2015 - 2024)", icon=":material/history:", expanded=False):
@@ -528,7 +527,6 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                     sign_str = "+" if dev_pct > 0 else ""
                     y_rows.append({
                         "Year": y_int,
-                        "Annual AC Generation (MWh)": f"{y_val / 1000.0:,.2f}",
                         "Annual AC Generation (kWh)": f"{y_val:,.0f}",
                         "Specific Yield (kWh/kWp)": f"{y_val / max(0.1, config.dc_capacity_kwp):,.1f}",
                         "Deviation from 10-Year Mean": f"{sign_str}{dev_pct:.1f} %"
@@ -842,7 +840,7 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                     detail_rows.append({
                         "Year": f"Year {row['year']}",
                         "Aging Factor": f"{row['aging_factor'] * 100.0:.2f} %",
-                        "Generation (MWh)": f"{row['generation_mwh']:,.2f}",
+                        "Generation (kWh)": f"{row.get('generation_kwh', row.get('generation_mwh', 0.0) * 1000.0):,.0f}",
                         f"Status Quo Bill ({f_curr})": f"{row['status_quo_bill']:,.2f}",
                         f"Residual Bill ({f_curr})": f"{row['residual_bill']:,.2f}",
                         f"OPEX ({f_curr})": f"{row['opex_annual']:,.2f}",

@@ -111,7 +111,7 @@ def render_tab_dracbv_beta(key_prefix: str = "app_dracbv_beta") -> None:
         render_kpi_card(
             title=":material/analytics: Facility Peak Demand",
             value=f"{peak_kw:.1f} kW",
-            subtext=f"Total: {total_kwh/1000.0:,.0f} MWh/a",
+            subtext=f"Total: {total_kwh:,.0f} kWh/a",
             status="default"
         )
     with col_stat2:

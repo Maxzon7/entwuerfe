@@ -129,27 +129,27 @@ def create_solar_monthly_bar_figure(
     Constructs a monthly energy yield (MWh) and specific yield (kWh/kWp) bar chart.
     """
     months = [m.month_name[:3] for m in monthly_yields]
-    mwh_values = [m.energy_mwh for m in monthly_yields]
+    kwh_values = [m.energy_kwh for m in monthly_yields]
     spec_yields = [m.specific_yield_kwh_kwp for m in monthly_yields]
     cf_values = [m.capacity_factor_pct for m in monthly_yields]
 
     fig = go.Figure()
 
-    # Bar chart for MWh
+    # Bar chart for kWh
     fig.add_trace(
         go.Bar(
             x=months,
-            y=mwh_values,
-            name="Monthly Yield (MWh)",
+            y=kwh_values,
+            name="Monthly Yield (kWh)",
             marker=dict(
-                color=mwh_values,
+                color=kwh_values,
                 colorscale="Viridis",
                 showscale=False,
                 line=dict(color="#0B0F19", width=1)
             ),
             customdata=np.stack((spec_yields, cf_values), axis=-1),
-            hovertemplate="<b>%{x}</b><br>Energy: <b>%{y:.2f} MWh</b><br>Specific Yield: <b>%{customdata[0]:.1f} kWh/kWp</b><br>Capacity Factor: <b>%{customdata[1]:.1f} %</b><extra></extra>",
-            text=[f"{v:.1f}" for v in mwh_values],
+            hovertemplate="<b>%{x}</b><br>Energy: <b>%{y:,.0f} kWh</b><br>Specific Yield: <b>%{customdata[0]:.1f} kWh/kWp</b><br>Capacity Factor: <b>%{customdata[1]:.1f} %</b><extra></extra>",
+            text=[f"{v:,.0f}" for v in kwh_values],
             textposition="outside",
             textfont=dict(size=10, color="#CBD5E1")
         )
@@ -158,12 +158,12 @@ def create_solar_monthly_bar_figure(
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text="<b>Monthly Solar Energy Yield (MWh)</b>",
+            text="<b>Monthly Solar Energy Yield (kWh)</b>",
             font=dict(size=14, color="#F8FAFC")
         ),
         xaxis=dict(gridcolor="#1E293B"),
         yaxis=dict(
-            title="Energy Output (MWh)",
+            title="Energy Output (kWh)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
@@ -284,12 +284,12 @@ def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.F
         "Net AC Energy"
     ]
     y_vals = [
-        pot / 1000.0,
-        -therm / 1000.0,
-        -bos / 1000.0,
-        -inv / 1000.0,
-        -clip / 1000.0,
-        net / 1000.0
+        pot,
+        -therm,
+        -bos,
+        -inv,
+        -clip,
+        net
     ]
 
     fig = go.Figure(
@@ -300,7 +300,7 @@ def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.F
             x=x_labels,
             y=y_vals,
             textposition="outside",
-            text=[f"{v:+,.1f} MWh" if m == "relative" else f"{v:,.1f} MWh" for v, m in zip(y_vals, measures)],
+            text=[f"{v:+,.0f} kWh" if m == "relative" else f"{v:,.0f} kWh" for v, m in zip(y_vals, measures)],
             connector=dict(line=dict(color="#475569")),
             decreasing=dict(marker=dict(color="#EF4444")),
             increasing=dict(marker=dict(color="#10B981")),
@@ -315,7 +315,7 @@ def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.F
             font=dict(size=14, color="#F8FAFC")
         ),
         yaxis=dict(
-            title="Energy (MWh)",
+            title="Energy (kWh)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
@@ -331,7 +331,7 @@ def create_solar_loss_waterfall_figure(loss_breakdown: Dict[str, float]) -> go.F
 
 def create_technology_comparison_figure(tech_items: List[Any]) -> go.Figure:
     """
-    Constructs a comparative grouped bar chart comparing electricity production (MWh)
+    Constructs a comparative grouped bar chart comparing electricity production (kWh)
     across Year 1, Year 5, Year 10, and Year 15 for PERC, TOPCon, and Backcontact.
     """
     years = ["Year 1", "Year 5", "Year 10", "Year 15"]
@@ -344,11 +344,11 @@ def create_technology_comparison_figure(tech_items: List[Any]) -> go.Figure:
     fig = go.Figure()
 
     for item in tech_items:
-        mwh_vals = [
-            item.year_1_kwh / 1000.0,
-            item.year_5_kwh / 1000.0,
-            item.year_10_kwh / 1000.0,
-            item.year_15_kwh / 1000.0
+        kwh_vals = [
+            item.year_1_kwh,
+            item.year_5_kwh,
+            item.year_10_kwh,
+            item.year_15_kwh
         ]
         color = colors.get(item.tech_key, "#F59E0B")
         gain_str = f" (+{item.gain_pct_vs_perc:.1f}%)" if item.gain_pct_vs_perc > 0 else " (Baseline)"
@@ -356,13 +356,13 @@ def create_technology_comparison_figure(tech_items: List[Any]) -> go.Figure:
         fig.add_trace(
             go.Bar(
                 x=years,
-                y=mwh_vals,
+                y=kwh_vals,
                 name=f"{item.tech_key} ({item.module_power_wp:.0f} Wp){gain_str}",
                 marker=dict(color=color),
-                text=[f"{v:,.1f} MWh" for v in mwh_vals],
+                text=[f"{v:,.0f} kWh" for v in kwh_vals],
                 textposition="outside",
                 textfont=dict(size=10, color="#CBD5E1"),
-                hovertemplate=f"<b>{item.tech_name}</b><br>%{{x}}: <b>%{{y:,.1f}} MWh</b><extra></extra>"
+                hovertemplate=f"<b>{item.tech_name}</b><br>%{{x}}: <b>%{{y:,.0f}} kWh</b><extra></extra>"
             )
         )
 
@@ -375,7 +375,7 @@ def create_technology_comparison_figure(tech_items: List[Any]) -> go.Figure:
         barmode="group",
         xaxis=dict(gridcolor="#1E293B"),
         yaxis=dict(
-            title="Annual Electricity Yield (MWh)",
+            title="Annual Electricity Yield (kWh)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),

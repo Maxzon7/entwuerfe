@@ -606,7 +606,7 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                     Root Baseline &mdash; 100% Utility Grid Supply (0 on-site generation / 0 BESS)
                 </div>
                 <div style="font-size:0.82rem; color:#CBD5E1; line-height:1.7; margin-bottom:12px;">
-                    <div><b>Facility Load:</b> <span style="color:#F8FAFC;">{load_name} ({base_rec.get('total_load_mwh', 0):,.1f} MWh/a | Peak: {base_rec.get('baseline_peak_kw', 0):,.1f} kW)</span></div>
+                    <div><b>Facility Load:</b> <span style="color:#F8FAFC;">{load_name} ({base_rec.get('total_load_mwh', 0) * 1000.0:,.0f} kWh/a | Peak: {base_rec.get('baseline_peak_kw', 0):,.1f} kW)</span></div>
                     <div><b>Supply Contract:</b> <span style="color:#F8FAFC;">{c_name} ({project.currency or 'EUR'})</span></div>
                     <div><b>On-Site Assets:</b> <span style="color:#94A3B8;">None (Grid Only)</span></div>
                 </div>
@@ -1298,7 +1298,7 @@ def _render_economic_simulation_and_cashflow_schedules(
                 "4. Net Annual Cash Flow (Financial Benefit vs. Status Quo)",
                 "5. Cumulative Project Cash Flow (Amortization Trajectory)",
                 "6. Discounted Annual Cash Flow (NPV Contribution)",
-                "7. Normalized 12-Month Residual Grid Import (MWh)"
+                "7. Normalized 12-Month Residual Grid Import (kWh)"
             ],
             key=f"{key_prefix}_metric_choice"
         )
@@ -1309,18 +1309,18 @@ def _render_economic_simulation_and_cashflow_schedules(
             month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
             for m_idx, m_name in enumerate(month_names):
                 m_row = {"Period / Month": m_name}
-                base_m_val = base_rec.get("monthly_load_mwh", [0]*12)[m_idx] if base_rec.get("monthly_load_mwh") else 0.0
-                m_row[f"{base_rec['name']} (MWh)"] = f"{base_m_val:,.1f}"
+                base_m_val = (base_rec.get("monthly_load_mwh", [0]*12)[m_idx] if base_rec.get("monthly_load_mwh") else 0.0) * 1000.0
+                m_row[f"{base_rec['name']} (kWh)"] = f"{base_m_val:,.0f}"
 
                 best_avoided = 0.0
                 for sub in sub_recs:
-                    sub_m_val = sub.get("monthly_residual_mwh", [base_m_val]*12)[m_idx] if sub.get("monthly_residual_mwh") else base_m_val
-                    m_row[f"{sub['name']} (MWh)"] = f"{sub_m_val:,.1f}"
+                    sub_m_val = (sub.get("monthly_residual_mwh", [base_m_val/1000.0]*12)[m_idx] if sub.get("monthly_residual_mwh") else base_m_val/1000.0) * 1000.0
+                    m_row[f"{sub['name']} (kWh)"] = f"{sub_m_val:,.0f}"
                     avoided = max(0.0, base_m_val - sub_m_val)
                     if avoided > best_avoided:
                         best_avoided = avoided
 
-                m_row["Max Clean Energy Avoided (MWh)"] = f"+{best_avoided:,.1f} MWh"
+                m_row["Max Clean Energy Avoided (kWh)"] = f"+{best_avoided:,.0f} kWh"
                 matrix_rows.append(m_row)
 
         else:
@@ -1456,7 +1456,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
         <div style="background: rgba(30, 41, 59, 0.45); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 8px; padding: 10px 16px; margin: 4px 0 16px 0; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;">
             <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <span style="color: #60A5FA; font-weight: 700; font-size: 0.82rem;">GLOBAL BASELINE:</span>
-                <span style="color: #CBD5E1; font-size: 0.82rem;"><b>Consumption:</b> {c_load_name} ({base_rec.get('total_load_mwh', 0):,.1f} MWh/a)</span>
+                <span style="color: #CBD5E1; font-size: 0.82rem;"><b>Consumption:</b> {c_load_name} ({base_rec.get('total_load_mwh', 0) * 1000.0:,.0f} kWh/a)</span>
                 <span style="color: #64748B;">|</span>
                 <span style="color: #CBD5E1; font-size: 0.82rem;"><b>Status Quo Contract:</b> {c_contract_name} ({base_annual_cost:,.0f} {currency}/a)</span>
             </div>
@@ -1911,12 +1911,12 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
         with ek1:
             render_kpi_card(
                 title="Facility Baseline Demand",
-                value=f"{base_rec.get('total_load_mwh', 0):,.1f} MWh/a",
+                value=f"{base_rec.get('total_load_mwh', 0) * 1000.0:,.0f} kWh/a",
                 subtext=f"Peak: {base_rec.get('baseline_peak_kw', 0):,.1f} kW",
                 status="default"
             )
         with ek2:
-            val_str = f"{max_gen['generation_mwh']:,.1f} MWh/a" if (max_gen and max_gen['generation_mwh'] > 0) else "0.0 MWh/a"
+            val_str = f"{max_gen['generation_mwh'] * 1000.0:,.0f} kWh/a" if (max_gen and max_gen['generation_mwh'] > 0) else "0 kWh/a"
             sub_str = f"Leader: {max_gen['name']}" if (max_gen and max_gen['generation_mwh'] > 0) else "No solar generation active"
             render_kpi_card(
                 title="Highest Clean Generation",
@@ -1947,19 +1947,19 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
 
         # 2. Multi-Scenario Electrical Flow Comparison Table
         st.markdown("### :material/table_rows: Multi-Scenario Electrical Flow Comparison Table")
-        st.caption("Comprehensive physical energy balance comparing annual MWh generation, on-site utilization, residual grid imports, and carbon mitigation:")
+        st.caption("Comprehensive physical energy balance comparing annual kWh generation, on-site utilization, residual grid imports, and carbon mitigation:")
 
         df_elec = pd.DataFrame([
             {
                 "Rank": r["rank"],
                 "Scenario Name": r["name"],
                 "Tech Mix": r["tech_mix"],
-                "Total Demand (MWh)": f"{r['total_load_mwh']:,.1f}",
-                "Solar Gen (MWh)": f"{r['generation_mwh']:,.1f}" if r['generation_mwh'] > 0 else "-",
-                "Direct Cons (MWh)": f"{r['direct_consumption_mwh']:,.1f}" if r['direct_consumption_mwh'] > 0 else "-",
+                "Total Demand (kWh)": f"{r['total_load_mwh'] * 1000.0:,.0f}",
+                "Solar Gen (kWh)": f"{r['generation_mwh'] * 1000.0:,.0f}" if r['generation_mwh'] > 0 else "-",
+                "Direct Cons (kWh)": f"{r['direct_consumption_mwh'] * 1000.0:,.0f}" if r['direct_consumption_mwh'] > 0 else "-",
                 "Self-Cons (%)": r["self_consumption_str"],
-                "Residual Grid (MWh)": f"{r['residual_grid_mwh']:,.1f}",
-                "Surplus Export (MWh)": f"{r['surplus_export_mwh']:,.1f}" if r['surplus_export_mwh'] > 0 else "-",
+                "Residual Grid (kWh)": f"{r['residual_grid_mwh'] * 1000.0:,.0f}",
+                "Surplus Export (kWh)": f"{r['surplus_export_mwh'] * 1000.0:,.0f}" if r['surplus_export_mwh'] > 0 else "-",
                 "Autarky (%)": r["autarky_str"],
                 "Peak Shaved (kW)": f"-{r['shaved_peak_kw']:.1f} kW" if r['shaved_peak_kw'] > 0 else "-",
                 "CO₂ Offset (t/a)": f"{r['co2_avoided_tons']:,.1f} t" if r['co2_avoided_tons'] > 0 else "-"
@@ -1977,7 +1977,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
 
         # 3. Interactive Electrical Charts
         e_tab1, e_tab2, e_tab3 = st.tabs([
-            ":material/compare: Residual Grid Load vs. Facility Demand (MWh)",
+            ":material/compare: Residual Grid Load vs. Facility Demand (kWh)",
             ":material/bar_chart: Full Energy Balance (All 5 Flows)",
             ":material/grid_view: Peak Demand Shaving & Environmental Impact"
         ])
@@ -1992,7 +1992,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                     options=[
                         "Monthly Trajectory (Jan – Dec Curves)",
                         "Monthly Grouped (Jan – Dec Bars)",
-                        "Annual Totals Benchmark (MWh/Year)",
+                        "Annual Totals Benchmark (kWh/Year)",
                         "15-Min Detailed Timeseries (Full Timeline Dispatch)"
                     ],
                     index=0,
