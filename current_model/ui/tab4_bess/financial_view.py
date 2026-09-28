@@ -111,24 +111,24 @@ def render_tab4_2_financial(key_prefix: str = "tab4_fin") -> None:
     # --------------------------------------------------------------------------
     with st.expander("Investment & Economic Assumptions Configuration", icon=":material/tune:", expanded=True):
         with st.form(key=f"{key_prefix}_fin_form"):
+            curr_label = active_contract.currency if active_contract and active_contract.currency else "EUR"
+            is_high_denom = curr_label.upper() in ["ARS", "CLP", "COP", "JPY", "KRW", "VND", "IDR"]
             col_f1, col_f2, col_f3, col_f4 = st.columns(4)
             with col_f1:
                 cost_per_kwh = st.number_input(
-                    "Specific Battery Cost (€/kWh):",
-                    min_value=50.0,
-                    max_value=3000.0,
+                    f"Specific Battery Cost ({curr_label}/kWh):",
+                    min_value=0.0,
                     value=float(bess_cfg.cost_per_kwh),
-                    step=25.0,
-                    help="Turn-key hardware cost per usable/nominal kWh of battery storage."
+                    step=1000.0 if is_high_denom else 25.0,
+                    help=f"Turn-key hardware cost per usable/nominal kWh of battery storage (e.g. 450 €/kWh or 450,000 {curr_label}/kWh)."
                 )
             with col_f2:
                 fixed_fee = st.number_input(
-                    "Fixed BOS & Grid Fee (€):",
+                    f"Fixed BOS & Grid Fee ({curr_label}):",
                     min_value=0.0,
-                    max_value=200000.0,
                     value=float(bess_cfg.fixed_installation_cost),
-                    step=500.0,
-                    help="Fixed project fee including engineering, switchgear, and grid certification."
+                    step=50000.0 if is_high_denom else 500.0,
+                    help=f"Fixed project fee including engineering, switchgear, and grid certification (e.g. 5,000 € or 5,000,000 {curr_label})."
                 )
             with col_f3:
                 annual_om_pct = st.number_input(

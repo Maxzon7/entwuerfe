@@ -621,24 +621,24 @@ def render_solar_config_form(
             fin_feed = getattr(existing_fin, "feed_in_tariff_per_kwh", 0.06)
 
             fc1, fc2, fc3 = st.columns(3)
+            is_high_denom = inp_curr.upper() in ["ARS", "CLP", "COP", "JPY", "KRW", "VND", "IDR"] if 'inp_curr' in locals() else (fin_curr.upper() in ["ARS", "CLP", "COP", "JPY", "KRW", "VND", "IDR"])
             with fc1:
                 inp_curr = st.text_input("Currency Code / Symbol:", value=fin_curr, key=f"{key_prefix}_fin_curr")
                 inp_mod_wp = st.number_input(
                     f"Solar Modules ({inp_curr}/Wp):",
                     min_value=0.0,
-                    max_value=10.0,
-                    value=float(fin_mod_wp if fin_mod_wp is not None else 1.00),
-                    step=0.05,
+                    value=float(fin_mod_wp if fin_mod_wp is not None else (340.0 if inp_curr.upper() == "ARS" else 1.00)),
+                    step=1.0 if is_high_denom else 0.05,
                     format="%.2f",
-                    help="Turn-key cost per Watt-peak for modules (e.g. 1.00 €/Wp).",
+                    help=f"Turn-key cost per Watt-peak for modules (e.g. 1.00 €/Wp or 340 {inp_curr}/Wp).",
                     key=f"{key_prefix}_fin_mod_wp"
                 )
                 inp_switch = st.number_input(
                     f"Switchgear Cabinet ({inp_curr}):",
                     min_value=0.0,
                     value=float(fin_switch),
-                    step=250.0,
-                    help="Fixed meter and switchgear cabinet fee (e.g. 2,500 €).",
+                    step=50000.0 if is_high_denom else 250.0,
+                    help=f"Fixed meter and switchgear cabinet fee (e.g. 2,500 € or 5,000,000 {inp_curr}).",
                     key=f"{key_prefix}_fin_switch"
                 )
 
@@ -646,29 +646,27 @@ def render_solar_config_form(
                 inp_inv_w = st.number_input(
                     f"Inverter AC Power ({inp_curr}/W AC):",
                     min_value=0.0,
-                    max_value=2.0,
-                    value=float(fin_inv_w if fin_inv_w is not None else 0.07),
-                    step=0.01,
+                    value=float(fin_inv_w if fin_inv_w is not None else (70.0 if inp_curr.upper() == "ARS" else 0.07)),
+                    step=1.0 if is_high_denom else 0.01,
                     format="%.2f",
-                    help="Cost per Watt AC for inverters (e.g. 0.07 €/W = 70 €/kW).",
+                    help=f"Cost per Watt AC for inverters (e.g. 0.07 €/W or 70 {inp_curr}/W AC).",
                     key=f"{key_prefix}_fin_inv_w"
                 )
                 inp_sub_wp = st.number_input(
                     f"Substructure / Racking ({inp_curr}/Wp):",
                     min_value=0.0,
-                    max_value=5.0,
-                    value=float(fin_sub_wp if fin_sub_wp is not None else 0.15),
-                    step=0.01,
+                    value=float(fin_sub_wp if fin_sub_wp is not None else (150.0 if inp_curr.upper() == "ARS" else 0.15)),
+                    step=1.0 if is_high_denom else 0.01,
                     format="%.2f",
-                    help="Mounting racks, substructure & trackers (e.g. 0.15 €/Wp).",
+                    help=f"Mounting racks, substructure & trackers (e.g. 0.15 €/Wp or 150 {inp_curr}/Wp).",
                     key=f"{key_prefix}_fin_sub_wp"
                 )
                 inp_travel = st.number_input(
                     f"Mobilization Fee ({inp_curr}):",
                     min_value=0.0,
                     value=float(fin_travel),
-                    step=100.0,
-                    help="Fixed site mobilization & travel charge (e.g. 1,000 €).",
+                    step=50000.0 if is_high_denom else 100.0,
+                    help=f"Fixed site mobilization & travel charge (e.g. 1,000 € or 1,000,000 {inp_curr}).",
                     key=f"{key_prefix}_fin_travel"
                 )
 
@@ -676,11 +674,10 @@ def render_solar_config_form(
                 inp_inst_wp = st.number_input(
                     f"Installation & AC Connect ({inp_curr}/Wp):",
                     min_value=0.0,
-                    max_value=5.0,
-                    value=float(fin_inst_wp if fin_inst_wp is not None else 0.35),
-                    step=0.01,
+                    value=float(fin_inst_wp if fin_inst_wp is not None else (350.0 if inp_curr.upper() == "ARS" else 0.35)),
+                    step=1.0 if is_high_denom else 0.01,
                     format="%.2f",
-                    help="Electrical wiring, assembly and certification (e.g. 0.35 €/Wp).",
+                    help=f"Electrical wiring, assembly and certification (e.g. 0.35 €/Wp or 350 {inp_curr}/Wp).",
                     key=f"{key_prefix}_fin_inst_wp"
                 )
                 inp_opex = st.number_input(

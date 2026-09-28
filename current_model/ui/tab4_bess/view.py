@@ -313,8 +313,20 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
             active_sub.bess_config = bench_cfg
             active_sub.include_bess = True
             st.session_state["project_container"] = project
-            if state_res_key in st.session_state:
-                del st.session_state[state_res_key]
+            for k in [
+                f"{key_prefix}_unit_count",
+                f"{key_prefix}_unit_kwh",
+                f"{key_prefix}_dis_kw",
+                f"{key_prefix}_chg_kw",
+                f"{key_prefix}_rte_pct",
+                f"{key_prefix}_soc_min",
+                f"{key_prefix}_soc_max",
+                f"{key_prefix}_init_soc",
+                f"{key_prefix}_shaving_cap_kw",
+                f"{key_prefix}_recharge_mode",
+            ]:
+                if k in st.session_state:
+                    del st.session_state[k]
             st.rerun()
 
     with act_col2:
@@ -325,6 +337,20 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
             help="Resets all BESS inputs back to empty state and removes BESS from this branch."
         ):
             active_sub.remove_component("bess")
+            for k in [
+                f"{key_prefix}_unit_count",
+                f"{key_prefix}_unit_kwh",
+                f"{key_prefix}_dis_kw",
+                f"{key_prefix}_chg_kw",
+                f"{key_prefix}_rte_pct",
+                f"{key_prefix}_soc_min",
+                f"{key_prefix}_soc_max",
+                f"{key_prefix}_init_soc",
+                f"{key_prefix}_shaving_cap_kw",
+                f"{key_prefix}_recharge_mode",
+            ]:
+                if k in st.session_state:
+                    del st.session_state[k]
             st.session_state["project_container"] = project
             sync_active_scenario_into_session(project, auto_execute=False)
             st.rerun()
@@ -349,6 +375,20 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
         st.session_state["project_container"] = project
         if state_res_key in st.session_state:
             del st.session_state[state_res_key]
+        for k in [
+            f"{key_prefix}_unit_count",
+            f"{key_prefix}_unit_kwh",
+            f"{key_prefix}_dis_kw",
+            f"{key_prefix}_chg_kw",
+            f"{key_prefix}_rte_pct",
+            f"{key_prefix}_soc_min",
+            f"{key_prefix}_soc_max",
+            f"{key_prefix}_init_soc",
+            f"{key_prefix}_shaving_cap_kw",
+            f"{key_prefix}_recharge_mode",
+        ]:
+            if k in st.session_state:
+                del st.session_state[k]
         st.rerun()
 
     # --------------------------------------------------------------------------
@@ -374,7 +414,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=100,
                 value=int(def_u_cnt),
                 step=1,
-                help="Modular battery cabinet / rack units."
+                help="Modular battery cabinet / rack units.",
+                key=f"{key_prefix}_unit_count"
             )
 
         with col_c2:
@@ -384,7 +425,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=5000.0,
                 value=float(def_u_kwh),
                 step=10.0,
-                help="Nominal energy rating per individual battery unit."
+                help="Nominal energy rating per individual battery unit.",
+                key=f"{key_prefix}_unit_kwh"
             )
 
         calc_nom_kwh = float(unit_count * unit_kwh)
@@ -406,7 +448,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=50000.0,
                 value=float(curr_bess_cfg.max_discharge_power_kw),
                 step=10.0,
-                help="Total maximum continuous discharge power for the ENTIRE BESS system (inverter/grid connection across all battery units combined, NOT per individual battery unit)."
+                help="Total maximum continuous discharge power for the ENTIRE BESS system (inverter/grid connection across all battery units combined, NOT per individual battery unit).",
+                key=f"{key_prefix}_dis_kw"
             )
 
         with col_p2:
@@ -416,7 +459,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=50000.0,
                 value=float(curr_bess_cfg.max_charge_power_kw),
                 step=10.0,
-                help="Total maximum continuous charge power for the ENTIRE BESS system from grid headroom (across all battery units combined, NOT per individual battery unit)."
+                help="Total maximum continuous charge power for the ENTIRE BESS system from grid headroom (across all battery units combined, NOT per individual battery unit).",
+                key=f"{key_prefix}_chg_kw"
             )
 
         with col_p3:
@@ -434,7 +478,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=99.0,
                 value=float(curr_bess_cfg.round_trip_efficiency_pct),
                 step=1.0,
-                help="Combined conversion efficiency (including inverter, cabling, and battery cell losses) for the entire storage installation."
+                help="Combined conversion efficiency (including inverter, cabling, and battery cell losses) for the entire storage installation.",
+                key=f"{key_prefix}_rte_pct"
             )
 
         # Section C: Safe SoC Envelope & Dispatch Target
@@ -448,7 +493,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=50.0,
                 value=float(curr_bess_cfg.soc_min_pct),
                 step=5.0,
-                help="Reserve margin to prevent deep discharge degradation."
+                help="Reserve margin to prevent deep discharge degradation.",
+                key=f"{key_prefix}_soc_min"
             )
 
         with col_s2:
@@ -458,7 +504,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=100.0,
                 value=float(curr_bess_cfg.soc_max_pct),
                 step=5.0,
-                help="Upper charge limit to avoid overvoltage stress."
+                help="Upper charge limit to avoid overvoltage stress.",
+                key=f"{key_prefix}_soc_max"
             )
 
         with col_s3:
@@ -467,7 +514,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 min_value=0.0,
                 max_value=100.0,
                 value=float(curr_bess_cfg.initial_soc_pct),
-                step=5.0
+                step=5.0,
+                key=f"{key_prefix}_init_soc"
             )
 
         with col_s4:
@@ -488,7 +536,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 max_value=100000.0,
                 value=def_shave_val,
                 step=10.0,
-                help="The battery will discharge to ensure net grid import never exceeds this threshold (defaults to your Grid Connection Limit)."
+                help="The battery will discharge to ensure net grid import never exceeds this threshold (defaults to your Grid Connection Limit).",
+                key=f"{key_prefix}_shaving_cap_kw"
             )
 
         recharge_options = [
@@ -503,7 +552,8 @@ def render_tab4_1_technical(key_prefix: str = "tab4_bess") -> None:
                 "Recharge Strategy:",
                 options=recharge_options,
                 index=recharge_idx,
-                help="Defines when the battery is allowed to draw power from the grid to replenish its charge."
+                help="Defines when the battery is allowed to draw power from the grid to replenish its charge.",
+                key=f"{key_prefix}_recharge_mode"
             )
 
         # Action Button (Inside st.form)

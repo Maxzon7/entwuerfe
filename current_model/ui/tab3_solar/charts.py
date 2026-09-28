@@ -902,7 +902,7 @@ def create_unified_amortisation_master_figure(
         line_color="#64748B",
         line_width=1.2,
         line_dash="dash",
-        annotation_text="Break-Even (0 €)",
+        annotation_text=f"Break-Even (0 {currency})",
         annotation_position="bottom right",
         annotation_font=dict(color="#94A3B8", size=9.5),
         row=2, col=1
@@ -949,7 +949,7 @@ def create_unified_amortisation_master_figure(
             x=0.5,
             font=dict(size=10.5)
         ),
-        margin=dict(l=40, r=25, t=55, b=35),
+        margin=dict(l=65, r=25, t=55, b=35),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
         height=560

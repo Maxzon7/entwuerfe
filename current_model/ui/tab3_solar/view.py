@@ -192,9 +192,6 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     current_cfg: Optional[SolarPVConfig] = st.session_state.get(state_cfg_key) or active_sub.solar_config
     if current_cfg is not None and (not hasattr(current_cfg, "technology_preset") or not hasattr(current_cfg, "weather_mode")):
         current_cfg = None
-        if state_res_key in st.session_state:
-            del st.session_state[state_res_key]
-
     current_fin: Optional[SolarFinancialConfig] = st.session_state.get(f"{key_prefix}_fin_config") or active_sub.solar_financial or st.session_state.get("solar_financial_config")
 
     config, fin_config, submitted = render_solar_config_form(
@@ -203,6 +200,21 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
         current_fin_config=current_fin,
         key_prefix=f"{key_prefix}_form"
     )
+
+    if submitted:
+        # Clear tuner widget keys to prevent stale widget state conflicts
+        for k in [
+            f"{key_prefix}_tab_fin_mod",
+            f"{key_prefix}_tab_fin_inv",
+            f"{key_prefix}_tab_fin_sub",
+            f"{key_prefix}_tab_fin_inst",
+            f"{key_prefix}_tab_fin_switch",
+            f"{key_prefix}_tab_fin_travel",
+            f"{key_prefix}_tab_fin_opex",
+            f"{key_prefix}_tab_fin_disc",
+        ]:
+            if k in st.session_state:
+                del st.session_state[k]
 
     st.session_state[state_cfg_key] = config
     st.session_state[f"{key_prefix}_fin_config"] = fin_config
@@ -579,88 +591,86 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
             # Quick Turn-Key Cost & CAPEX Tuner Expander
             with st.expander(":material/tune: Quick Turn-Key Cost & Financial Parameter Tuner (Live Recalculation)", expanded=False):
                 st.caption("Fine-tune individual investment rates and capital interest without re-running physical weather simulation:")
-                tf_c1, tf_c2, tf_c3, tf_c4 = st.columns(4)
-                with tf_c1:
-                    t_mod = st.number_input(
-                        f"Modules ({f_curr}/Wp):",
-                        min_value=0.0,
-                        max_value=10.0,
-                        value=float(active_fin.cost_modules_per_wp if active_fin.cost_modules_per_wp is not None else 1.00),
-                        step=0.05,
-                        format="%.2f",
-                        key=f"{key_prefix}_tab_fin_mod"
-                    )
-                    t_inv = st.number_input(
-                        f"Inverter ({f_curr}/W AC):",
-                        min_value=0.0,
-                        max_value=2.0,
-                        value=float(active_fin.cost_inverter_per_w if active_fin.cost_inverter_per_w is not None else 0.07),
-                        step=0.01,
-                        format="%.2f",
-                        key=f"{key_prefix}_tab_fin_inv"
-                    )
-                with tf_c2:
-                    t_sub = st.number_input(
-                        f"Substructure ({f_curr}/Wp):",
-                        min_value=0.0,
-                        max_value=5.0,
-                        value=float(active_fin.cost_substructure_per_wp if active_fin.cost_substructure_per_wp is not None else 0.15),
-                        step=0.01,
-                        format="%.2f",
-                        key=f"{key_prefix}_tab_fin_sub"
-                    )
-                    t_inst = st.number_input(
-                        f"Installation ({f_curr}/Wp):",
-                        min_value=0.0,
-                        max_value=5.0,
-                        value=float(active_fin.cost_installation_per_wp if active_fin.cost_installation_per_wp is not None else 0.35),
-                        step=0.01,
-                        format="%.2f",
-                        key=f"{key_prefix}_tab_fin_inst"
-                    )
-                with tf_c3:
-                    t_switch = st.number_input(
-                        f"Switchgear Cabinet ({f_curr}):",
-                        min_value=0.0,
-                        value=float(active_fin.fixed_switchgear_cost or 0.0),
-                        step=250.0,
-                        key=f"{key_prefix}_tab_fin_switch"
-                    )
-                    t_travel = st.number_input(
-                        f"Mobilization Fee ({f_curr}):",
-                        min_value=0.0,
-                        value=float(active_fin.fixed_travel_fee or 0.0),
-                        step=100.0,
-                        key=f"{key_prefix}_tab_fin_travel"
-                    )
-                with tf_c4:
-                    t_opex = st.number_input(
-                        "Annual O&M (%/a):",
-                        min_value=0.0,
-                        max_value=10.0,
-                        value=float(active_fin.annual_opex_pct if active_fin.annual_opex_pct is not None else 1.0),
-                        step=0.1,
-                        format="%.1f",
-                        key=f"{key_prefix}_tab_fin_opex"
-                    )
-                    t_disc = st.number_input(
-                        "Discount Rate (%):",
-                        min_value=0.0,
-                        max_value=20.0,
-                        value=float(active_fin.discount_rate_pct if active_fin.discount_rate_pct is not None else 5.0),
-                        step=0.5,
-                        format="%.1f",
-                        key=f"{key_prefix}_tab_fin_disc"
+                with st.form(key=f"{key_prefix}_quick_fin_tuner_form"):
+                    tf_c1, tf_c2, tf_c3, tf_c4 = st.columns(4)
+                    is_high_denom = f_curr.upper() in ["ARS", "CLP", "COP", "JPY", "KRW", "VND", "IDR"]
+                    with tf_c1:
+                        t_mod = st.number_input(
+                            f"Modules ({f_curr}/Wp):",
+                            min_value=0.0,
+                            value=float(active_fin.cost_modules_per_wp if active_fin.cost_modules_per_wp is not None else (340.0 if is_high_denom else 1.00)),
+                            step=1.0 if is_high_denom else 0.05,
+                            format="%.2f",
+                            key=f"{key_prefix}_tab_fin_mod"
+                        )
+                        t_inv = st.number_input(
+                            f"Inverter ({f_curr}/W AC):",
+                            min_value=0.0,
+                            value=float(active_fin.cost_inverter_per_w if active_fin.cost_inverter_per_w is not None else (70.0 if is_high_denom else 0.07)),
+                            step=1.0 if is_high_denom else 0.01,
+                            format="%.2f",
+                            key=f"{key_prefix}_tab_fin_inv"
+                        )
+                    with tf_c2:
+                        t_sub = st.number_input(
+                            f"Substructure ({f_curr}/Wp):",
+                            min_value=0.0,
+                            value=float(active_fin.cost_substructure_per_wp if active_fin.cost_substructure_per_wp is not None else (150.0 if is_high_denom else 0.15)),
+                            step=1.0 if is_high_denom else 0.01,
+                            format="%.2f",
+                            key=f"{key_prefix}_tab_fin_sub"
+                        )
+                        t_inst = st.number_input(
+                            f"Installation ({f_curr}/Wp):",
+                            min_value=0.0,
+                            value=float(active_fin.cost_installation_per_wp if active_fin.cost_installation_per_wp is not None else (350.0 if is_high_denom else 0.35)),
+                            step=1.0 if is_high_denom else 0.01,
+                            format="%.2f",
+                            key=f"{key_prefix}_tab_fin_inst"
+                        )
+                    with tf_c3:
+                        t_switch = st.number_input(
+                            f"Switchgear Cabinet ({f_curr}):",
+                            min_value=0.0,
+                            value=float(active_fin.fixed_switchgear_cost or 0.0),
+                            step=50000.0 if is_high_denom else 250.0,
+                            key=f"{key_prefix}_tab_fin_switch"
+                        )
+                        t_travel = st.number_input(
+                            f"Mobilization Fee ({f_curr}):",
+                            min_value=0.0,
+                            value=float(active_fin.fixed_travel_fee or 0.0),
+                            step=50000.0 if is_high_denom else 100.0,
+                            key=f"{key_prefix}_tab_fin_travel"
+                        )
+                    with tf_c4:
+                        t_opex = st.number_input(
+                            "Annual O&M (%/a):",
+                            min_value=0.0,
+                            max_value=10.0,
+                            value=float(active_fin.annual_opex_pct if active_fin.annual_opex_pct is not None else 1.0),
+                            step=0.1,
+                            format="%.1f",
+                            key=f"{key_prefix}_tab_fin_opex"
+                        )
+                        t_disc = st.number_input(
+                            "Discount Rate (%):",
+                            min_value=0.0,
+                            max_value=20.0,
+                            value=float(active_fin.discount_rate_pct if active_fin.discount_rate_pct is not None else 5.0),
+                            step=0.5,
+                            format="%.1f",
+                            key=f"{key_prefix}_tab_fin_disc"
+                        )
+
+                    tuner_submitted = st.form_submit_button(
+                        "Update & Recalculate Turn-Key Financials",
+                        icon=":material/refresh:",
+                        type="primary",
+                        use_container_width=True
                     )
 
-                if (abs(t_mod - float(active_fin.cost_modules_per_wp or 0.0)) > 0.001 or
-                    abs(t_inv - float(active_fin.cost_inverter_per_w or 0.0)) > 0.001 or
-                    abs(t_sub - float(active_fin.cost_substructure_per_wp or 0.0)) > 0.001 or
-                    abs(t_inst - float(active_fin.cost_installation_per_wp or 0.0)) > 0.001 or
-                    abs(t_switch - float(active_fin.fixed_switchgear_cost or 0.0)) > 0.1 or
-                    abs(t_travel - float(active_fin.fixed_travel_fee or 0.0)) > 0.1 or
-                    abs(t_opex - float(active_fin.annual_opex_pct if active_fin.annual_opex_pct is not None else 1.0)) > 0.01 or
-                    abs(t_disc - float(active_fin.discount_rate_pct if active_fin.discount_rate_pct is not None else 5.0)) > 0.01):
+                if tuner_submitted:
                     t_fin = SolarFinancialConfig(
                         is_enabled=True,
                         currency=active_fin.currency or "EUR",
@@ -688,6 +698,8 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
                     st.session_state[f"{key_prefix}_fin_config"] = t_fin
                     st.session_state["solar_financial_config"] = t_fin
                     st.session_state["solar_financial_metrics"] = fin_m
+                    if active_sub is not None:
+                        active_sub.solar_financial = t_fin
                     st.rerun()
 
             # 1. Primary CAPEX & LCOE KPIs

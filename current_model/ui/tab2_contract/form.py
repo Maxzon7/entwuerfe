@@ -30,7 +30,7 @@ def _sanitize_rate_val(val: Any, default: float = 0.20) -> float:
     try:
         f_val = float(val)
         # If rate was pasted without decimal point (e.g. 684335.0 instead of 68.4335)
-        if f_val > 1000.0:
+        if f_val > 50000.0:
             f_val = f_val / 10000.0
         return round(f_val, 4)
     except Exception:

@@ -68,7 +68,7 @@ def create_bess_cashflow_payback_figure(
         line_dash="dash",
         line_color="#94A3B8",
         line_width=1.5,
-        annotation_text="Break-Even Threshold (0 €)",
+        annotation_text=f"Break-Even Threshold (0 {currency})",
         annotation_position="bottom left",
         annotation_font=dict(color="#CBD5E1", size=10)
     )
@@ -137,10 +137,15 @@ def create_bess_annual_cost_comparison_figure(
     categories = ["Status Quo (No BESS)", "With BESS Peak Shaving"]
 
     # Component values
-    demand_sq = fin_metrics.annual_demand_charge_savings + fin_metrics.annual_penalty_savings
-    demand_wb = 0.0  # Residual demand charge
-    energy_sq = fin_metrics.annual_energy_savings + 1000.0  # Normalized base
-    energy_wb = 1000.0
+    demand_sq = fin_metrics.annual_status_quo_demand_cost + fin_metrics.annual_status_quo_penalty_cost
+    demand_wb = fin_metrics.annual_with_bess_demand_cost + fin_metrics.annual_with_bess_penalty_cost
+
+    energy_sq = fin_metrics.annual_status_quo_energy_cost
+    energy_wb = fin_metrics.annual_with_bess_energy_cost
+
+    base_tax_sq = max(0.0, fin_metrics.annual_status_quo_total_bill - (demand_sq + energy_sq))
+    base_tax_wb = max(0.0, fin_metrics.annual_with_bess_total_bill - (demand_wb + energy_wb))
+
     opex_wb = fin_metrics.annual_opex_year1
 
     # Stacked Trace 1: Demand & Capacity Charges
@@ -148,7 +153,7 @@ def create_bess_annual_cost_comparison_figure(
         go.Bar(
             name="Peak Capacity & Overload Charges",
             x=categories,
-            y=[fin_metrics.annual_demand_charge_savings + fin_metrics.annual_penalty_savings, 0.0],
+            y=[demand_sq, demand_wb],
             marker_color="#EF4444",
             hovertemplate="<b>%{x}</b><br>Capacity / Penalty Cost: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
         )
@@ -159,13 +164,25 @@ def create_bess_annual_cost_comparison_figure(
         go.Bar(
             name="Active Energy Import",
             x=categories,
-            y=[fin_metrics.annual_energy_savings + 500.0, 500.0],
+            y=[energy_sq, energy_wb],
             marker_color="#38BDF8",
             hovertemplate="<b>%{x}</b><br>Active Energy Cost: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
         )
     )
 
-    # Stacked Trace 3: BESS Annual O&M
+    # Stacked Trace 3: Base Fees, Taxes & Levies
+    if base_tax_sq > 0 or base_tax_wb > 0:
+        fig.add_trace(
+            go.Bar(
+                name="Base Fees & Taxes/Levies",
+                x=categories,
+                y=[base_tax_sq, base_tax_wb],
+                marker_color="#10B981",
+                hovertemplate="<b>%{x}</b><br>Taxes & Base Fees: <b>%{y:,.0f} " + currency + "</b><extra></extra>"
+            )
+        )
+
+    # Stacked Trace 4: BESS Annual O&M
     fig.add_trace(
         go.Bar(
             name="BESS Maintenance & O&M",

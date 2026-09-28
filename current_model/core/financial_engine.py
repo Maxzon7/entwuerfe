@@ -422,6 +422,46 @@ def compute_financial_bill(
                 )
             )
 
+    if is_real_timestamped_data and monthly_series:
+        total_energy_period = sum(m.energy_cost_net for m in monthly_series)
+        capacity_cost_period = sum(m.capacity_cost_net for m in monthly_series)
+        penalty_cost_period = sum(m.penalty_cost_net for m in monthly_series)
+        base_fee_period = sum(m.base_fee_net for m in monthly_series)
+        total_net_period = sum(m.total_net for m in monthly_series)
+        total_taxes_period = sum(m.taxes_and_levies for m in monthly_series)
+        total_gross_period = sum(m.total_gross for m in monthly_series)
+
+        m_count = max(1.0, float(len(monthly_series)))
+        total_energy_monthly = total_energy_period / m_count
+        capacity_cost_monthly = capacity_cost_period / m_count
+        penalty_cost_monthly = penalty_cost_period / m_count
+        base_fee_monthly = base_fee_period / m_count
+        total_net_monthly = total_net_period / m_count
+        total_taxes_monthly = total_taxes_period / m_count
+        total_gross_monthly = total_gross_period / m_count
+
+        demand_cap_tariff = float(getattr(contract, "demand_capacity_tariff", 0.0))
+        for item in line_items:
+            if item.category == "Peak Penalty":
+                item.cost_period = round(penalty_cost_period, 2)
+                item.cost_monthly = round(penalty_cost_monthly, 2)
+            elif item.category == "Capacity (Contracted)":
+                item.cost_period = round(contracted_kw * cap_tariff * m_count, 2)
+                item.cost_monthly = round(contracted_kw * cap_tariff, 2)
+            elif item.category == "Demand (Measured)":
+                meas_demand_sum = sum(m.peak_demand_kw * demand_cap_tariff for m in monthly_series)
+                item.cost_period = round(meas_demand_sum, 2)
+                item.cost_monthly = round(meas_demand_sum / m_count, 2)
+            elif item.category == "Base Fee":
+                item.cost_period = round(base_fee_period, 2)
+                item.cost_monthly = round(base_fee_monthly, 2)
+            item.share_pct = round((item.cost_period / total_gross_period * 100.0), 1) if total_gross_period > 0 else 0.0
+
+        effective_kwh_price = (total_gross_period / total_consumption_kwh) if total_consumption_kwh > 0 else 0.0
+        fixed_costs_monthly = capacity_cost_monthly + base_fee_monthly
+        fixed_share = (fixed_costs_monthly / total_gross_monthly * 100.0) if total_gross_monthly > 0 else 0.0
+        variable_share = (total_energy_monthly / total_gross_monthly * 100.0) if total_gross_monthly > 0 else 0.0
+
 
     return FinancialCostBreakdown(
         currency=currency,
