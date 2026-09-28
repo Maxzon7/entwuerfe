@@ -148,6 +148,10 @@ class SubScenario:
     generator_config: Optional[GeneratorConfig] = None
     custom_contract: Optional[Contract] = None
 
+    # Grid Connection & Site Infrastructure (Assignment 8.3)
+    grid_connection_upgrade_cost: float = 0.0
+    temporary_connection_cost: float = 0.0
+
     # Performance & Financial Results (Populated by Dispatch Engine)
     summary_kpis: Dict[str, Any] = field(default_factory=dict)
     financial_cashflows: List[Dict[str, Any]] = field(default_factory=list)
@@ -233,6 +237,8 @@ class SubScenario:
             "bess_config": self.bess_config.to_dict() if self.bess_config else None,
             "generator_config": self.generator_config.to_dict() if self.generator_config else None,
             "custom_contract": self.custom_contract.to_dict() if self.custom_contract else None,
+            "grid_connection_upgrade_cost": float(self.grid_connection_upgrade_cost),
+            "temporary_connection_cost": float(self.temporary_connection_cost),
             "summary_kpis": self.summary_kpis,
             "financial_cashflows": self.financial_cashflows,
             "dispatch_records": self.dispatch_records
@@ -274,6 +280,8 @@ class SubScenario:
             bess_config=bess_cfg,
             generator_config=gen_cfg,
             custom_contract=custom_contract,
+            grid_connection_upgrade_cost=float(data.get("grid_connection_upgrade_cost", 0.0)),
+            temporary_connection_cost=float(data.get("temporary_connection_cost", 0.0)),
             summary_kpis=data.get("summary_kpis", {}),
             financial_cashflows=data.get("financial_cashflows", []),
             dispatch_records=data.get("dispatch_records")

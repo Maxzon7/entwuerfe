@@ -133,6 +133,25 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         solar_cum_series.append(round(sol_cum_tracker, 2))
 
     # 1. Base Scenario Row (Status Quo)
+    base_cash_table = []
+    base_running_tco = 0.0
+    for y in range(1, 26):
+        y_bill = base_annual_cost * ((1.0 + 0.03) ** (y - 1))
+        base_running_tco += y_bill
+        base_cash_table.append({
+            "year": y,
+            "status_quo_bill": round(y_bill, 2),
+            "residual_bill": round(y_bill, 2),
+            "opex": 0.0,
+            "cell_replacement": 0.0,
+            "total_outflow": round(y_bill, 2),
+            "gross_savings": 0.0,
+            "net_cash_flow": 0.0,
+            "cumulative_cash_flow": 0.0,
+            "discounted_cash_flow": 0.0,
+            "cumulative_tco": round(base_running_tco, 2)
+        })
+
     records.append({
         "id": "base",
         "rank": "Ref",
@@ -140,6 +159,9 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         "tech_mix": "Grid Only (Utility Baseline)",
         "capex": 0.0,
         "capex_str": f"0 {currency}",
+        "hardware_capex": 0.0,
+        "grid_upgrade_cost": 0.0,
+        "temporary_connection_cost": 0.0,
         "annual_opex": base_annual_cost,
         "total_15y_opex": base_15y_facility_tco,
         "total_15y_tco": base_15y_facility_tco,
@@ -148,6 +170,8 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         "payback_str": "Baseline Reference",
         "npv": 0.0,
         "npv_str": "-",
+        "irr_pct": None,
+        "lcoe_per_kwh": None,
         "net_savings": 0.0,
         "net_savings_str": "-",
         "autarky_pct": 0.0,
@@ -171,6 +195,7 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
         "solar_base_costs": solar_cum_series,
         "cumulative_costs": fac_cum_series,
         "baseline_costs": fac_cum_series,
+        "cash_flow_table": base_cash_table,
         "color": "#94A3B8"
     })
 
@@ -326,14 +351,20 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
                 multi_year_yields=sim_res.multi_year_yields if (active_sub_id == sub.id and sim_res) else None
             )
 
-            capex = fin_m_fac.total_capex
+            grid_upgrade = float(getattr(sub, "grid_connection_upgrade_cost", 0.0))
+            temp_conn = float(getattr(sub, "temporary_connection_cost", 0.0))
+            hardware_capex = fin_m_fac.total_capex
             if sub.include_bess and sub.bess_config:
-                capex += sub.bess_config.total_capex
+                hardware_capex += sub.bess_config.total_capex
             if sub.include_generator and sub.generator_config:
-                capex += sub.generator_config.capital_cost
+                hardware_capex += sub.generator_config.capital_cost
+
+            capex = hardware_capex + grid_upgrade + temp_conn
 
             payback = fin_m_fac.payback_period_years or 0.0
             npv = fin_m_fac.npv
+            irr_val = getattr(fin_m_fac, "irr_pct", None)
+            lcoe_val = getattr(fin_m_fac, "lcoe_per_kwh", None)
             net_savings = fin_m_fac.total_lifetime_savings
             cum_costs_fac = fin_m_fac.cumulative_with_pv
             base_costs_fac = fin_m_fac.cumulative_status_quo
@@ -341,6 +372,7 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             base_costs_sol = fin_m_sol.cumulative_status_quo
 
             opex_y1 = fin_m_fac.annual_opex_year1
+            res_bill_y1 = max(0.0, base_annual_cost - (direct_kwh * 0.18))
             tco_15y = cum_costs_fac[-1] if cum_costs_fac else (capex + opex_y1 * 18.5989)
             cash_table = fin_m_fac.cash_flow_table
         elif sub.include_bess and sub.bess_config:
@@ -376,12 +408,18 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
                 grid_limit_kw=grid_limit_kw
             )
 
-            capex = fin_m_bess.total_capex
+            grid_upgrade = float(getattr(sub, "grid_connection_upgrade_cost", 0.0))
+            temp_conn = float(getattr(sub, "temporary_connection_cost", 0.0))
+            hardware_capex = fin_m_bess.total_capex
             if sub.include_generator and sub.generator_config:
-                capex += sub.generator_config.capital_cost
+                hardware_capex += sub.generator_config.capital_cost
+
+            capex = hardware_capex + grid_upgrade + temp_conn
 
             payback = fin_m_bess.simple_payback_years or 0.0
             npv = fin_m_bess.net_present_value
+            irr_val = getattr(fin_m_bess, "internal_rate_of_return_pct", None)
+            lcoe_val = getattr(fin_m_bess, "levelized_cost_of_storage_eur_kwh", None)
             cum_costs_fac = fin_m_bess.cumulative_with_bess if fin_m_bess.cumulative_with_bess else fac_cum_series
             base_costs_fac = fin_m_bess.cumulative_status_quo if fin_m_bess.cumulative_status_quo else fac_cum_series
             tco_15y = cum_costs_fac[-1] if cum_costs_fac else (capex + (fin_m_bess.annual_with_bess_total_bill + fin_m_bess.annual_opex_year1) * 18.5989)
@@ -389,12 +427,16 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             cum_costs_sol = [capex] * 16 if capex > 0 else solar_cum_series
             base_costs_sol = solar_cum_series
             opex_y1 = fin_m_bess.annual_with_bess_total_bill + fin_m_bess.annual_opex_year1
+            res_bill_y1 = fin_m_bess.annual_with_bess_total_bill
             cash_table = fin_m_bess.cash_flow_table
         else:
-            capex = 0.0
+            grid_upgrade = float(getattr(sub, "grid_connection_upgrade_cost", 0.0))
+            temp_conn = float(getattr(sub, "temporary_connection_cost", 0.0))
+            hardware_capex = 0.0
             if sub.include_generator and sub.generator_config:
-                capex += sub.generator_config.capital_cost
+                hardware_capex += sub.generator_config.capital_cost
 
+            capex = hardware_capex + grid_upgrade + temp_conn
             residual_annual_cost = base_annual_cost
             
             # Proper 15-year cumulative trajectory (accumulating year over year)
@@ -407,11 +449,14 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             tco_15y = cum_costs_fac[-1]
             payback = 0.0
             npv = -capex if capex > 0 else 0.0
+            irr_val = None
+            lcoe_val = None
             net_savings = base_15y_facility_tco - tco_15y
             base_costs_fac = fac_cum_series
             cum_costs_sol = [capex] * 16 if capex > 0 else solar_cum_series
             base_costs_sol = solar_cum_series
             opex_y1 = residual_annual_cost
+            res_bill_y1 = residual_annual_cost
             cash_table = []
 
         # Compute 12-month residual grid consumption trajectory (Jan - Dec)
@@ -471,7 +516,12 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             "tech_mix": sub.technology_mix_label,
             "capex": capex,
             "capex_str": f"{capex:,.0f} {currency}",
+            "hardware_capex": hardware_capex,
+            "grid_upgrade_cost": grid_upgrade,
+            "temporary_connection_cost": temp_conn,
             "annual_opex": opex_y1,
+            "residual_bill_y1": res_bill_y1,
+            "first_year_opex": opex_y1,
             "total_15y_opex": tco_15y - capex,
             "total_15y_tco": tco_15y,
             "tco_str": f"{tco_15y:,.0f} {currency}",
@@ -479,6 +529,8 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             "payback_str": f"{payback:.1f} Yrs" if payback > 0 else "-",
             "npv": npv,
             "npv_str": f"{npv:,.0f} {currency}",
+            "irr_pct": irr_val,
+            "lcoe_per_kwh": lcoe_val,
             "net_savings": net_savings,
             "net_savings_str": f"+{net_savings:,.0f} {currency}" if net_savings > 0 else f"{net_savings:,.0f} {currency}",
             "autarky_pct": round(autarky, 1),
@@ -869,6 +921,487 @@ def _build_scenario_delta_matrix(project: ProjectContainer, records: List[Dict[s
     return pd.DataFrame(rows)
 
 
+def _render_economic_simulation_and_cashflow_schedules(
+    project: ProjectContainer,
+    records: List[Dict[str, Any]],
+    currency: str = "EUR",
+    key_prefix: str = "app_scen_cf"
+) -> None:
+    """
+    Renders comprehensive Multi-Scenario Economic Simulation, Life-Cycle Payment Schedules,
+    and Cross-Scenario Metric Trajectory Matrix fulfilling Assignment Section 8.3.
+    """
+    st.markdown("### :material/payments: Multi-Scenario Economic Simulation & Life-Cycle Schedules (Assignment 8.3)")
+    st.caption(
+        "Comprehensive comparative economic simulation: Side-by-side criteria breakdown, multi-year cash flow payment schedules, "
+        "and cross-scenario metric trajectory matrix across all scenarios including Status Quo."
+    )
+
+    base_rec = next((r for r in records if r["id"] == "base"), records[0] if records else {})
+    sub_recs = [r for r in records if r["id"] != "base"]
+    base_annual_cost = float(base_rec.get("annual_opex", 344141.21))
+
+    # 1. Global Controls & Sensitivity Toolbar
+    with st.container(border=True):
+        col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns([3.5, 2.5, 3.0, 3.0])
+        with col_ctrl1:
+            view_mode = st.radio(
+                "Comparison Perspective:",
+                options=[
+                    ":material/view_column: Scenario-Centric (Side-by-Side)",
+                    ":material/table_chart: Metric-Centric (Time Matrix)"
+                ],
+                horizontal=False,
+                key=f"{key_prefix}_view_mode"
+            )
+        with col_ctrl2:
+            horizon_years = st.selectbox(
+                "Analysis Horizon:",
+                options=[10, 15, 20, 25],
+                index=1,
+                format_func=lambda y: f"{y} Years Lifecycle",
+                key=f"{key_prefix}_horizon"
+            )
+        with col_ctrl3:
+            wacc_rate = st.number_input(
+                "Discount Rate / WACC (%):",
+                min_value=0.0,
+                max_value=25.0,
+                value=5.0,
+                step=0.5,
+                help="Weighted Average Cost of Capital used for discounting future cash flows (NPV).",
+                key=f"{key_prefix}_wacc"
+            )
+        with col_ctrl4:
+            inflation_rate = st.number_input(
+                "Tariff Escalation (%/yr):",
+                min_value=0.0,
+                max_value=20.0,
+                value=2.0,
+                step=0.5,
+                help="Expected annual utility electricity price escalation rate.",
+                key=f"{key_prefix}_infl"
+            )
+
+    r_wacc = float(wacc_rate) / 100.0
+    r_infl = float(inflation_rate) / 100.0
+
+    # Helper function to project standardized multi-year cash flows for any record up to horizon_years
+    def _project_scenario_cashflow(rec: Dict[str, Any], horizon: int, wacc: float, infl: float) -> List[Dict[str, Any]]:
+        c_capex = float(rec.get("capex", 0.0))
+        c_grid = float(rec.get("grid_upgrade_cost", 0.0))
+        c_temp = float(rec.get("temporary_connection_cost", 0.0))
+        c_upfront = c_capex + c_grid + c_temp
+
+        is_base = (rec.get("id") == "base")
+        annual_opex_y1 = float(rec.get("annual_opex", base_annual_cost))
+
+        has_solar = ("generation_mwh" in rec and rec.get("generation_mwh", 0) > 0)
+        has_bess = ("bess_config" in str(rec) or ("tech_mix" in rec and "BESS" in str(rec.get("tech_mix"))))
+
+        cf_list: List[Dict[str, Any]] = []
+        running_cf = -c_upfront
+        running_tco = c_upfront
+
+        for y in range(1, horizon + 1):
+            sq_bill = base_annual_cost * ((1.0 + infl) ** (y - 1))
+            
+            if is_base:
+                res_bill = sq_bill
+                y_opex = 0.0
+                cell_rep = 0.0
+                tot_outflow = sq_bill
+                gross_sav = 0.0
+                net_cf = 0.0
+            else:
+                if has_solar and not has_bess:
+                    deg_fac = max(0.70, 1.0 - 0.005 * (y - 1))
+                    first_yr_savings = max(0.0, base_annual_cost - annual_opex_y1)
+                    y_sav = first_yr_savings * deg_fac * ((1.0 + infl) ** (y - 1))
+                    res_bill = max(0.0, sq_bill - y_sav)
+                    y_opex = float(rec.get("first_year_opex", c_capex * 0.01)) * ((1.0 + infl * 0.8) ** (y - 1))
+                    cell_rep = 0.0
+                    tot_outflow = res_bill + y_opex
+                    gross_sav = y_sav
+                    net_cf = sq_bill - tot_outflow
+                elif has_bess and not has_solar:
+                    deg_fac = max(0.60, 1.0 - 0.02 * (y - 1))
+                    if y > 10:
+                        deg_fac = max(0.70, 0.95 - 0.02 * (y - 11))
+                    first_yr_savings = max(0.0, base_annual_cost - float(rec.get("residual_bill_y1", annual_opex_y1 * 0.95)))
+                    y_sav = first_yr_savings * deg_fac * ((1.0 + infl) ** (y - 1))
+                    res_bill = max(0.0, sq_bill - y_sav)
+                    y_opex = float(rec.get("first_year_opex", c_capex * 0.015)) * ((1.0 + infl * 0.8) ** (y - 1))
+                    cell_rep = (c_capex * 0.65 * 0.40) if y == 10 else 0.0
+                    tot_outflow = res_bill + y_opex + cell_rep
+                    gross_sav = y_sav
+                    net_cf = sq_bill - tot_outflow
+                else:
+                    deg_fac = max(0.70, 1.0 - 0.01 * (y - 1))
+                    first_yr_savings = max(0.0, base_annual_cost - annual_opex_y1)
+                    y_sav = first_yr_savings * deg_fac * ((1.0 + infl) ** (y - 1))
+                    res_bill = max(0.0, sq_bill - y_sav)
+                    y_opex = (c_capex * 0.01) * ((1.0 + infl * 0.8) ** (y - 1))
+                    cell_rep = (c_capex * 0.25) if (has_bess and y == 10) else 0.0
+                    tot_outflow = res_bill + y_opex + cell_rep
+                    gross_sav = y_sav
+                    net_cf = sq_bill - tot_outflow
+
+            running_cf += net_cf
+            disc_cf = net_cf / ((1.0 + wacc) ** y)
+            running_tco += tot_outflow
+
+            cf_list.append({
+                "year": y,
+                "status_quo_bill": round(sq_bill, 2),
+                "residual_bill": round(res_bill, 2),
+                "opex": round(y_opex, 2),
+                "cell_replacement": round(cell_rep, 2),
+                "total_outflow": round(tot_outflow, 2),
+                "gross_savings": round(gross_sav, 2),
+                "net_cash_flow": round(net_cf, 2),
+                "cumulative_cash_flow": round(running_cf, 2),
+                "discounted_cash_flow": round(disc_cf, 2),
+                "cumulative_tco": round(running_tco, 2)
+            })
+
+        return cf_list
+
+    # Pre-generate cash flows for all records
+    scenario_schedules: Dict[str, List[Dict[str, Any]]] = {}
+    for r in records:
+        scenario_schedules[r["id"]] = _project_scenario_cashflow(r, horizon=horizon_years, wacc=r_wacc, infl=r_infl)
+
+    # --------------------------------------------------------------------------
+    # PERSPECTIVE 1: SCENARIO-CENTRIC (SIDE-BY-SIDE)
+    # --------------------------------------------------------------------------
+    if ":material/view_column: Scenario-Centric" in view_mode:
+        all_ids = [r["id"] for r in records]
+        id_map = {r["id"]: r["name"] for r in records}
+
+        selected_ids = st.multiselect(
+            "Select Scenarios to Compare Side-by-Side:",
+            options=all_ids,
+            default=all_ids,
+            format_func=lambda sid: id_map.get(sid, sid),
+            key=f"{key_prefix}_multisel_scenarios"
+        )
+
+        if not selected_ids:
+            st.info("Select at least one scenario above to display economic comparison tables.")
+            return
+
+        sel_recs = [r for r in records if r["id"] in selected_ids]
+
+        tab_crit, tab_sched = st.tabs([
+            ":material/fact_check: 1. Key Commercial & Investment Benchmarks (Assignment 8.3)",
+            ":material/calendar_month: 2. Multi-Scenario Cash Flow Schedule (Year-by-Year)"
+        ])
+
+        with tab_crit:
+            st.caption(
+                "Direct side-by-side benchmark comparing initial capital investment, grid connection costs, recurring OPEX, "
+                "amortization, Net Present Value, Internal Rate of Return, and Total Cost of Ownership."
+            )
+
+            # Assemble criteria rows
+            crit_rows = [
+                {"Assignment Criterion / Parameter": "1. Hardware Turn-Key CAPEX (Solar / BESS / Genset)"},
+                {"Assignment Criterion / Parameter": "2. Grid Connection & Upgrade Costs (Substation/Trafo)"},
+                {"Assignment Criterion / Parameter": "3. Temporary Connection / Site Setup Costs"},
+                {"Assignment Criterion / Parameter": "4. Total Upfront Capital Investment (Year 0)"},
+                {"Assignment Criterion / Parameter": "5. Year 1 Operating & Maintenance Expenses (OPEX)"},
+                {"Assignment Criterion / Parameter": "6. Year 1 Residual Electricity Utility Bill"},
+                {"Assignment Criterion / Parameter": "7. Total Year 1 Cash Outflow (Bill + OPEX)"},
+                {"Assignment Criterion / Parameter": "8. Net Annual Financial Benefit (vs. Status Quo)"},
+                {"Assignment Criterion / Parameter": "9. Simple Payback Period (Amortization)"},
+                {"Assignment Criterion / Parameter": "10. Discounted Payback Period (WACC-adjusted)"},
+                {"Assignment Criterion / Parameter": f"11. {horizon_years}-Year Net Present Value (NPV)"},
+                {"Assignment Criterion / Parameter": "12. Internal Rate of Return (IRR)"},
+                {"Assignment Criterion / Parameter": "13. Levelized Cost of Energy / Storage (LCOE/LCOS)"},
+                {"Assignment Criterion / Parameter": f"14. {horizon_years}-Year Total Cost of Ownership (TCO)"},
+                {"Assignment Criterion / Parameter": "15. Clean Energy Autarky & Self-Consumption"}
+            ]
+
+            for rec in sel_recs:
+                col_name = rec["name"]
+                c_sched = scenario_schedules.get(rec["id"], [])
+                c_capex = float(rec.get("hardware_capex", rec.get("capex", 0.0)))
+                c_grid = float(rec.get("grid_upgrade_cost", 0.0))
+                c_temp = float(rec.get("temporary_connection_cost", 0.0))
+                c_total_cap = c_capex + c_grid + c_temp
+
+                y1_res_bill = c_sched[0]["residual_bill"] if c_sched else base_annual_cost
+                y1_opex = c_sched[0]["opex"] if c_sched else 0.0
+                y1_tot = c_sched[0]["total_outflow"] if c_sched else base_annual_cost
+                y1_net_sav = c_sched[0]["net_cash_flow"] if c_sched else 0.0
+                final_tco = c_sched[-1]["cumulative_tco"] if c_sched else (base_annual_cost * 18.5989)
+
+                # NPV over horizon
+                npv_val = -c_total_cap + sum(s["discounted_cash_flow"] for s in c_sched) if rec["id"] != "base" else 0.0
+
+                # Payback
+                pb_yrs = rec.get("payback_years", 0.0)
+                pb_str = f"{pb_yrs:.1f} Years" if (pb_yrs and pb_yrs > 0) else ("Baseline Reference" if rec["id"] == "base" else "> 20 Years")
+
+                # Discounted payback
+                disc_pb_str = "-"
+                if rec["id"] != "base" and c_total_cap > 0:
+                    disc_cum = -c_total_cap
+                    for s in c_sched:
+                        disc_cum += s["discounted_cash_flow"]
+                        if disc_cum >= 0:
+                            disc_pb_str = f"{s['year']} Years"
+                            break
+
+                irr_val = rec.get("irr_pct")
+                irr_str = f"{irr_val:.1f} %" if (irr_val is not None and irr_val > 0) else ("-" if rec["id"] == "base" else "N/A")
+
+                lcoe_val = rec.get("lcoe_per_kwh")
+                lcoe_str = f"{lcoe_val:.4f} {currency}/kWh" if (lcoe_val is not None and lcoe_val > 0) else "-"
+
+                aut_val = rec.get("autarky_pct", 0.0)
+                sc_val = rec.get("self_consumption_pct", 0.0)
+                aut_str = f"{aut_val:.1f}% Autarky | {sc_val:.1f}% Self-Cons" if aut_val > 0 else ("-" if rec["id"] == "base" else "0.0 %")
+
+                crit_rows[0][col_name] = f"{c_capex:,.0f} {currency}" if c_capex > 0 else f"0 {currency}"
+                crit_rows[1][col_name] = f"{c_grid:,.0f} {currency}" if c_grid > 0 else f"0 {currency}"
+                crit_rows[2][col_name] = f"{c_temp:,.0f} {currency}" if c_temp > 0 else f"0 {currency}"
+                crit_rows[3][col_name] = f"{c_total_cap:,.0f} {currency}"
+                crit_rows[4][col_name] = f"{y1_opex:,.0f} {currency}/yr"
+                crit_rows[5][col_name] = f"{y1_res_bill:,.0f} {currency}/yr"
+                crit_rows[6][col_name] = f"{y1_tot:,.0f} {currency}/yr"
+                crit_rows[7][col_name] = f"+{y1_net_sav:,.0f} {currency}/yr" if y1_net_sav > 0 else (f"{y1_net_sav:,.0f} {currency}/yr" if y1_net_sav < 0 else "Baseline (0)")
+                crit_rows[8][col_name] = pb_str
+                crit_rows[9][col_name] = disc_pb_str
+                crit_rows[10][col_name] = f"{npv_val:+,.0f} {currency}" if rec["id"] != "base" else "-"
+                crit_rows[11][col_name] = irr_str
+                crit_rows[12][col_name] = lcoe_str
+                crit_rows[13][col_name] = f"{final_tco:,.0f} {currency}"
+                crit_rows[14][col_name] = aut_str
+
+            df_crit = pd.DataFrame(crit_rows)
+            st.dataframe(df_crit, use_container_width=True, hide_index=True)
+
+            csv_crit = df_crit.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label=":material/download: Export Commercial Benchmarks (CSV)",
+                data=csv_crit,
+                file_name=f"commercial_benchmarks_{horizon_years}y.csv",
+                mime="text/csv",
+                key=f"{key_prefix}_dl_crit"
+            )
+
+        with tab_sched:
+            st.caption(
+                f"Multi-year lifecycle payment schedules over {horizon_years} operating years. "
+                "Inspect side-by-side annual outlays and net cash flows or drill into individual model schedules."
+            )
+
+            sched_sub_mode = st.radio(
+                "Schedule Presentation:",
+                options=[
+                    ":material/table_rows: Consolidated Multi-Scenario Outflows & Cashflows",
+                    ":material/receipt_long: Detailed Itemized Breakdown for Single Model"
+                ],
+                horizontal=True,
+                key=f"{key_prefix}_sched_sub_mode"
+            )
+
+            if ":material/table_rows: Consolidated" in sched_sub_mode:
+                cons_rows = []
+                
+                # Year 0 Row (Initial Investment)
+                y0_row = {"Operating Year": "Year 0 (CAPEX)"}
+                for rec in sel_recs:
+                    c_up = float(rec.get("capex", 0.0)) + float(rec.get("grid_upgrade_cost", 0.0)) + float(rec.get("temporary_connection_cost", 0.0))
+                    y0_row[f"{rec['name']} Outflow"] = f"{c_up:,.0f} {currency}"
+                    y0_row[f"{rec['name']} Net CF"] = f"{-c_up:,.0f} {currency}" if c_up > 0 else f"0 {currency}"
+                cons_rows.append(y0_row)
+
+                # Year 1 to Horizon
+                for y in range(1, horizon_years + 1):
+                    yr_row = {"Operating Year": f"Year {y}"}
+                    for rec in sel_recs:
+                        s_list = scenario_schedules.get(rec["id"], [])
+                        row_y = next((item for item in s_list if item["year"] == y), {})
+                        out_val = row_y.get("total_outflow", 0.0)
+                        net_val = row_y.get("net_cash_flow", 0.0)
+                        yr_row[f"{rec['name']} Outflow"] = f"{out_val:,.0f} {currency}"
+                        yr_row[f"{rec['name']} Net CF"] = f"{net_val:+,.0f} {currency}" if net_val != 0 else f"0 {currency}"
+                    cons_rows.append(yr_row)
+
+                df_cons = pd.DataFrame(cons_rows)
+                st.dataframe(df_cons, use_container_width=True, hide_index=True)
+
+                csv_cons = df_cons.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label=":material/download: Export Consolidated Cashflow Schedule (CSV)",
+                    data=csv_cons,
+                    file_name=f"consolidated_cashflow_schedule_{horizon_years}y.csv",
+                    mime="text/csv",
+                    key=f"{key_prefix}_dl_cons_sched"
+                )
+
+            else:
+                single_id = st.selectbox(
+                    "Select Model to Inspect Itemized Schedule:",
+                    options=selected_ids,
+                    format_func=lambda sid: id_map.get(sid, sid),
+                    key=f"{key_prefix}_single_scen_inspect"
+                )
+                target_rec = next((r for r in records if r["id"] == single_id), None)
+                if target_rec:
+                    s_items = scenario_schedules.get(single_id, [])
+                    single_rows = []
+                    for s in s_items:
+                        single_rows.append({
+                            "Operating Year": f"Year {s['year']}",
+                            f"Status Quo Bill ({currency})": f"{s['status_quo_bill']:,.2f}",
+                            f"Residual Bill ({currency})": f"{s['residual_bill']:,.2f}",
+                            f"Annual OPEX ({currency})": f"{s['opex']:,.2f}",
+                            f"Cell Refresh ({currency})": f"{s['cell_replacement']:,.2f}",
+                            f"Total Outflow ({currency})": f"{s['total_outflow']:,.2f}",
+                            f"Gross Savings ({currency})": f"{s['gross_savings']:+,.2f}",
+                            f"Net Cashflow ({currency})": f"{s['net_cash_flow']:+,.2f}",
+                            f"Cumulative Cashflow ({currency})": f"{s['cumulative_cash_flow']:+,.2f}",
+                            f"Discounted CF ({currency})": f"{s['discounted_cash_flow']:+,.2f}",
+                            f"Cumulative TCO ({currency})": f"{s['cumulative_tco']:,.2f}"
+                        })
+
+                    df_single = pd.DataFrame(single_rows)
+                    st.dataframe(df_single, use_container_width=True, hide_index=True)
+
+                    csv_single = df_single.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label=f":material/download: Export {target_rec['name']} Schedule (CSV)",
+                        data=csv_single,
+                        file_name=f"cashflow_{target_rec['name'].replace(' ', '_')}_{horizon_years}y.csv",
+                        mime="text/csv",
+                        key=f"{key_prefix}_dl_single_sched"
+                    )
+
+    # --------------------------------------------------------------------------
+    # PERSPECTIVE 2: METRIC-CENTRIC (CROSS-SCENARIO TIME MATRIX)
+    # --------------------------------------------------------------------------
+    else:
+        st.caption(
+            "Select a specific financial or electrical metric to track its multi-year or monthly trajectory across all scenario models simultaneously."
+        )
+
+        metric_choice = st.selectbox(
+            "Select Target Metric to Compare Across Models:",
+            options=[
+                "1. Cumulative Life-Cycle Total Cost (TCO)",
+                "2. Annual Utility Electricity Bill (Grid Import Cost)",
+                "3. Total Annual Outflow (Electricity Bill + OPEX + Reinvestment)",
+                "4. Net Annual Cash Flow (Financial Benefit vs. Status Quo)",
+                "5. Cumulative Project Cash Flow (Amortization Trajectory)",
+                "6. Discounted Annual Cash Flow (NPV Contribution)",
+                "7. Normalized 12-Month Residual Grid Import (MWh)"
+            ],
+            key=f"{key_prefix}_metric_choice"
+        )
+
+        matrix_rows = []
+
+        if "7. Normalized 12-Month" in metric_choice:
+            month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+            for m_idx, m_name in enumerate(month_names):
+                m_row = {"Period / Month": m_name}
+                base_m_val = base_rec.get("monthly_load_mwh", [0]*12)[m_idx] if base_rec.get("monthly_load_mwh") else 0.0
+                m_row[f"{base_rec['name']} (MWh)"] = f"{base_m_val:,.1f}"
+
+                best_avoided = 0.0
+                for sub in sub_recs:
+                    sub_m_val = sub.get("monthly_residual_mwh", [base_m_val]*12)[m_idx] if sub.get("monthly_residual_mwh") else base_m_val
+                    m_row[f"{sub['name']} (MWh)"] = f"{sub_m_val:,.1f}"
+                    avoided = max(0.0, base_m_val - sub_m_val)
+                    if avoided > best_avoided:
+                        best_avoided = avoided
+
+                m_row["Max Clean Energy Avoided (MWh)"] = f"+{best_avoided:,.1f} MWh"
+                matrix_rows.append(m_row)
+
+        else:
+            if "1. Cumulative Life-Cycle Total Cost" in metric_choice:
+                key_name = "cumulative_tco"
+                y0_key = "upfront_tco"
+            elif "2. Annual Utility Electricity Bill" in metric_choice:
+                key_name = "residual_bill"
+                y0_key = "zero"
+            elif "3. Total Annual Outflow" in metric_choice:
+                key_name = "total_outflow"
+                y0_key = "capex"
+            elif "4. Net Annual Cash Flow" in metric_choice:
+                key_name = "net_cash_flow"
+                y0_key = "neg_capex"
+            elif "5. Cumulative Project Cash Flow" in metric_choice:
+                key_name = "cumulative_cash_flow"
+                y0_key = "neg_capex"
+            elif "6. Discounted Annual Cash Flow" in metric_choice:
+                key_name = "discounted_cash_flow"
+                y0_key = "neg_capex"
+            else:
+                key_name = "cumulative_tco"
+                y0_key = "upfront_tco"
+
+            # Year 0 Row
+            y0_row = {"Timeline": "Year 0 (CAPEX)"}
+            base_y0 = 0.0
+            y0_row[f"{base_rec['name']} ({currency})"] = f"{base_y0:,.0f}"
+
+            for sub in sub_recs:
+                c_up = float(sub.get("capex", 0.0)) + float(sub.get("grid_upgrade_cost", 0.0)) + float(sub.get("temporary_connection_cost", 0.0))
+                if y0_key == "upfront_tco" or y0_key == "capex":
+                    val_0 = c_up
+                elif y0_key == "neg_capex":
+                    val_0 = -c_up
+                else:
+                    val_0 = 0.0
+                y0_row[f"{sub['name']} ({currency})"] = f"{val_0:+,.0f}" if val_0 != 0 else "0"
+
+            y0_row[f"Benchmark Delta vs. Baseline ({currency})"] = "Initial Outlay"
+            matrix_rows.append(y0_row)
+
+            # Year 1 to Horizon
+            for y in range(1, horizon_years + 1):
+                y_row = {"Timeline": f"Year {y}"}
+                b_sched = scenario_schedules.get(base_rec.get("id", "base"), [])
+                b_row = next((item for item in b_sched if item["year"] == y), {})
+                b_val = float(b_row.get(key_name, 0.0))
+                y_row[f"{base_rec['name']} ({currency})"] = f"{b_val:,.0f}"
+
+                best_delta = 0.0
+                for sub in sub_recs:
+                    s_sched = scenario_schedules.get(sub["id"], [])
+                    s_row = next((item for item in s_sched if item["year"] == y), {})
+                    s_val = float(s_row.get(key_name, 0.0))
+                    y_row[f"{sub['name']} ({currency})"] = f"{s_val:+,.0f}" if (key_name in ["net_cash_flow", "cumulative_cash_flow", "discounted_cash_flow"]) else f"{s_val:,.0f}"
+                    
+                    if key_name in ["cumulative_tco", "residual_bill", "total_outflow"]:
+                        d_val = b_val - s_val
+                    else:
+                        d_val = s_val
+                    if abs(d_val) > abs(best_delta):
+                        best_delta = d_val
+
+                y_row[f"Benchmark Delta vs. Baseline ({currency})"] = f"{best_delta:+,.0f} {currency}" if best_delta != 0 else "0"
+                matrix_rows.append(y_row)
+
+        df_matrix = pd.DataFrame(matrix_rows)
+        st.dataframe(df_matrix, use_container_width=True, hide_index=True)
+
+        csv_matrix = df_matrix.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label=":material/download: Export Metric Matrix (CSV)",
+            data=csv_matrix,
+            file_name=f"metric_matrix_{metric_choice[:20].replace(' ', '_')}_{horizon_years}y.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_dl_matrix"
+        )
+
+
 def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
     """
     Renders Tab 1: Scenario Management & Decision Center.
@@ -1250,50 +1783,13 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
             else:
                 st.info("Create and activate sub-scenarios in the sidebar to inspect Autarky benchmarks.")
 
-        # 15-Year Life-Cycle Detail Table per Scenario
-        with st.expander("15-Year Life-Cycle Cashflow Projection Table (Leading Sub-Scenario)", icon=":material/view_timeline:", expanded=False):
-            lead_sub = sub_records[0] if sub_records else None
-            if lead_sub and lead_sub.get("cash_flow_table"):
-                dt_rows = []
-                for row in lead_sub["cash_flow_table"]:
-                    if "aging_factor" in row or "generation_mwh" in row:
-                        dt_rows.append({
-                            "Year": f"Year {row.get('year', 0)}",
-                            "Aging Factor": f"{row.get('aging_factor', 1.0) * 100.0:.2f} %",
-                            "Generation (MWh)": f"{row.get('generation_mwh', 0.0):,.2f}",
-                            f"Status Quo Bill ({currency})": f"{row.get('status_quo_bill', 0.0):,.2f}",
-                            f"Residual Bill ({currency})": f"{row.get('residual_bill', 0.0):,.2f}",
-                            f"OPEX ({currency})": f"{row.get('opex_annual', 0.0):,.2f}",
-                            f"Export Rev ({currency})": f"{row.get('export_revenue', 0.0):,.2f}",
-                            f"Net Cashflow ({currency})": f"{row.get('net_cash_flow', 0.0):+,.2f}",
-                            f"Cumulative Net CF ({currency})": f"{row.get('cumulative_cash_flow', 0.0):+,.2f}",
-                            f"Discounted CF ({currency})": f"{row.get('discounted_cash_flow', 0.0):+,.2f}"
-                        })
-                    elif "with_bess_bill" in row or "bess_opex" in row:
-                        dt_rows.append({
-                            "Year": f"Year {row.get('year', 0)}",
-                            f"Status Quo Bill ({currency})": f"{row.get('status_quo_bill', 0.0):,.2f}",
-                            f"With BESS Bill ({currency})": f"{row.get('with_bess_bill', 0.0):,.2f}",
-                            f"Gross Savings ({currency})": f"{row.get('gross_savings', 0.0):+,.2f}",
-                            f"BESS OPEX ({currency})": f"{row.get('bess_opex', 0.0):,.2f}",
-                            f"Cell Refresh ({currency})": f"{row.get('cell_replacement', 0.0):,.2f}",
-                            f"Net Cashflow ({currency})": f"{row.get('net_cash_flow', 0.0):+,.2f}",
-                            f"Cumulative Net CF ({currency})": f"{row.get('cumulative_cash_flow', 0.0):+,.2f}",
-                            f"Discounted CF ({currency})": f"{row.get('discounted_cash_flow', 0.0):+,.2f}"
-                        })
-                    else:
-                        row_dict = {"Year": f"Year {row.get('year', 0)}"}
-                        for k, v in row.items():
-                            if k == "year":
-                                continue
-                            if isinstance(v, (int, float)):
-                                row_dict[k.replace('_', ' ').title()] = f"{v:,.2f}"
-                            else:
-                                row_dict[k.replace('_', ' ').title()] = str(v)
-                        dt_rows.append(row_dict)
-                st.dataframe(pd.DataFrame(dt_rows), use_container_width=True, hide_index=True)
-            else:
-                st.info("Configure and calculate generation or BESS dispatch on sub-scenarios to inspect itemized cashflow tables.")
+        # 5. Multi-Scenario Economic Simulation & Life-Cycle Schedules (Assignment Section 8.3)
+        _render_economic_simulation_and_cashflow_schedules(
+            project=project,
+            records=records,
+            currency=currency,
+            key_prefix=f"{key_prefix}_asgn83"
+        )
 
         st.divider()
 
