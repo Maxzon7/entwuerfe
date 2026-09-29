@@ -10,6 +10,7 @@ from .load_processor import process_load_profile_data
 from .metrics_engine import compute_load_profile_kpis, LoadProfileKPIs
 from .synthetic_engine import aggregate_synthetic_24h, aggregate_synthetic_year, generate_time_labels_24h
 from .financial_engine import compute_financial_bill
+from .solar_bess_engine import simulate_solar_bess_dispatch, SolarBESSSimulationResult, SolarBESSKPIs
 
 __all__ = [
     "read_raw_content",
@@ -23,4 +24,8 @@ __all__ = [
     "aggregate_synthetic_year",
     "generate_time_labels_24h",
     "compute_financial_bill",
+    "simulate_solar_bess_dispatch",
+    "SolarBESSSimulationResult",
+    "SolarBESSKPIs",
 ]
+

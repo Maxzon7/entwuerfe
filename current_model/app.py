@@ -30,6 +30,7 @@ from current_model.ui.tab2_contract.view import render_tab2_base_contract, rende
 from current_model.ui.tab3_solar.view import render_tab3_solar
 from current_model.ui.tab4_bess.view import render_tab4_bess
 from current_model.ui.tab_dracbv_beta.view import render_tab_dracbv_beta
+from current_model.ui.tab_hybrid_beta.view import render_tab_solar_bess_beta
 from current_model.ui.common.sidebar_scenario_view import render_sidebar_scenario_controller
 from current_model.core.project_io import export_project_from_session
 
@@ -69,7 +70,8 @@ nav_tabs = [
     (":material/dashboard: 1. Scenario Management", lambda: render_scenario_management(key_prefix="app_scenarios")),
     (":material/analytics: 2. Consumption (Baseline)", lambda: render_tab1_consumption(key_prefix="app_tab1")),
     (":material/description: 3. Current Contract (Status Quo)", lambda: render_tab2_base_contract(key_prefix="app_tab2")),
-    (":material/science: 4. DRACBV Simulator (Beta)", lambda: render_tab_dracbv_beta(key_prefix="app_dracbv_beta"))
+    (":material/science: 4. DRACBV Simulator (Beta)", lambda: render_tab_dracbv_beta(key_prefix="app_dracbv_beta")),
+    (":material/science: 5. Solar + BESS (Beta)", lambda: render_tab_solar_bess_beta(key_prefix="app_solar_bess_beta"))
 ]
 
 # 4.2 Append Dynamic Solution Module Tabs Strictly Based on Active Sub-Scenario Configuration
