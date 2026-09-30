@@ -33,7 +33,7 @@ for path in [WORKSPACE_ROOT, CURRENT_MODEL_DIR]:
 
 from current_model.models.contract import Contract, get_contract_presets
 from current_model.models.financial import FinancialCostBreakdown
-from current_model.core.financial_engine import compute_financial_bill
+from current_model.core.financial_engine import compute_financial_bill, _resolve_contract_for_month
 from current_model.ui.common.styles import apply_custom_styles
 from current_model.ui.common.cards import render_kpi_card
 from current_model.ui.tab1_consumption.csv_inspector.view import render_csv_inspector
@@ -132,6 +132,30 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
                 _sync_contract_to_state(loaded_dict[selected_label], key_prefix=key_prefix)
                 st.rerun()
 
+            col_dup, col_del = st.columns([1, 1])
+            with col_dup:
+                if st.button("Duplicate for Months", icon=":material/content_copy:", key=f"{key_prefix}_dup_btn", use_container_width=True):
+                    clone_num = len(loaded_dict) + 1
+                    clone_name = f"{current.name} (Variant {clone_num})"
+                    cloned_c = Contract.from_dict(current.to_dict()) if hasattr(current, "to_dict") else Contract.from_json(current.to_json())
+                    cloned_c.name = clone_name
+                    loaded_dict[clone_name] = cloned_c
+                    st.session_state[loaded_contracts_dict_key] = loaded_dict
+                    _sync_contract_to_state(cloned_c, key_prefix=key_prefix)
+                    st.success(f"Duplicated contract as '{clone_name}'. You can now customize rates and select applicable months.")
+                    st.rerun()
+
+            with col_del:
+                if len(loaded_dict) > 1:
+                    if st.button("Delete Contract", icon=":material/delete:", key=f"{key_prefix}_del_btn", use_container_width=True):
+                        if current.name in loaded_dict:
+                            del loaded_dict[current.name]
+                            st.session_state[loaded_contracts_dict_key] = loaded_dict
+                            remaining_first = list(loaded_dict.values())[0]
+                            _sync_contract_to_state(remaining_first, key_prefix=key_prefix)
+                            st.warning(f"Deleted contract '{current.name}'.")
+                            st.rerun()
+
             presets = get_contract_presets()
             selected_preset_name = st.selectbox(
                 "Or load an industry contract preset:",
@@ -176,6 +200,38 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
         st.divider()
 
         # ==============================================================================
+        # 12-Month Contract Coverage Matrix
+        # ==============================================================================
+        st.markdown("##### :material/calendar_month: 12-Month Contract Assignment Overview")
+        st.caption("Visual matrix showing which contract governs each calendar month. Highlighted cards indicate months assigned to the currently edited contract.")
+        month_abbr_list = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        mat_cols = st.columns(12)
+        for m_idx, abbr in enumerate(month_abbr_list, start=1):
+            assigned_c = _resolve_contract_for_month(list(loaded_dict.values()), m_idx, default_contract=current)
+            is_active_for_curr = (assigned_c.name == current.name)
+            with mat_cols[m_idx - 1]:
+                st.markdown(
+                    f"""
+                    <div style="
+                        border: 1px solid {'#3b82f6' if is_active_for_curr else '#374151'};
+                        border-radius: 6px;
+                        padding: 6px 2px;
+                        text-align: center;
+                        background-color: {'rgba(59, 130, 246, 0.20)' if is_active_for_curr else 'rgba(31, 41, 55, 0.45)'};
+                        margin-bottom: 6px;
+                    ">
+                        <div style="font-weight: 700; font-size: 0.8rem; color: {'#93c5fd' if is_active_for_curr else '#e5e7eb'};">{abbr}</div>
+                        <div style="color: {'#bfdbfe' if is_active_for_curr else '#9ca3af'}; font-size: 0.68rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{assigned_c.name}">
+                            {assigned_c.name[:10]}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+        st.divider()
+
+        # ==============================================================================
         # Contract Parameter Configuration Form (Exact layout with simplified terms)
         # ==============================================================================
         with st.form(key=f"{key_prefix}_contract_form"):
@@ -202,7 +258,26 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
                 max_physical_kw = st.number_input("Max Physical Limit (kW):", min_value=0.0, value=float(current.max_physical_limit_kw), step=50.0, format="%.1f", help="Physical transformer / fuse limit.")
                 penalty_rate = st.number_input("Penalty Rate for Exceeding Limit (/kW):", min_value=0.0, value=float(current.peak_penalty_rate), step=1.0, format="%.4f", help="Penalty fee billed for kW exceeding the reserved power limit.")
 
-            st.subheader("2. Reactive Power Parameters")
+            # 2. Applicable Validity Months
+            st.subheader("2. Applicable Validity Months (Gültigkeitsmonate)")
+            st.caption("Select the months where this contract configuration applies. By default, it applies to all 12 months:")
+
+            all_month_abbrs = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            curr_app_months = getattr(current, "applicable_months", list(range(1, 13))) or list(range(1, 13))
+            curr_selected_abbrs = [all_month_abbrs[m - 1] for m in curr_app_months if 1 <= m <= 12]
+
+            selected_months = st.multiselect(
+                "Select Months Governed by this Contract:",
+                options=all_month_abbrs,
+                default=curr_selected_abbrs,
+                help="By default, all months are selected. Uncheck months to restrict this contract to specific seasons or months.",
+                key=f"{key_prefix}_months_multiselect"
+            )
+            parsed_app_months = [all_month_abbrs.index(m) + 1 for m in selected_months if m in all_month_abbrs]
+            if not parsed_app_months:
+                parsed_app_months = list(range(1, 13))
+
+            st.subheader("3. Reactive Power Parameters")
             q1, q2, q3 = st.columns(3)
             with q1:
                 reactive_tariff = st.number_input("Reactive Energy Fee (/kVARh):", min_value=0.0, value=float(current.reactive_power_tariff), step=0.005, format="%.4f")
@@ -211,8 +286,8 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
             with q3:
                 reactive_allowance = st.number_input("Free Reactive Allowance (% of kWh):", min_value=0.0, max_value=100.0, value=float(current.reactive_power_allowance_pct), step=1.0, format="%.1f")
 
-            # 3. Dynamic Time-of-Use (TOU) Energy Rates
-            st.subheader("3. Time-of-Use (TOU) Energy Rates")
+            # 4. Dynamic Time-of-Use (TOU) Energy Rates
+            st.subheader("4. Time-of-Use (TOU) Energy Rates")
             st.caption("Define Time-of-Use rate windows. The table supports adding and deleting rows:")
 
             edited_tou = st.data_editor(
@@ -233,8 +308,8 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
                 value=bool(current.weekend_is_off_peak)
             )
 
-            # 4. Dynamic Taxes & Additional Fees Table
-            st.subheader("4. Taxes & Additional Fees")
+            # 5. Dynamic Taxes & Additional Fees Table
+            st.subheader("5. Taxes & Additional Fees")
             st.caption("Add custom percentage or fixed fees, or clear table to disable taxes:")
 
             edited_taxes = st.data_editor(
@@ -303,14 +378,19 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
                 tou_rates=cleaned_tou,
                 default_energy_rate=default_energy_rate,
                 weekend_is_off_peak=weekend_off_peak,
+                applicable_months=parsed_app_months,
                 taxes_and_fees=cleaned_taxes
             )
+
+            # If contract was renamed, remove old name key from dictionary
+            if current.name in loaded_dict and current.name != updated_contract.name:
+                del loaded_dict[current.name]
 
             st.session_state[state_contract_key] = updated_contract
             loaded_dict[updated_contract.name] = updated_contract
             st.session_state[loaded_contracts_dict_key] = loaded_dict
             st.session_state[f"{key_prefix}_active_contract_label"] = updated_contract.name
-            st.toast("Contract configuration saved successfully!", icon=":material/check_circle:")
+            st.toast(f"Saved '{updated_contract.name}' ({len(parsed_app_months)} months assigned)!", icon=":material/check_circle:")
             st.rerun()
 
     return st.session_state[state_contract_key]
@@ -355,8 +435,14 @@ def render_minimal_contract_system(key_prefix: str = "sandbox_min") -> None:
         st.info("Upload a CSV file in section 1 above to view the automated monthly financial assessment.", icon=":material/info:")
         return
 
-    # Calculate live bill breakdown
-    full_breakdown: FinancialCostBreakdown = compute_financial_bill(load_data=active_load_df, contract=contract)
+    # Collect all loaded contracts to form portfolio for monthly dispatch
+    loaded_dict = st.session_state.get(f"{key_prefix}_contract_loaded_contracts_dict", {})
+    contracts_portfolio = list(loaded_dict.values()) if loaded_dict else [contract]
+    if contract not in contracts_portfolio:
+        contracts_portfolio.append(contract)
+
+    # Calculate live bill breakdown across portfolio of monthly contracts
+    full_breakdown: FinancialCostBreakdown = compute_financial_bill(load_data=active_load_df, contract=contracts_portfolio)
     curr = getattr(contract, "currency", "EUR")
 
     # Period filter selector
@@ -379,10 +465,18 @@ def render_minimal_contract_system(key_prefix: str = "sandbox_min") -> None:
         st.write("")
         is_single_month = (selected_period != overview_label)
         if is_single_month:
-            st.info(f"Viewing single-month detail for **{selected_period}**")
+            active_month_c = _resolve_contract_for_month(contracts_portfolio, selected_period, default_contract=contract)
+            st.info(
+                f":material/contract: Active Contract for **{selected_period}**: **{active_month_c.name}** "
+                f"({active_month_c.contracted_capacity_kw:.0f} kW, {active_month_c.monthly_capacity_tariff:.4f} {active_month_c.currency}/kW/mo)"
+            )
+        else:
+            distinct_names = list(dict.fromkeys(c.name for c in contracts_portfolio))
+            if len(distinct_names) > 1:
+                st.info(f":material/account_tree: Multi-Contract portfolio active (**{len(distinct_names)}** contract configurations across 12 months).")
 
     if is_single_month:
-        breakdown = compute_financial_bill(load_data=active_load_df, contract=contract, target_month=selected_period)
+        breakdown = compute_financial_bill(load_data=active_load_df, contract=contracts_portfolio, target_month=selected_period)
     else:
         breakdown = full_breakdown
 

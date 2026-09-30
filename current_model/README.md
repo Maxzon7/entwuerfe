@@ -83,9 +83,10 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Calendar Models** | `CalendarConfig`, holiday calendars, weekend off-peak logic | [`models/calendar_config.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/calendar_config.py) |
 | **Preset Templates** | Industry, Office, EV-Hub load consumers and contract presets | [`models/presets.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/presets.py) |
 | **UI Testing Sandbox Lab** | Isolated Streamlit playground for UI prototyping & widget testing | [`ui_sandbox/sandbox_app.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/sandbox_app.py) |
-| **Minimal Contract Lab** | Streamlined Electricity Contract & Consumption sandbox module | [`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py) |
+| **Minimal Contract Lab** | Streamlined Electricity Contract & Consumption sandbox module with monthly validity | [`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py) |
 | **Sandbox Architecture Doc** | Sandbox rules, one-way dependency isolation, quick-start guide | [`ui_sandbox/README.md`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/README.md) |
-| **Automated Test Runner** | Regression & health-check runner (130 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
+| **Monthly Contract Tests** | Unit tests for monthly contract validity periods, resolution & billing | [`tests/test_monthly_contracts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_contracts.py) |
+| **Automated Test Runner** | Regression & health-check runner (136 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
 
 
 ---
@@ -233,13 +234,18 @@ If the active scenario is set to **Status Quo (Base Scenario)**, the application
 * **Contract Domain Model ([`models/contract.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/contract.py))**:
   * **Capacity & Demand Tariffs**: Fixed base monthly charge, contracted active capacity charge ($/kW/month$), and measured peak demand fee ($/kW/month$).
   * **Dynamic Time-of-Use (TOU) Rates**: Configurable table of tariff intervals (*Peak/Pico*, *Shoulder/Resto*, *Off-Peak/Valle*) with overnight interval support and weekend off-peak rules.
+  * **Monthly Validity Periods (`applicable_months`)**: Contracts specify which calendar months they govern (defaults to all 12 months `[1..12]`). Enables multi-contract portfolios for jurisdictions with monthly varying supply rates (e.g. Netherlands dynamic or seasonal commercial contracts).
   * **Power Factor & Reactive Penalties**: $\cos\phi$ threshold monitoring and excess reactive energy charges ($/kVARh$).
   * **Dynamic Taxes & Levies**: Percentage-based taxes (VAT, provincial surcharges), per-kWh levies, and fixed monthly charges.
+  * **Presets**: Includes Argentina T2/T3, European Commercial, and Dutch Commercial Multi-Tariff (`Netherlands Commercial Multi-Tariff (EUR)`).
 * **Financial Billing Engine ([`core/financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/financial_engine.py))**:
-  * Couples dynamically with the active load profile.
+  * Couples dynamically with the active load profile across single contracts or multi-contract monthly portfolios via `_resolve_contract_for_month`.
+  * Evaluates each month in the timeseries against its designated contract parameters (capacity fees, peak limits, TOU rate intervals, taxes).
   * Generates itemized monthly cost breakdowns, effective unit costs ($/kWh$), fixed vs. variable cost splits, and full 12-month payment schedules (*Zahlungsreihe*).
 * **Dynamic Tariff Switcher ([`ui/tab2_contract/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/view.py))**:
   * Evaluates alternative electricity supply contracts for sub-scenarios, calculating direct annual cost savings and bill reductions against the Status Quo.
+* **UI Testing Sandbox Lab ([`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py))**:
+  * Rapid interactive playground with streamlined terminology, 1-click contract duplication, month selection, and an interactive 12-month visual assignment matrix.
 
 ---
 

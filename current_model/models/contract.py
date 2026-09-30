@@ -47,6 +47,44 @@ class Contract:
     # Taxes & Additional Fees (Dynamic Table)
     taxes_and_fees: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Applicable validity months (1 = Jan, ..., 12 = Dec). Defaults to all 12 months.
+    applicable_months: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+
+    MONTH_NAMES: List[str] = field(default_factory=lambda: [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ], repr=False)
+
+    MONTH_ABBRS: List[str] = field(default_factory=lambda: [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ], repr=False)
+
+    def applies_to_month(self, month: Any) -> bool:
+        """
+        Determines whether this contract is active for a given month.
+        Accepts: integer (1-12), month name ('January', 'january'), abbreviation ('Jan'), or date/datetime.
+        """
+        if not self.applicable_months:
+            return True
+        if hasattr(month, "month"):
+            month = month.month
+        if isinstance(month, int):
+            return month in self.applicable_months
+        m_str = str(month).strip().lower()
+        month_abbrs = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        month_fulls = [
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december"
+        ]
+        for idx, (abbr, full) in enumerate(zip(month_abbrs, month_fulls), start=1):
+            if m_str == abbr or m_str == full or m_str.startswith(abbr):
+                return idx in self.applicable_months
+        try:
+            m_int = int(m_str)
+            return m_int in self.applicable_months
+        except (ValueError, TypeError):
+            return True
 
     def _parse_time_to_minutes(self, t_val: Any) -> int:
         """Helper to convert time string, int hour, or datetime.time to minutes of day [0, 1440]."""
@@ -134,6 +172,7 @@ class Contract:
             ],
             "default_energy_rate": float(self.default_energy_rate),
             "weekend_is_off_peak": bool(self.weekend_is_off_peak),
+            "applicable_months": [int(m) for m in self.applicable_months] if self.applicable_months else [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
             "taxes_and_fees": [
                 {
                     "name": str(t.get("name", "")),
@@ -163,6 +202,22 @@ class Contract:
         min_power_factor = float(data.get("min_power_factor", 0.90))
         reactive_power_allowance_pct = float(data.get("reactive_power_allowance_pct", 33.0))
         weekend_is_off_peak = bool(data.get("weekend_is_off_peak", False))
+
+        raw_months = data.get("applicable_months")
+        if raw_months is None or not isinstance(raw_months, list) or len(raw_months) == 0:
+            applicable_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        else:
+            applicable_months = []
+            for m in raw_months:
+                try:
+                    m_int = int(m)
+                    if 1 <= m_int <= 12 and m_int not in applicable_months:
+                        applicable_months.append(m_int)
+                except (ValueError, TypeError):
+                    continue
+            if not applicable_months:
+                applicable_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            applicable_months.sort()
 
         raw_tou = data.get("tou_rates", [])
         tou_rates = []
@@ -209,6 +264,7 @@ class Contract:
             tou_rates=tou_rates,
             default_energy_rate=default_energy_rate,
             weekend_is_off_peak=weekend_is_off_peak,
+            applicable_months=applicable_months,
             taxes_and_fees=taxes_and_fees
         )
 
@@ -352,6 +408,32 @@ def get_contract_presets() -> Dict[str, Contract]:
             taxes_and_fees=[
                 {"name": "Electricity Tax (Stromsteuer)", "type": "per_kwh", "value": 0.0205, "description": "Statutory excise duty"},
                 {"name": "VAT / Mehrwertsteuer", "type": "percentage", "value": 19.00, "description": "Value added tax"}
+            ]
+        ),
+        "Netherlands Commercial Multi-Tariff (EUR)": Contract(
+            name="Netherlands Commercial Contract",
+            currency="EUR",
+            base_monthly_fee=75.00,
+            contracted_capacity_kw=350.0,
+            monthly_capacity_tariff=3.85,
+            demand_capacity_tariff=1.20,
+            max_physical_limit_kw=630.0,
+            peak_penalty_rate=8.50,
+            reactive_power_tariff=0.025,
+            min_power_factor=0.90,
+            reactive_power_allowance_pct=33.0,
+            tou_rates=[
+                {"name": "Daltarief / Off-Peak (23:00 - 07:00)", "rate": 0.1650, "start_time": "00:00", "end_time": "07:00"},
+                {"name": "Normaaltarief / Peak (07:00 - 23:00)", "rate": 0.2450, "start_time": "07:00", "end_time": "23:00"},
+                {"name": "Daltarief / Off-Peak (23:00 - 07:00)", "rate": 0.1650, "start_time": "23:00", "end_time": "24:00"}
+            ],
+            default_energy_rate=0.2450,
+            weekend_is_off_peak=True,
+            applicable_months=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            taxes_and_fees=[
+                {"name": "Energiebelasting (EB)", "type": "per_kwh", "value": 0.0131, "description": "National energy tax per kWh"},
+                {"name": "ODE-heffing", "type": "per_kwh", "value": 0.0055, "description": "Opslag Duurzame Energie"},
+                {"name": "BTW / VAT (21%)", "type": "percentage", "value": 21.00, "description": "Dutch Value Added Tax"}
             ]
         )
     }

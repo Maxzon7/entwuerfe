@@ -45,11 +45,14 @@ python -m streamlit run current_model/ui_sandbox/sandbox_app.py
 
 ## :material/featured_play_list: Core Functionality
 
-1. **⚡ 1. Consumption (CSV Load Profile Ingestion)**:
+1. **:material/bolt: 1. Consumption (CSV Load Profile Ingestion)**:
    - Upload single/multi-channel CSV meter files or load the 15-minute demo dataset via `render_csv_inspector()`.
    - Automatic delimiter detection, column mapping, and 15-minute timeseries visualization.
 
-2. **📄 2. Electricity Contract & Live Financial Assessment**:
-   - Directly underneath, configure contractual supply parameters via `render_tab2_base_contract()`.
-   - Contract presets, dynamic Time-of-Use (TOU) rates, capacity charges, overload penalties, and taxes.
-   - Computes real-time billing metrics, Load vs. Limit curves, 12-month stacked payment schedules, and itemized invoice tables.
+2. **:material/description: 2. Electricity Contract & Live Financial Assessment**:
+   - Configure contractual supply parameters with clear, accessible terminology.
+   - **Monthly Contract Validity (`applicable_months`)**: Define validity periods per contract (defaulting to all 12 months). Multi-contract portfolio allows customizing different rates, capacity tariffs, and peak charges per month (e.g. Netherlands dynamic/seasonal contracts vs. standard single-tariff contracts).
+   - **12-Month Coverage Overview Matrix**: Interactive visual cards display which contract governs each calendar month.
+   - **Contract Duplication & Management**: Duplicate contracts with 1 click to create monthly variants (e.g., Q1 vs. Q2-Q4, Summer vs. Winter).
+   - **Presets**: Includes European, Argentine, and Netherlands commercial multi-tariff presets (`Netherlands Commercial Multi-Tariff (EUR)`).
+   - Computes real-time billing metrics, single-month focus breakdowns, 12-month stacked payment schedules (Zahlungsreihe), and itemized invoice tables.

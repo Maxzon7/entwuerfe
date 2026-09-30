@@ -45,17 +45,58 @@ def _calculate_taxes_for_subtotal(
     return tax_sum
 
 
+def _resolve_contract_for_month(
+    contract_input: Union[Contract, List[Contract], Dict[Any, Contract]],
+    month_val: Any,
+    default_contract: Optional[Contract] = None
+) -> Contract:
+    """
+    Finds the applicable Contract for a given month (1-12, or month name).
+    If a list of contracts is provided, searches in reverse for the first matching contract
+    whose applicable_months contains month_val. If none matches, returns default_contract.
+    """
+    if isinstance(contract_input, Contract):
+        return contract_input
+    if isinstance(contract_input, dict):
+        if isinstance(month_val, int) and month_val in contract_input:
+            return contract_input[month_val]
+        m_str = str(month_val).strip().lower()
+        for k, v in contract_input.items():
+            if str(k).strip().lower() == m_str:
+                return v
+            if isinstance(v, Contract) and v.applies_to_month(month_val):
+                return v
+        return default_contract or next(iter(contract_input.values()))
+    if isinstance(contract_input, list):
+        if not contract_input:
+            return default_contract or Contract()
+        for c in reversed(contract_input):
+            if isinstance(c, Contract) and c.applies_to_month(month_val):
+                return c
+        return default_contract or contract_input[0]
+    return default_contract or Contract()
+
+
 def compute_financial_bill(
     load_data: Union[pd.DataFrame, np.ndarray, List[float]],
-    contract: Contract,
+    contract: Union[Contract, List[Contract], Dict[Any, Contract]],
     duration_days: Optional[float] = None,
     step_hours: float = 0.25,
     target_month: Optional[str] = None
 ) -> FinancialCostBreakdown:
     """
-    Evaluates a load curve against a Contract to generate a comprehensive, itemized financial assessment
-    including monthly payment timeseries schedule across the full duration, or focused on a specific target month.
+    Evaluates a load curve against a Contract (or portfolio of monthly Contracts) to generate
+    a comprehensive, itemized financial assessment including monthly payment timeseries schedule
+    across the full duration, or focused on a specific target month.
     """
+    # Determine primary contract for general metadata fallback
+    if isinstance(contract, list):
+        primary_contract = contract[0] if contract else Contract()
+    elif isinstance(contract, dict):
+        primary_contract = next(iter(contract.values())) if contract else Contract()
+    else:
+        primary_contract = contract
+
     # If a specific target month is requested (e.g. 'Feb 2026'), compute full series first then isolate target month
     if target_month and isinstance(load_data, pd.DataFrame) and "timestamp" in load_data.columns:
         full_breakdown = compute_financial_bill(load_data, contract, duration_days=duration_days, step_hours=step_hours, target_month=None)
@@ -64,9 +105,10 @@ def compute_financial_bill(
         if mask.any():
             month_df = load_data.loc[mask].copy()
             month_days = len(month_df) * step_hours / 24.0
+            month_contract = _resolve_contract_for_month(contract, target_month, default_contract=primary_contract)
             month_breakdown = compute_financial_bill(
                 load_data=month_df,
-                contract=contract,
+                contract=month_contract,
                 duration_days=month_days,
                 step_hours=step_hours,
                 target_month=None
@@ -75,7 +117,7 @@ def compute_financial_bill(
             month_breakdown.monthly_series = full_breakdown.monthly_series
             return month_breakdown
 
-    currency = getattr(contract, "currency", "ARS")
+    currency = getattr(primary_contract, "currency", "ARS")
 
     # 1. Standardize input data and calculate duration & sampling
     if isinstance(load_data, pd.DataFrame):
@@ -155,12 +197,15 @@ def compute_financial_bill(
 
         if timestamps and idx < len(timestamps) and pd.notnull(timestamps[idx]):
             dt = timestamps[idx]
+            slot_month = dt.month if hasattr(dt, "month") else 1
+            slot_contract = _resolve_contract_for_month(contract, slot_month, default_contract=primary_contract)
         else:
             minute_of_day = int((idx * (step_hours * 60)) % 1440)
             dt = datetime.time(minute_of_day // 60, minute_of_day % 60)
+            slot_contract = primary_contract
 
         matched_bucket_name = None
-        matched_rate = contract.get_energy_rate(dt)
+        matched_rate = slot_contract.get_energy_rate(dt)
 
         for tou in tou_rates_config:
             if float(tou.get("rate", 0.0)) == matched_rate:
@@ -349,19 +394,30 @@ def compute_financial_bill(
                     sub_peak = float(sub_powers.max()) if len(sub_powers) > 0 else 0.0
                     sub_days = max(1.0, len(sub_df) * step_hours / 24.0)
 
+                    # Determine contract for this specific month
+                    sub_month_int = period.month
+                    sub_contract = _resolve_contract_for_month(contract, sub_month_int, default_contract=primary_contract)
+
+                    sub_contracted_kw = float(getattr(sub_contract, "contracted_capacity_kw", 0.0))
+                    sub_cap_tariff = float(getattr(sub_contract, "monthly_capacity_tariff", 0.0))
+                    sub_demand_cap_tariff = float(getattr(sub_contract, "demand_capacity_tariff", 0.0))
+                    sub_penalty_rate = float(getattr(sub_contract, "peak_penalty_rate", 0.0))
+                    sub_base_monthly = float(getattr(sub_contract, "base_monthly_fee", 0.0))
+                    sub_taxes_config = getattr(sub_contract, "taxes_and_fees", [])
+
                     # Compute energy cost for this calendar month
                     sub_energy_cost = 0.0
                     for s_idx, s_kw in enumerate(sub_powers):
                         s_dt = sub_ts[s_idx]
-                        sub_energy_cost += (s_kw * step_hours * contract.get_energy_rate(s_dt))
+                        sub_energy_cost += (s_kw * step_hours * sub_contract.get_energy_rate(s_dt))
 
                     # Capacity & Demand & Base fees for this month
-                    sub_cap_cost = contracted_kw * cap_tariff + (sub_peak * demand_cap_tariff)
-                    sub_excess = max(0.0, sub_peak - contracted_kw)
-                    sub_penalty = sub_excess * penalty_rate
-                    sub_base = base_fee_monthly
+                    sub_cap_cost = sub_contracted_kw * sub_cap_tariff + (sub_peak * sub_demand_cap_tariff)
+                    sub_excess = max(0.0, sub_peak - sub_contracted_kw)
+                    sub_penalty = sub_excess * sub_penalty_rate
+                    sub_base = sub_base_monthly
                     sub_net = sub_energy_cost + sub_cap_cost + sub_penalty + sub_base
-                    sub_taxes = _calculate_taxes_for_subtotal(sub_net, sub_kwh, 1.0, taxes_and_fees_config)
+                    sub_taxes = _calculate_taxes_for_subtotal(sub_net, sub_kwh, 1.0, sub_taxes_config)
                     sub_gross = sub_net + sub_taxes
                     sub_rate = (sub_gross / sub_kwh) if sub_kwh > 0 else 0.0
 
@@ -386,22 +442,41 @@ def compute_financial_bill(
     # Case B: Standard 12-month calendar schedule for 24h synthetic typical daily profile (no real calendar dates)
     if not is_real_timestamped_data:
         daily_kwh = total_consumption_kwh / max(1.0, duration_days)
-        daily_energy_cost = total_energy_period / max(1.0, duration_days)
-        demand_cap_tariff = float(getattr(contract, "demand_capacity_tariff", 0.0))
         month_days_calendar = [
             ("January", 31), ("February", 28), ("March", 31), ("April", 30),
             ("May", 31), ("June", 30), ("July", 31), ("August", 31),
             ("September", 30), ("October", 31), ("November", 30), ("December", 31)
         ]
 
-        for m_name, m_days in month_days_calendar:
+        for m_idx, (m_name, m_days) in enumerate(month_days_calendar, start=1):
+            m_contract = _resolve_contract_for_month(contract, m_idx, default_contract=primary_contract)
+            m_contracted_kw = float(getattr(m_contract, "contracted_capacity_kw", 0.0))
+            m_cap_tariff = float(getattr(m_contract, "monthly_capacity_tariff", 0.0))
+            m_demand_cap_tariff = float(getattr(m_contract, "demand_capacity_tariff", 0.0))
+            m_penalty_rate = float(getattr(m_contract, "peak_penalty_rate", 0.0))
+            m_base_monthly = float(getattr(m_contract, "base_monthly_fee", 0.0))
+            m_taxes_config = getattr(m_contract, "taxes_and_fees", [])
+
+            # Compute daily energy cost using this month's contract
+            m_daily_energy_cost = 0.0
+            for idx, p_kw in enumerate(powers):
+                slot_kwh = p_kw * step_hours
+                if timestamps and idx < len(timestamps) and pd.notnull(timestamps[idx]):
+                    dt = timestamps[idx]
+                else:
+                    minute_of_day = int((idx * (step_hours * 60)) % 1440)
+                    dt = datetime.time(minute_of_day // 60, minute_of_day % 60)
+                m_daily_energy_cost += (slot_kwh * m_contract.get_energy_rate(dt))
+            m_daily_energy_cost = m_daily_energy_cost / max(1.0, duration_days)
+
             m_kwh = daily_kwh * m_days
-            m_energy_cost = daily_energy_cost * m_days
-            m_cap_cost = contracted_kw * cap_tariff + (peak_demand_kw * demand_cap_tariff)
-            m_penalty = excess_kw * penalty_rate
-            m_base = base_fee_monthly
+            m_energy_cost = m_daily_energy_cost * m_days
+            m_cap_cost = m_contracted_kw * m_cap_tariff + (peak_demand_kw * m_demand_cap_tariff)
+            m_excess = max(0.0, peak_demand_kw - m_contracted_kw)
+            m_penalty = m_excess * m_penalty_rate
+            m_base = m_base_monthly
             m_net = m_energy_cost + m_cap_cost + m_penalty + m_base
-            m_taxes = _calculate_taxes_for_subtotal(m_net, m_kwh, 1.0, taxes_and_fees_config)
+            m_taxes = _calculate_taxes_for_subtotal(m_net, m_kwh, 1.0, m_taxes_config)
             m_gross = m_net + m_taxes
             m_rate = (m_gross / m_kwh) if m_kwh > 0 else 0.0
 
@@ -423,7 +498,7 @@ def compute_financial_bill(
                 )
             )
 
-    if is_real_timestamped_data and monthly_series:
+    if monthly_series:
         total_energy_period = sum(m.energy_cost_net for m in monthly_series)
         capacity_cost_period = sum(m.capacity_cost_net for m in monthly_series)
         penalty_cost_period = sum(m.penalty_cost_net for m in monthly_series)
@@ -441,14 +516,14 @@ def compute_financial_bill(
         total_taxes_monthly = total_taxes_period / m_count
         total_gross_monthly = total_gross_period / m_count
 
-        demand_cap_tariff = float(getattr(contract, "demand_capacity_tariff", 0.0))
+        demand_cap_tariff = float(getattr(primary_contract, "demand_capacity_tariff", 0.0))
         for item in line_items:
             if item.category == "Peak Penalty":
                 item.cost_period = round(penalty_cost_period, 2)
                 item.cost_monthly = round(penalty_cost_monthly, 2)
             elif item.category == "Capacity (Contracted)":
-                item.cost_period = round(contracted_kw * cap_tariff * m_count, 2)
-                item.cost_monthly = round(contracted_kw * cap_tariff, 2)
+                item.cost_period = round(capacity_cost_period, 2)
+                item.cost_monthly = round(capacity_cost_monthly, 2)
             elif item.category == "Demand (Measured)":
                 meas_demand_sum = sum(m.peak_demand_kw * demand_cap_tariff for m in monthly_series)
                 item.cost_period = round(meas_demand_sum, 2)
@@ -456,6 +531,12 @@ def compute_financial_bill(
             elif item.category == "Base Fee":
                 item.cost_period = round(base_fee_period, 2)
                 item.cost_monthly = round(base_fee_monthly, 2)
+            elif item.category == "Active Energy":
+                item.cost_period = round(total_energy_period, 2)
+                item.cost_monthly = round(total_energy_monthly, 2)
+            elif item.category == "Taxes & Levies":
+                item.cost_period = round(total_taxes_period, 2)
+                item.cost_monthly = round(total_taxes_monthly, 2)
             item.share_pct = round((item.cost_period / total_gross_period * 100.0), 1) if total_gross_period > 0 else 0.0
 
         effective_kwh_price = (total_gross_period / total_consumption_kwh) if total_consumption_kwh > 0 else 0.0
