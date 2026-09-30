@@ -36,8 +36,7 @@ from current_model.ui.common.cards import render_kpi_card
 from current_model.ui.tab_hybrid_beta.charts import (
     create_hybrid_dispatch_chart,
     create_hybrid_soc_chart,
-    create_hybrid_monthly_balance_chart,
-    create_hybrid_duration_curve
+    create_hybrid_monthly_balance_chart
 )
 
 
@@ -373,44 +372,38 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     # --------------------------------------------------------------------------
     # 6. Interactive Visualizations Suite
     # --------------------------------------------------------------------------
-    tab_chart1, tab_chart2, tab_chart3, tab_chart4, tab_chart5 = st.tabs([
-        ":material/show_chart: 15-Min Dispatch Curve",
-        ":material/battery_charging_full: BESS State of Charge (SoC)",
+    tab_chart1, tab_chart2, tab_chart3 = st.tabs([
+        ":material/show_chart: 15-Min Dispatch & Battery Dynamics",
         ":material/bar_chart: Monthly Energy Balance",
-        ":material/stacked_line_chart: Load Duration & Peak Shaving",
         ":material/table_chart: Monthly Summary Table"
     ])
 
     with tab_chart1:
         st.markdown("##### 15-Minute Combined Power Dispatch (Load, Solar, Battery, Grid)")
-        col_ctrl1, col_ctrl2 = st.columns([3, 1])
-        with col_ctrl2:
-            days_sample = st.select_slider(
-                "Display Sample Duration",
-                options=[1, 3, 7, 14, 30, "Full Period"],
-                value=7,
-                key=f"{key_prefix}_days_slider"
-            )
-        sample_days = None if days_sample == "Full Period" else int(days_sample)
-        fig_dispatch = create_hybrid_dispatch_chart(df_dispatch, target_cap_kw=float(target_shaving_cap), days_to_show=sample_days)
+        fig_dispatch = create_hybrid_dispatch_chart(
+            df_dispatch=df_dispatch,
+            target_cap_kw=float(target_shaving_cap),
+            solar_kwp=float(solar_kwp),
+            capacity_kwh=float(bess_kwh)
+        )
         st.plotly_chart(fig_dispatch, use_container_width=True)
 
-    with tab_chart2:
-        st.markdown("##### Battery Storage State of Charge (%) & Operating Limits")
-        fig_soc = create_hybrid_soc_chart(df_dispatch, soc_min_pct=float(soc_min), soc_max_pct=float(soc_max), days_to_show=sample_days)
+        st.markdown("##### Battery Storage State of Charge (SoC) Dynamics & Operating Envelope")
+        fig_soc = create_hybrid_soc_chart(
+            df_dispatch=df_dispatch,
+            bess_config=bess_config,
+            soc_min_pct=float(soc_min),
+            soc_max_pct=float(soc_max),
+            capacity_kwh=float(bess_kwh)
+        )
         st.plotly_chart(fig_soc, use_container_width=True)
 
-    with tab_chart3:
+    with tab_chart2:
         st.markdown("##### Monthly Energy Balance & Sourcing Composition")
         fig_monthly = create_hybrid_monthly_balance_chart(monthly_metrics)
         st.plotly_chart(fig_monthly, use_container_width=True)
 
-    with tab_chart4:
-        st.markdown("##### Load Duration Curve: Peak Demand Shaving & Overload Mitigation")
-        fig_duration = create_hybrid_duration_curve(df_dispatch, grid_limit_kw=float(contract_cap_kw))
-        st.plotly_chart(fig_duration, use_container_width=True)
-
-    with tab_chart5:
+    with tab_chart3:
         st.markdown("##### Monthly Energy Metrics Breakdown (MWh)")
         df_monthly_table = pd.DataFrame([
             {

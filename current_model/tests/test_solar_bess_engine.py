@@ -168,6 +168,35 @@ class TestSolarBESSEngine(unittest.TestCase):
         self.assertLessEqual(kpis.autarky_rate_pct, 100.0)
         self.assertEqual(len(res.monthly_metrics), 12)
 
+    def test_solar_bess_gap_diurnal_alignment(self):
+        """Verify that solar generation is strictly aligned to diurnal solar noon (12:00) even with large gaps."""
+        # Create a load dataframe with a 22.5-day gap (Jan 1-Jan 10, then gap to Feb 1)
+        part1 = pd.date_range("2025-01-01 00:00:00", "2025-01-10 12:45:00", freq="15min")
+        part2 = pd.date_range("2025-02-02 00:00:00", "2025-02-10 23:45:00", freq="15min")
+        ts_gap = part1.append(part2)
+
+        df_gap_load = pd.DataFrame({
+            "timestamp": ts_gap,
+            "Total_Demand_kW": np.full(len(ts_gap), 150.0)
+        })
+
+        res = simulate_solar_bess_dispatch(
+            load_df=df_gap_load,
+            solar_config=self.solar_cfg,
+            bess_config=self.bess_cfg,
+            grid_limit_kw=200.0,
+            location=self.location
+        )
+
+        df_out = res.df_dispatch
+        # Check that solar power is ALWAYS 0.0 at midnight (00:00) on all dates in the output
+        midnight_rows = df_out[df_out["timestamp"].dt.hour == 0]
+        self.assertTrue((midnight_rows["P_Solar_kW"] == 0.0).all())
+
+        # Check that solar power peaks at midday (between 11:00 and 15:00)
+        noon_rows = df_out[df_out["timestamp"].dt.hour == 13]
+        self.assertTrue((noon_rows["P_Solar_kW"] > 50.0).all())
+
 
 if __name__ == "__main__":
     unittest.main()

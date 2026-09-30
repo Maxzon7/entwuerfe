@@ -33,10 +33,12 @@ class GeneratorConfig:
     fuel_curve_intercept_l_per_kw_rated: float = 0.04 # No-load / standby fuel intercept (L/h per rated kW)
 
     # Operational Dispatch Modes
-    # Options: "islanding_grid_congestion", "peak_shaving_assist", "emergency_baseload"
+    # Options: "islanding_grid_congestion", "peak_shaving_assist", "emergency_baseload", "residual_load_follow"
     dispatch_mode: str = "peak_shaving_assist"
     islanding_grid_limit_kw: float = 0.0          # Grid physical cap above which generator assists (kW)
     peak_shaving_trigger_kw: float = 300.0        # Facility demand trigger threshold for genset start (kW)
+    is_backup_mode: bool = False                  # Operates as backup / residual deficit follower behind Solar / BESS
+    backup_coverage_pct: float = 100.0            # Target percentage of residual load / deficit to cover (%)
 
     # Financial & Operational Economics
     is_financial_enabled: bool = True
@@ -80,6 +82,8 @@ class GeneratorConfig:
             "dispatch_mode": str(self.dispatch_mode),
             "islanding_grid_limit_kw": float(self.islanding_grid_limit_kw),
             "peak_shaving_trigger_kw": float(self.peak_shaving_trigger_kw),
+            "is_backup_mode": bool(self.is_backup_mode),
+            "backup_coverage_pct": float(self.backup_coverage_pct),
             "is_financial_enabled": bool(self.is_financial_enabled),
             "currency": str(self.currency),
             "capital_cost": float(self.capital_cost),
@@ -103,6 +107,8 @@ class GeneratorConfig:
             dispatch_mode=str(data.get("dispatch_mode", "peak_shaving_assist")),
             islanding_grid_limit_kw=float(data.get("islanding_grid_limit_kw", 0.0)),
             peak_shaving_trigger_kw=float(data.get("peak_shaving_trigger_kw", 300.0)),
+            is_backup_mode=bool(data.get("is_backup_mode", False)),
+            backup_coverage_pct=float(data.get("backup_coverage_pct", 100.0)),
             is_financial_enabled=bool(data.get("is_financial_enabled", True)),
             currency=str(data.get("currency", "EUR")),
             capital_cost=float(data.get("capital_cost", 18000.0)),
@@ -124,6 +130,12 @@ class GeneratorKPIs:
     om_cost_total: float = 0.0
     total_operating_cost: float = 0.0
     levelized_cost_per_kwh: float = 0.0
+    # Residual load & peak metrics
+    residual_demand_before_kwh: float = 0.0
+    residual_demand_after_kwh: float = 0.0
+    peak_shaved_kw: float = 0.0
+    orig_peak_kw: float = 0.0
+    new_peak_kw: float = 0.0
 
 
 def get_generator_presets() -> Dict[str, GeneratorConfig]:

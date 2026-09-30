@@ -26,26 +26,60 @@ from current_model.core.financial_engine import compute_financial_bill
 
 
 def simulate_generator_peaking(
-    df_load: pd.DataFrame,
-    power_col: str,
-    contract: Contract,
-    gen_config: GeneratorConfig,
-    step_hours: float = 0.25
+    df_load: Union[pd.DataFrame, np.ndarray, pd.Series],
+    power_col: Optional[str] = None,
+    contract: Optional[Contract] = None,
+    gen_config: Optional[GeneratorConfig] = None,
+    step_hours: float = 0.25,
+    residual_series: Optional[np.ndarray] = None,
+    solar_direct_series: Optional[np.ndarray] = None,
+    bess_discharge_series: Optional[np.ndarray] = None
 ) -> Dict[str, Any]:
     """
-    Executes a high-precision 15-minute simulation evaluating generator peak shaving.
+    Executes a high-precision 15-minute simulation evaluating generator peak shaving and backup dispatch.
     
     Dispatch Logic:
-      - Whenever P_Load(t) > trigger_kw:
-          generator starts and produces min(excess_kw, rated_power_kw).
-          If minimum loading ratio is configured, generator runs at least min_power_kw.
-      - Residual Grid Draw: P_Grid_New(t) = max(0, P_Load(t) - P_Gen(t)).
-      - Fuel consumed per interval calculated via linear fuel curve:
-          Rate (L/h) = a * P_Gen + b * P_Rated
+      - Standalone Peaking / Congestion:
+          Whenever target_series(t) > trigger_kw:
+              generator produces min(excess_kw, rated_power_kw) (respecting min_power_kw).
+      - Backup / Residual Follower:
+          Whenever target_series(t) > 0:
+              generator covers configured backup_coverage_pct of remaining deficit up to rated_power_kw.
+      - Residual Grid Draw: P_Grid_New(t) = max(0, target_series(t) - P_Gen(t)).
+      - Fuel consumed calculated via linear fuel curve:
+          Rate (L/h or m³/h) = a * P_Gen + b * P_Rated
     """
-    load_series = df_load[power_col].to_numpy(dtype=float)
+    # 0. Normalize load series input
+    if isinstance(df_load, pd.DataFrame):
+        if power_col and power_col in df_load.columns:
+            load_series = df_load[power_col].to_numpy(dtype=float)
+        elif "Total_Demand_kW" in df_load.columns:
+            load_series = df_load["Total_Demand_kW"].to_numpy(dtype=float)
+        elif "P_Load_kW" in df_load.columns:
+            load_series = df_load["P_Load_kW"].to_numpy(dtype=float)
+        else:
+            num_cols = df_load.select_dtypes(include=[np.number]).columns
+            load_series = df_load[num_cols[-1]].to_numpy(dtype=float) if len(num_cols) > 0 else np.zeros(len(df_load))
+    elif isinstance(df_load, pd.Series):
+        load_series = df_load.to_numpy(dtype=float)
+    elif isinstance(df_load, np.ndarray):
+        load_series = df_load.astype(float)
+    else:
+        load_series = np.array([], dtype=float)
+
     load_series = np.nan_to_num(load_series, nan=0.0)
     n_steps = len(load_series)
+
+    # Target series for generator dispatch (residual load if provided, else load_series)
+    if residual_series is not None and len(residual_series) == n_steps:
+        target_series = np.nan_to_num(np.asarray(residual_series, dtype=float), nan=0.0)
+    else:
+        target_series = np.copy(load_series)
+
+    if gen_config is None:
+        gen_config = GeneratorConfig()
+    if contract is None:
+        contract = Contract(contracted_capacity_kw=400.0, monthly_capacity_tariff=0.15, default_energy_rate=0.20)
 
     duration_days = (n_steps * step_hours) / 24.0
     annual_factor = (365.0 / duration_days) if (0.1 < duration_days < 360.0) else 1.0
@@ -56,59 +90,90 @@ def simulate_generator_peaking(
 
     rated_kw = float(gen_config.rated_power_kw)
     min_power_kw = float(gen_config.min_power_kw)
+    is_backup = getattr(gen_config, "is_backup_mode", False) or gen_config.dispatch_mode in [
+        "emergency_baseload", "residual_load_follow", "islanding_grid_congestion"
+    ]
+    coverage_ratio = max(0.0, min(1.0, float(getattr(gen_config, "backup_coverage_pct", 100.0)) / 100.0))
 
     # 1. Dispatch Arrays
     gen_power = np.zeros(n_steps, dtype=float)
-    new_grid_power = np.copy(load_series)
+    new_grid_power = np.copy(target_series)
     fuel_liters_interval = np.zeros(n_steps, dtype=float)
     is_running = np.zeros(n_steps, dtype=bool)
 
     # 2. 15-minute interval loop
     for i in range(n_steps):
-        p_act = load_series[i]
-        if p_act > trigger_kw:
-            excess = p_act - trigger_kw
-            p_gen = min(excess, rated_kw)
-            if p_gen > 0 and min_power_kw > 0:
-                p_gen = max(p_gen, min_power_kw)
-            
-            gen_power[i] = p_gen
-            new_grid_power[i] = max(0.0, p_act - p_gen)
-            is_running[i] = True
-            fuel_liters_interval[i] = gen_config.calc_fuel_consumption(p_gen, duration_hours=step_hours)
+        p_act = target_series[i]
+        
+        if is_backup:
+            if p_act > 0.1:
+                target_req = p_act * coverage_ratio
+                p_gen = min(target_req, rated_kw)
+                if p_gen > 0 and min_power_kw > 0:
+                    p_gen = max(p_gen, min(rated_kw, min_power_kw))
+                
+                gen_power[i] = p_gen
+                new_grid_power[i] = max(0.0, p_act - p_gen)
+                is_running[i] = True
+                fuel_liters_interval[i] = gen_config.calc_fuel_consumption(p_gen, duration_hours=step_hours)
+            else:
+                gen_power[i] = 0.0
+                new_grid_power[i] = p_act
+                is_running[i] = False
+                fuel_liters_interval[i] = 0.0
         else:
-            gen_power[i] = 0.0
-            new_grid_power[i] = p_act
-            is_running[i] = False
-            fuel_liters_interval[i] = 0.0
+            if p_act > trigger_kw:
+                excess = p_act - trigger_kw
+                p_gen = min(excess, rated_kw)
+                if p_gen > 0 and min_power_kw > 0:
+                    p_gen = max(p_gen, min(rated_kw, min_power_kw))
+                
+                gen_power[i] = p_gen
+                new_grid_power[i] = max(0.0, p_act - p_gen)
+                is_running[i] = True
+                fuel_liters_interval[i] = gen_config.calc_fuel_consumption(p_gen, duration_hours=step_hours)
+            else:
+                gen_power[i] = 0.0
+                new_grid_power[i] = p_act
+                is_running[i] = False
+                fuel_liters_interval[i] = 0.0
 
     # 3. Overall Operational Metrics
     total_run_intervals = int(np.sum(is_running))
     operating_hours = float(total_run_intervals * step_hours)
     total_fuel_liters = float(np.sum(fuel_liters_interval))
     total_generation_kwh = float(np.sum(gen_power) * step_hours)
+    starts_count = int(np.sum((is_running[1:] == True) & (is_running[:-1] == False))) + (1 if (len(is_running) > 0 and is_running[0]) else 0)
 
     fuel_cost_total = total_fuel_liters * float(gen_config.fuel_price_per_unit)
     maint_cost_total = operating_hours * float(gen_config.maintenance_cost_per_op_hour)
     total_op_cost = fuel_cost_total + maint_cost_total
 
     orig_peak = float(np.max(load_series)) if n_steps > 0 else 0.0
+    target_peak = float(np.max(target_series)) if n_steps > 0 else 0.0
     new_peak = float(np.max(new_grid_power)) if n_steps > 0 else 0.0
-    peak_shaved_kw = max(0.0, orig_peak - new_peak)
+    peak_shaved_kw = max(0.0, target_peak - new_peak)
 
     # 4. Construct Timeseries DataFrame for Charting
-    if "timestamp" in df_load.columns:
+    if isinstance(df_load, pd.DataFrame) and "timestamp" in df_load.columns:
         ts_series = pd.to_datetime(df_load["timestamp"])
     else:
-        ts_series = pd.date_range("2026-01-01", periods=n_steps, freq=f"{int(step_hours * 60)}min")
+        ts_series = pd.Series(pd.date_range("2026-01-01", periods=n_steps, freq=f"{int(step_hours * 60)}min"))
 
-    df_timeseries = pd.DataFrame({
+    timeseries_data = {
         "timestamp": ts_series,
         "Original_Load_kW": np.round(load_series, 2),
+        "Residual_Load_Before_Gen_kW": np.round(target_series, 2),
         "New_Grid_Load_kW": np.round(new_grid_power, 2),
         "Generator_Power_kW": np.round(gen_power, 2),
         "Fuel_Liters": np.round(fuel_liters_interval, 3)
-    })
+    }
+    if solar_direct_series is not None and len(solar_direct_series) == n_steps:
+        timeseries_data["Solar_Direct_kW"] = np.round(solar_direct_series, 2)
+    if bess_discharge_series is not None and len(bess_discharge_series) == n_steps:
+        timeseries_data["BESS_Discharge_kW"] = np.round(bess_discharge_series, 2)
+
+    df_timeseries = pd.DataFrame(timeseries_data)
 
     # 5. Month-by-Month Financial Evaluation (Zahlungsreihe)
     df_orig_input = pd.DataFrame({"P_kW": load_series, "timestamp": ts_series})
@@ -195,15 +260,22 @@ def simulate_generator_peaking(
         total_generation_kwh=round(total_generation_kwh, 1),
         total_fuel_units=round(total_fuel_liters, 1),
         operating_hours=round(operating_hours, 1),
+        starts_count=starts_count,
         fuel_cost_total=round(fuel_cost_total, 2),
         om_cost_total=round(maint_cost_total, 2),
         total_operating_cost=round(total_op_cost, 2),
-        levelized_cost_per_kwh=round((total_op_cost / total_generation_kwh), 3) if total_generation_kwh > 0 else 0.0
+        levelized_cost_per_kwh=round((total_op_cost / total_generation_kwh), 3) if total_generation_kwh > 0 else 0.0,
+        residual_demand_before_kwh=round(float(np.sum(target_series) * step_hours), 1),
+        residual_demand_after_kwh=round(float(np.sum(new_grid_power) * step_hours), 1),
+        peak_shaved_kw=round(peak_shaved_kw, 1),
+        orig_peak_kw=round(orig_peak, 1),
+        new_peak_kw=round(new_peak, 1)
     )
 
     return {
         "kpis": kpis,
         "orig_peak_kw": orig_peak,
+        "target_peak_kw": target_peak,
         "new_peak_kw": new_peak,
         "peak_shaved_kw": peak_shaved_kw,
         "trigger_kw": trigger_kw,
@@ -215,6 +287,116 @@ def simulate_generator_peaking(
         "annual_net_savings": cum_savings * annual_factor,
         "base_diagnostics": analyze_grid_violations(load_series, trigger_kw, step_hours=step_hours),
         "new_diagnostics": analyze_grid_violations(new_grid_power, trigger_kw, step_hours=step_hours)
+    }
+
+
+def simulate_hybrid_scenario_dispatch(
+    sub_scenario: Any,
+    df_load: pd.DataFrame,
+    power_col: str,
+    contract: Optional[Contract] = None,
+    location: Optional[Any] = None,
+    step_hours: float = 0.25
+) -> Dict[str, Any]:
+    """
+    Executes a unified multi-energy dispatch across Solar PV, BESS, and Generator in strict priority order:
+      1. Solar PV supplies facility load directly.
+      2. Solar PV surplus charges BESS (surplus exported to grid).
+      3. BESS discharges to supply remaining deficit or shave peaks.
+      4. Residual load (after PV & BESS) is routed to the On-Site Generator (peaker or backup).
+      5. Any remaining unmet load is imported from the utility grid.
+    """
+    if power_col and power_col in df_load.columns:
+        load_series = df_load[power_col].to_numpy(dtype=float)
+    elif "Total_Demand_kW" in df_load.columns:
+        load_series = df_load["Total_Demand_kW"].to_numpy(dtype=float)
+    else:
+        num_cols = df_load.select_dtypes(include=[np.number]).columns
+        load_series = df_load[num_cols[-1]].to_numpy(dtype=float) if len(num_cols) > 0 else np.zeros(len(df_load))
+
+    load_series = np.nan_to_num(load_series, nan=0.0)
+    n_steps = len(load_series)
+
+    p_solar = np.zeros(n_steps, dtype=float)
+    p_solar_direct = np.zeros(n_steps, dtype=float)
+    p_solar_export = np.zeros(n_steps, dtype=float)
+    p_bess_dis = np.zeros(n_steps, dtype=float)
+    p_res = np.copy(load_series)
+
+    # 1. Solar PV & BESS joint or separate dispatch
+    if getattr(sub_scenario, "include_solar", False) and getattr(sub_scenario, "solar_config", None):
+        from current_model.core.solar_engine import simulate_solar_pv_generation, align_solar_to_load_timestamps
+        from current_model.models.solar import SolarLocation
+        loc = location or SolarLocation()
+        solar_sim = simulate_solar_pv_generation(config=sub_scenario.solar_config, location=loc, load_df=df_load)
+        ts_load_seq = pd.to_datetime(df_load["timestamp"]) if "timestamp" in df_load.columns else pd.date_range("2026-01-01", periods=n_steps, freq=f"{int(step_hours * 60)}min")
+        p_solar = align_solar_to_load_timestamps(solar_sim.df_timeseries, ts_load_seq, solar_power_col="P_AC_kW")
+
+        if getattr(sub_scenario, "include_bess", False) and getattr(sub_scenario, "bess_config", None):
+            from current_model.core.solar_bess_engine import simulate_solar_bess_dispatch
+            grid_lim = float(contract.contracted_capacity_kw) if contract else 400.0
+            hybrid_res = simulate_solar_bess_dispatch(
+                load_df=df_load,
+                solar_config=sub_scenario.solar_config,
+                bess_config=sub_scenario.bess_config,
+                location=loc,
+                grid_limit_kw=grid_lim,
+                power_col=power_col,
+                step_hours=step_hours,
+                precomputed_solar_df=solar_sim.df_timeseries
+            )
+            p_solar_direct = hybrid_res.df_dispatch["P_Direct_kW"].to_numpy(dtype=float)
+            p_solar_export = hybrid_res.df_dispatch["P_Grid_Export_kW"].to_numpy(dtype=float)
+            p_bess_dis = hybrid_res.df_dispatch["P_BESS_Discharge_kW"].to_numpy(dtype=float)
+            p_res = hybrid_res.df_dispatch["P_Grid_Import_kW"].to_numpy(dtype=float)
+        else:
+            p_solar_direct = np.minimum(load_series, p_solar)
+            p_solar_export = np.maximum(0.0, p_solar - load_series)
+            p_bess_dis = np.zeros(n_steps, dtype=float)
+            p_res = np.maximum(0.0, load_series - p_solar_direct)
+    elif getattr(sub_scenario, "include_bess", False) and getattr(sub_scenario, "bess_config", None):
+        grid_lim = float(contract.contracted_capacity_kw) if contract else 400.0
+        bess_res = simulate_bess_dispatch(
+            bess_config=sub_scenario.bess_config,
+            load_df=df_load,
+            grid_limit_kw=grid_lim,
+            power_col=power_col,
+            step_hours=step_hours
+        )
+        p_bess_dis = bess_res.df_dispatch["P_BESS_Discharge_kW"].to_numpy(dtype=float)
+        p_solar_direct = np.zeros(n_steps, dtype=float)
+        p_solar_export = np.zeros(n_steps, dtype=float)
+        p_res = bess_res.df_dispatch["P_Grid_Total_kW"].to_numpy(dtype=float)
+
+    # 2. Generator Dispatch on Residual Load
+    gen_result = None
+    if getattr(sub_scenario, "include_generator", False) and getattr(sub_scenario, "generator_config", None):
+        gen_result = simulate_generator_peaking(
+            df_load=df_load,
+            power_col=power_col,
+            contract=contract,
+            gen_config=sub_scenario.generator_config,
+            step_hours=step_hours,
+            residual_series=p_res,
+            solar_direct_series=p_solar_direct,
+            bess_discharge_series=p_bess_dis
+        )
+        p_final_grid = gen_result["df_timeseries"]["New_Grid_Load_kW"].to_numpy(dtype=float)
+        p_gen = gen_result["df_timeseries"]["Generator_Power_kW"].to_numpy(dtype=float)
+    else:
+        p_final_grid = np.copy(p_res)
+        p_gen = np.zeros(n_steps, dtype=float)
+
+    return {
+        "load_series": load_series,
+        "p_solar": p_solar,
+        "p_solar_direct": p_solar_direct,
+        "p_solar_export": p_solar_export,
+        "p_bess_dis": p_bess_dis,
+        "p_residual_pre_gen": p_res,
+        "p_gen": p_gen,
+        "p_final_grid": p_final_grid,
+        "gen_result": gen_result
     }
 
 

@@ -49,7 +49,7 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Tab 4: DRACBV Beta** | Standalone generator peaking and peak shaving simulator (Beta) | [`ui/tab_dracbv_beta/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_dracbv_beta/view.py) |
 | **Tab 4: DRACBV Charts** | 15-minute generator dispatch curve & cumulative payment schedule | [`ui/tab_dracbv_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_dracbv_beta/charts.py) |
 | **Tab 5: Solar + BESS (Beta)** | Standalone isolated Solar PV + BESS hybrid dispatch simulator (Beta) | [`ui/tab_hybrid_beta/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/view.py) |
-| **Tab 5: Hybrid Charts** | 15-min hybrid dispatch curve, SoC profile, monthly balance & duration | [`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py) |
+| **Tab 5: Hybrid Charts** | 15-min hybrid dispatch curve, stacked BESS SoC profile, monthly balance & tables | [`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py) |
 | **Dynamic Tab: Solar PV** | Standalone physical generation simulator & load coupling integration | [`ui/tab3_solar/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/view.py) |
 | **Solar Forms & Physics** | Module sizing, tilt/azimuth, GPS coordinates & Perez loss factors | [`ui/tab3_solar/forms.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/forms.py) |
 | **Solar Standalone Charts** | 15-min generation curve, monthly yields, loss waterfall & tech matrix | [`ui/tab3_solar/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/charts.py) |
@@ -59,17 +59,19 @@ The application follows a strictly modular architecture where every UI tab, core
 | **BESS Physical Charts** | 15-min battery dispatch, SoC envelope, representative week profile | [`ui/tab4_bess/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab4_bess/charts.py) |
 | **BESS Financial View** | Turnkey CAPEX breakdown, demand charge savings, NPV, IRR, Payback | [`ui/tab4_bess/financial_view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab4_bess/financial_view.py) |
 | **BESS Financial Charts** | CAPEX donut chart, cash flow waterfall, sensitivity matrix | [`ui/tab4_bess/financial_charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab4_bess/financial_charts.py) |
+| **Dynamic Tab: Generator / Genset** | Peaking & residual backup generator dispatch view | [`ui/tab_generator/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_generator/view.py) |
+| **Generator Charts** | Multi-layer hybrid dispatch curve & cumulative payment schedule | [`ui/tab_generator/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_generator/charts.py) |
 | **Project & Scenario I/O** | Snapshot engine for `.dracproj` projects & `.drac` modular assets | [`core/project_io.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/project_io.py) |
 | **Synthetic Load Engine** | Vectorized 24h & 365-day annual load simulation with seasonal shifts | [`core/synthetic_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/synthetic_engine.py) |
 | **CSV Parser & Cleanser** | Auto-delimiter sniffer, European comma parser, resampling | [`core/csv_parser.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/csv_parser.py) |
 | **Load Processor Engine** | Load data normalization, unit conversion (kW/kWh), validation | [`core/load_processor.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/load_processor.py) |
 | **Metrics Engine** | Peak demand, load factor, base load, duration curve analytics | [`core/metrics_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/metrics_engine.py) |
 | **Contract Billing Engine** | TOU matching, capacity penalties, dynamic taxes, invoice schedules | [`core/financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/financial_engine.py) |
-| **Solar Physics Engine** | Solar geometry, Perez transposition, cell temperature, clipping, risk | [`core/solar_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_engine.py) |
+| **Solar Physics Engine** | Solar geometry, Perez transposition, cell temperature, clipping, diurnal calendar alignment | [`core/solar_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_engine.py) |
 | **Solar Financial Engine** | Solar LCOE, NPV, IRR, amortisation payback, 15-year cashflows | [`core/solar_financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_financial_engine.py) |
 | **BESS Dispatch Engine** | 15-min interval battery dispatch, SoC boundaries, grid peak shaving | [`core/bess_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/bess_engine.py) |
 | **BESS Financial Engine** | BESS investment economics, demand charge savings, sensitivity | [`core/bess_financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/bess_financial_engine.py) |
-| **Solar + BESS Hybrid Engine** | 15-min joint dispatch: PV direct -> BESS charge -> grid export -> BESS peak shave | [`core/solar_bess_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_bess_engine.py) |
+| **Solar + BESS Hybrid Engine** | 15-min joint dispatch: PV direct -> BESS charge -> grid export -> BESS peak shave (with diurnal calendar alignment) | [`core/solar_bess_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_bess_engine.py) |
 | **DRACBV Peaking Engine** | Generator peaking simulation, fuel consumption, rental/purchase OPEX | [`core/dracbv_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/dracbv_engine.py) |
 | **Scenario Domain Models** | `BaseScenario`, `SubScenario`, `ProjectContainer` domain structures | [`models/scenario.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/scenario.py) |
 | **Contract Domain Model** | `Contract`, TOU rate windows, taxes, capacity charges | [`models/contract.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/contract.py) |
@@ -84,7 +86,7 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Preset Templates** | Industry, Office, EV-Hub load consumers and contract presets | [`models/presets.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/presets.py) |
 | **UI Testing Sandbox Lab** | Isolated Streamlit playground for UI prototyping & widget testing | [`ui_sandbox/sandbox_app.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/sandbox_app.py) |
 | **Sandbox Architecture Doc** | Sandbox rules, one-way dependency isolation, quick-start guide | [`ui_sandbox/README.md`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/README.md) |
-| **Automated Test Runner** | Regression & health-check runner (122 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
+| **Automated Test Runner** | Regression & health-check runner (129 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
 
 ---
 
@@ -112,6 +114,7 @@ flowchart TD
             TabSolar["Solar PV Generation (if include_solar)"]
             TabBESS["Battery Storage BESS (if include_bess)"]
             TabTariff["Tariff Switch (if use_custom_grid_tariff)"]
+            TabGen["Generator / Genset (if include_generator)"]
         end
     end
 
@@ -156,6 +159,7 @@ flowchart TD
     TabBESS <--> BESSEngine
     TabBESS <--> BESSFinEngine
     Tab4 <--> DRACBVEngine
+    TabGen <--> DRACBVEngine
 
     ProjIO --> ModelProj
     SyntheticEngine --> ModelLoad
@@ -168,6 +172,7 @@ flowchart TD
     Tab3 -.->|Status Quo Rates| Tab1
     TabSolar -.->|Solar Generation| Tab1
     TabBESS -.->|BESS Dispatch| Tab1
+    TabGen -.->|Generator Generation & Costs| Tab1
 ```
 
 ---
@@ -186,6 +191,7 @@ The main entry point [`app.py`](file:///c:/Users/mwien/Documents/One%20drive2/On
    * If `active_sub.include_solar == True`: **Solar PV Generation** tab appears.
    * If `active_sub.include_bess == True`: **Battery Storage (BESS)** tab appears.
    * If `active_sub.use_custom_grid_tariff == True`: **Tariff Switch / Alternative Contract** tab appears.
+   * If `active_sub.include_generator == True`: **Generator / Genset** tab appears (Standalone Peaker or Hybrid Residual Backup).
 
 If the active scenario is set to **Status Quo (Base Scenario)**, the application displays an active Status Quo banner and provides one-click branch buttons to switch to or create sub-scenario branches.
 
@@ -256,7 +262,7 @@ If the active scenario is set to **Status Quo (Base Scenario)**, the application
     4. *BESS Discharge on Deficit / Peak*: When load exceeds solar, the battery discharges ($P_{\text{BESS,dis}}$) to cover residual load or shave peaks above target limit.
     5. *Residual Grid Import*: Net grid import covers any remaining unmet demand.
   * **Physical KPIs**: Solar generation, autarky / solar fraction (%), combined self-consumption (direct + battery stored), avoided grid import, peak demand shaved ($\Delta kW$), full equivalent battery cycles, and grid overload violations eliminated.
-  * **Interactive Visualizations ([`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py))**: 15-minute multi-layer dispatch curve, State of Charge (SoC %) trajectory, monthly energy balance bars, and load duration curve comparison.
+  * **Interactive Visualizations ([`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py))**: 15-minute multi-layer dispatch curve with stacked synchronous State of Charge (SoC %) and Stored Energy (kWh) envelope, monthly energy balance bars, and monthly summary metrics.
 
 ---
 
@@ -292,6 +298,31 @@ If the active scenario is set to **Status Quo (Base Scenario)**, the application
   * Annual financial savings from grid capacity charge reduction and demand fee avoidance.
   * Full lifecycle cashflow schedule: Simple payback, discounted payback, Net Present Value (NPV), and Internal Rate of Return (IRR).
   * 2D Sensitivity Matrix: Variations in battery CAPEX ($/kWh$) versus grid demand charges ($/kW/month$).
+
+---
+
+### 8. Dynamic Tab: Generator / Genset (Peaking & Residual Backup Dispatch)
+* **Context-Aware Multi-Mode Architecture ([`ui/tab_generator/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_generator/view.py))**:
+  * **Standalone Peaking Mode**: Operates when the sub-scenario includes a generator without Solar or BESS. The generator covers baseline demand directly or shaves facility peak demand exceeding the contracted grid capacity limit.
+  * **Hybrid Residual Backup Mode**: Automatically activates when Solar PV and/or BESS are co-enabled in the same sub-scenario. The generator operates downstream as a residual backup, covering unmet net demand left after Solar direct self-consumption and Battery discharge.
+* **Dispatch Physics & Engine Pipeline ([`core/dracbv_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/dracbv_engine.py))**:
+  * **Sequential Multi-Asset Dispatch (`simulate_hybrid_scenario_dispatch`)**:
+    1. *Solar Direct*: Load is first met by available instantaneous PV generation ($P_{\text{Direct}} = \min(P_{\text{Load}}, P_{\text{Solar}})$).
+    2. *Solar Surplus to BESS*: Excess PV energy charges the battery up to maximum charge power and SoC limits.
+    3. *BESS Discharge*: Battery discharges to cover evening deficits or shave peaks above target grid limit.
+    4. *Generator Dispatch*: Generator activates to cover remaining residual demand or peak deficits according to `backup_coverage_pct`.
+    5. *Residual Grid Import*: Net remaining load is supplied by the utility grid.
+  * **Engine Sizing & Fuel Economics**:
+    * Sizing: Rated electrical capacity ($kW$), minimum operating threshold ($kW$).
+    * Fuel types: Diesel ($0.27\,\text{l/kWh}$), Natural Gas ($0.28\,\text{m}^3\text{/kWh}$), and Biofuel/HVO ($0.29\,\text{l/kWh}$).
+    * Quadratic and linear fuel consumption curves factoring no-load baseline consumption and electrical efficiency.
+    * Commercial options: Turnkey CAPEX purchase ($/kW$) vs. Rental leasing ($/month$), operating maintenance fee ($/\text{operating hour}$).
+    * Startup cycles: Tracking of ignition events and generator starts count.
+* **Interactive Visualizations & Financial Schedules ([`ui/tab_generator/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_generator/charts.py))**:
+  * Interactive Plotly 15-minute dispatch timeseries showing Solar direct, BESS discharge, Genset generation, and residual grid draw.
+  * Monthly metrics table with operating hours, fuel volume, fuel OPEX, maintenance cost, and cumulative lifecycle payment schedule.
+* **Tab 1 Leaderboard Integration ([`ui/tab_comparison/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_comparison/view.py))**:
+  * Fully integrates generator CAPEX/rental, fuel OPEX, and maintenance spend into 15-year TCO curves, cashflow schedules, and electrical balance sheets.
 
 ---
 
@@ -359,7 +390,7 @@ python -m streamlit run current_model/ui_sandbox/sandbox_app.py
 
 ## :material/science: Automated Testing Suite & Health Checks
 
-The repository features an automated test suite comprising **117 unit and integration tests** across 25 test modules.
+The repository features an automated test suite comprising **128 unit and integration tests** across 26 test modules.
 
 To execute the test runner:
 
@@ -383,12 +414,13 @@ python run_tests.py
 | [`test_dracbv_beta.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_dracbv_beta.py) | 5 | Generator peaking simulation, fuel calculation, rental vs purchase, cumulative payment schedules |
 | [`test_example1_scenario.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_example1_scenario.py) | 3 | End-to-end integration and dispatch consistency on real-world reference datasets |
 | [`test_financial.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_financial.py) | 8 | TOU tariff intervals, peak demand fees, reactive power penalties, dynamic tax computation |
-| [`test_generator_model.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_generator_model.py) | 3 | GeneratorConfig properties, presets, fuel parameters, serialization round-trip |
+| [`test_generator_model.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_generator_model.py) | 5 | GeneratorConfig properties, presets, fuel parameters, residual backup mode, serialization |
+| [`test_generator_subscenario_integration.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_generator_subscenario_integration.py) | 3 | Standalone peaker dispatch, tri-hybrid (Solar+BESS+Genset) dispatch, and Tab 1 leaderboard evaluation |
 | [`test_load_simulation.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_load_simulation.py) | 6 | SimpleConsumer modeling, operational time windows, peak duration events, daily power profiles |
 | [`test_models.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_models.py) | 8 | Dataclass validation, dictionary serialization, round-trip fidelity across all models |
 | [`test_multi_upload.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_multi_upload.py) | 3 | Multi-channel CSV ingestion, channel alignment, and aggregate power curve generation |
 | [`test_project_io.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_project_io.py) | 7 | ProjectContainer serialization, `.dracproj` and `.drac` schema validation, session sync |
-| [`test_scenario_component_deletion.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_scenario_component_deletion.py) | 4 | Dynamic opt-in/opt-out toggling and removal of hardware components from sub-scenarios |
+| [`test_scenario_component_deletion.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_scenario_component_deletion.py) | 5 | Dynamic opt-in/opt-out toggling and removal of hardware components from sub-scenarios |
 | [`test_scenario_models.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_scenario_models.py) | 8 | BaseScenario, SubScenario, ProjectContainer cloning, active pointers, and JSON exports |
 | [`test_solar_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_solar_engine.py) | 7 | Solar geometry, Perez transposition, cell temperature, NMOT, thermal derate, inverter clipping |
 | [`test_solar_financial.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_solar_financial.py) | 5 | Solar LCOE, NPV, IRR, simple & discounted payback, 15-year cashflow schedule |
@@ -396,7 +428,7 @@ python run_tests.py
 | [`test_solar_integration_tab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_solar_integration_tab.py) | 4 | Fast coupled dispatch, auto-sizing coverage targets (40-100%), UI figure generators |
 | [`test_syntax_compilation.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_syntax_compilation.py) | 1 | AST parsing and bytecode compilation verification across all Python source files in the project |
 | [`test_ui_sandbox.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_ui_sandbox.py) | 2 | Isolated sandbox directory existence and zero reverse-dependency verification on production codebase |
-| **Total Test Suite** | **117** | **100% Passed (Zero Failures, Zero Errors)** |
+| **Total Test Suite** | **128** | **100% Passed (Zero Failures, Zero Errors)** |
 
 ---
 

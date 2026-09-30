@@ -152,6 +152,7 @@ def export_project_from_session(
     bess_cfg = st.session_state.get("app_tab4_bess_config") or st.session_state.get("app_tab4_bess_tech_config")
 
     active_sub = project.get_active_scenario()
+    gen_cfg = st.session_state.get("app_tab_generator_config") or st.session_state.get("generator_config")
     if active_sub is not None:
         if solar_cfg is not None and getattr(solar_cfg, "module_count", 0) > 0:
             active_sub.solar_config = solar_cfg
@@ -161,6 +162,9 @@ def export_project_from_session(
         if bess_cfg is not None and getattr(bess_cfg, "capacity_kwh", 0) > 0:
             active_sub.bess_config = bess_cfg
             active_sub.include_bess = True
+        if gen_cfg is not None and getattr(gen_cfg, "rated_power_kw", 0) > 0:
+            active_sub.generator_config = gen_cfg
+            active_sub.include_generator = True
 
     if not project.sub_scenarios and solar_cfg is not None and getattr(solar_cfg, "module_count", 0) > 0:
         sub_default = SubScenario(
@@ -539,6 +543,23 @@ def sync_active_scenario_into_session(project: ProjectContainer, auto_execute: b
     else:
         # BESS is not active in this sub-scenario -> Clean state
         for k in bess_res_keys:
+            if k in st.session_state:
+                del st.session_state[k]
+
+    # --------------------------------------------------------------------------
+    # SubScenario Active: Synchronize Generator
+    # --------------------------------------------------------------------------
+    gen_res_keys = [
+        "app_tab_generator_config",
+        "app_tab_generator_result",
+        "generator_config"
+    ]
+    if active_sub and active_sub.include_generator and active_sub.generator_config:
+        g_cfg = active_sub.generator_config
+        st.session_state["app_tab_generator_config"] = g_cfg
+        st.session_state["generator_config"] = g_cfg
+    else:
+        for k in gen_res_keys:
             if k in st.session_state:
                 del st.session_state[k]
 

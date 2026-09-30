@@ -272,7 +272,11 @@ def render_tab3_1_standalone(key_prefix: str = "tab3_solar") -> None:
     if submitted and not valid_sizing:
         st.error("Sizing Required: Please enter a module count greater than 0 in Section 2 above to calculate solar generation.", icon=":material/warning:")
 
-    need_full_simulation = valid_sizing and (submitted or auto_trigger)
+    need_full_simulation = valid_sizing and (
+        submitted
+        or auto_trigger
+        or (cached_res is None and getattr(active_sub, "include_solar", False) and getattr(active_sub, "solar_config", None) is not None)
+    )
     need_financial_recalc = valid_sizing and not need_full_simulation and submitted and (financial_config_changed or (cached_res is not None and cached_res.financial_metrics is None and fin_config and fin_config.is_enabled))
 
     if need_full_simulation:

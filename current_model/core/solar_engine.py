@@ -993,6 +993,78 @@ def align_load_to_solar_timeseries(
     return p_load_out, info_dict
 
 
+def align_solar_to_load_timestamps(
+    solar_df: pd.DataFrame,
+    load_ts_series: Union[pd.Series, pd.DatetimeIndex, List[Any]],
+    solar_power_col: str = "P_AC_kW"
+) -> np.ndarray:
+    """
+    Aligns Solar PV generation power (P_AC_kW) to load timestamps by matching diurnal
+    month, day, hour, and minute (or nearest timestamp within tolerance).
+    Guarantees that solar generation always peaks at true local solar noon on every calendar day,
+    preventing any diurnal phase shifts even across arbitrary load profile measurement interruptions/gaps.
+    """
+    if solar_df is None or solar_df.empty or solar_power_col not in solar_df.columns:
+        return np.zeros(len(load_ts_series) if load_ts_series is not None else 0, dtype=float)
+
+    if load_ts_series is None or len(load_ts_series) == 0:
+        return np.zeros(0, dtype=float)
+
+    n_solar = len(solar_df)
+    n_load = len(load_ts_series)
+
+    # 1. Ensure DatetimeIndex for load timestamps
+    try:
+        dti_load = pd.DatetimeIndex(load_ts_series)
+    except Exception:
+        dti_load = pd.date_range("2026-01-01 00:00:00", periods=n_load, freq="15min")
+
+    # 2. Ensure DatetimeIndex for solar timestamps
+    if "timestamp" in solar_df.columns:
+        try:
+            dti_solar = pd.DatetimeIndex(pd.to_datetime(solar_df["timestamp"]))
+        except Exception:
+            dti_solar = pd.date_range("2026-01-01 00:00:00", periods=n_solar, freq="15min")
+    elif isinstance(solar_df.index, pd.DatetimeIndex):
+        dti_solar = solar_df.index
+    else:
+        dti_solar = pd.date_range("2026-01-01 00:00:00", periods=n_solar, freq="15min")
+
+    # If single day or purely synthetic step-aligned without gaps:
+    if n_solar == n_load and "timestamp" not in solar_df.columns:
+        load_span_sec = (dti_load[-1] - dti_load[0]).total_seconds() if n_load > 1 else 0
+        if load_span_sec <= 86400 * 1.5:
+            return np.maximum(0.0, np.nan_to_num(solar_df[solar_power_col].to_numpy(dtype=float)[:n_load], nan=0.0))
+
+    # 3. Diurnal Key matching: Month (1-12) * 100000 + Day (1-31) * 1440 + Hour (0-23) * 60 + Minute (0-59)
+    solar_keys = dti_solar.month * 100000 + dti_solar.day * 1440 + dti_solar.hour * 60 + dti_solar.minute
+    load_keys = dti_load.month * 100000 + dti_load.day * 1440 + dti_load.hour * 60 + dti_load.minute
+
+    solar_series = pd.Series(solar_df[solar_power_col].values, index=solar_keys)
+    solar_series = solar_series[~solar_series.index.duplicated(keep="first")]
+
+    aligned_solar = pd.Series(load_keys).map(solar_series)
+
+    # If any NaNs remain (e.g. Feb 29 in leap year or minute offset):
+    if aligned_solar.isna().any():
+        df_target = pd.DataFrame({"_ts": dti_load})
+        df_source = pd.DataFrame({"_ts": dti_solar, "_val": solar_df[solar_power_col].values}).sort_values("_ts")
+        y_diff = dti_load.year[0] - dti_solar.year[0]
+        if y_diff != 0:
+            df_source["_ts"] = df_source["_ts"] + pd.DateOffset(years=int(y_diff))
+        merged = pd.merge_asof(
+            df_target.sort_values("_ts"),
+            df_source,
+            on="_ts",
+            direction="nearest",
+            tolerance=pd.Timedelta(hours=2)
+        )
+        filled_vals = merged.set_index(df_target.index)["_val"].fillna(0.0).values
+        aligned_solar = aligned_solar.fillna(pd.Series(filled_vals, index=aligned_solar.index))
+
+    return np.maximum(0.0, np.nan_to_num(aligned_solar.to_numpy(dtype=float), nan=0.0))
+
+
 def compute_solar_load_dispatch(
     solar_power_kw: np.ndarray,
     load_power_kw: np.ndarray,

@@ -80,8 +80,22 @@ class TestScenarioComponentDeletion(unittest.TestCase):
         self.assertFalse(self.sub1.include_bess)
         self.assertIsNone(self.sub1.bess_config)
 
-        # Solar should remain intact
+        # Solar and generator should remain intact
         self.assertTrue(self.sub1.include_solar)
+        self.assertTrue(self.sub1.include_generator)
+
+    def test_remove_component_generator(self):
+        """Test removing generator component from SubScenario."""
+        self.assertTrue(self.sub1.include_generator)
+        self.assertIsNotNone(self.sub1.generator_config)
+
+        self.sub1.remove_component("generator")
+        self.assertFalse(self.sub1.include_generator)
+        self.assertIsNone(self.sub1.generator_config)
+
+        # Solar and BESS should remain intact
+        self.assertTrue(self.sub1.include_solar)
+        self.assertTrue(self.sub1.include_bess)
 
     def test_remove_component_all(self):
         """Test resetting all components from SubScenario."""

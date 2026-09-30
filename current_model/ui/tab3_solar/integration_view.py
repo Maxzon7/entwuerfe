@@ -512,7 +512,11 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
             sim_res.config.tilt_deg != curr_cfg.tilt_deg):
             config_changed = True
 
-    should_simulate = (calc_btn_clicked or auto_trigger) and curr_cfg.module_count > 0
+    should_simulate = (
+        calc_btn_clicked
+        or auto_trigger
+        or (sim_res is None and getattr(active_sub, "include_solar", False) and curr_cfg.module_count > 0 and df_load is not None and not df_load.empty)
+    ) and curr_cfg.module_count > 0
 
     if should_simulate:
         with st.spinner("Calculating 15-minute physical solar-load dispatch balance..."):

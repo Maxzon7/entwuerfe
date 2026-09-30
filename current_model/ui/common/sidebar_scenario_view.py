@@ -60,6 +60,9 @@ def render_sidebar_scenario_controller() -> None:
         current_idx = 0
 
     sb_key = "sidebar_target_scenario_select"
+    # Ensure selectbox key in session state is strictly synchronized with active scenario id
+    if sb_key not in st.session_state or st.session_state[sb_key] not in scenario_ids or st.session_state[sb_key] != current_active_id:
+        st.session_state[sb_key] = current_active_id
 
     def _on_sidebar_scenario_change() -> None:
         new_target = st.session_state.get(sb_key)
@@ -73,7 +76,6 @@ def render_sidebar_scenario_controller() -> None:
     st.selectbox(
         "Active Simulation Target:",
         options=scenario_ids,
-        index=current_idx,
         format_func=lambda s_id: scenario_label_map.get(s_id, s_id),
         key=sb_key,
         on_change=_on_sidebar_scenario_change,
@@ -103,6 +105,7 @@ def render_sidebar_scenario_controller() -> None:
             st.markdown("**Select Modules to Include:**")
             s_sol = st.checkbox(":material/solar_power: Solar PV Generation", value=True, key="sidebar_new_sol")
             s_bess = st.checkbox(":material/battery_charging_full: Battery Storage (BESS)", value=False, key="sidebar_new_bess")
+            s_gen = st.checkbox(":material/local_gas_station: Peaking / Backup Generator (Genset)", value=False, key="sidebar_new_gen")
             s_tar = st.checkbox(":material/swap_horiz: Tariff Switch / Alternative Contract", value=False, key="sidebar_new_tar")
 
             if st.button("Instantiate Branch", icon=":material/check:", type="primary", use_container_width=True):
@@ -111,6 +114,7 @@ def render_sidebar_scenario_controller() -> None:
                     color_code=clean_color,
                     include_solar=s_sol,
                     include_bess=s_bess,
+                    include_generator=s_gen,
                     use_custom_grid_tariff=s_tar
                 )
                 project.add_sub_scenario(new_sub)
@@ -223,15 +227,18 @@ def render_sidebar_scenario_controller() -> None:
     st.divider()
 
     # --------------------------------------------------------------------------
-    # 5. Benchmark Scenarios & Quick Reset
+    # 5. Benchmark Scenarios & Quick Reset / Reload
     # --------------------------------------------------------------------------
-    st.markdown("#### :material/science: Benchmark Templates")
-    col_bench1, col_bench2 = st.columns(2)
+    st.markdown("#### :material/science: Benchmark Templates & Quick Actions")
+    col_bench1, col_bench2, col_bench3 = st.columns(3)
     with col_bench1:
-        if st.button("Example 1 (Seville)", icon=":material/rocket_launch:", use_container_width=True, help="Loads European Commercial Benchmark (Seville, Spain - EUR)."):
+        if st.button("Example 1", icon=":material/rocket_launch:", use_container_width=True, help="Loads European Commercial Benchmark (Seville, Spain - EUR)."):
             load_example1_scenario()
             st.rerun()
     with col_bench2:
+        if st.button("Reload", icon=":material/refresh:", use_container_width=True, help="Reloads and reruns the entire application workspace."):
+            st.rerun()
+    with col_bench3:
         if st.button("Reset All", icon=":material/restart_alt:", use_container_width=True, help="Clears session state and resets to clean default."):
             clear_demo_scenario()
             if "project_container" in st.session_state:

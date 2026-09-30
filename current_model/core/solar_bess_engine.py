@@ -134,29 +134,20 @@ def simulate_solar_bess_dispatch(
         start_dt = pd.Timestamp("2026-01-01 00:00:00")
         ts_series = pd.date_range(start=start_dt, periods=n_steps, freq=f"{int(step_hours * 60)}min")
 
-    # 3. Obtain Solar Generation Curve (P_AC_kW)
+    # 3. Obtain Solar Generation Curve (P_AC_kW) with diurnal calendar alignment
     if precomputed_solar_df is not None and "P_AC_kW" in precomputed_solar_df.columns:
-        p_solar_raw = precomputed_solar_df["P_AC_kW"].to_numpy(dtype=float)
-        if len(p_solar_raw) >= n_steps:
-            p_solar = p_solar_raw[:n_steps]
-        else:
-            # Repeat or pad
-            reps = int(np.ceil(n_steps / len(p_solar_raw)))
-            p_solar = np.tile(p_solar_raw, reps)[:n_steps]
+        from current_model.core.solar_engine import align_solar_to_load_timestamps
+        p_solar = align_solar_to_load_timestamps(precomputed_solar_df, ts_series, solar_power_col="P_AC_kW")
     else:
         # Run solar simulation engine
+        from current_model.core.solar_engine import align_solar_to_load_timestamps
         loc = location or SolarLocation()
         solar_sim: SolarSimulationResult = simulate_solar_pv_generation(
             config=solar_config,
             location=loc,
             load_df=load_df
         )
-        p_solar = solar_sim.df_timeseries["P_AC_kW"].to_numpy(dtype=float)
-        if len(p_solar) < n_steps:
-            reps = int(np.ceil(n_steps / max(1, len(p_solar))))
-            p_solar = np.tile(p_solar, reps)[:n_steps]
-        else:
-            p_solar = p_solar[:n_steps]
+        p_solar = align_solar_to_load_timestamps(solar_sim.df_timeseries, ts_series, solar_power_col="P_AC_kW")
 
     p_solar = np.nan_to_num(p_solar, nan=0.0)
 

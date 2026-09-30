@@ -175,6 +175,13 @@ class SubScenario:
                 max_charge_power_kw=50.0,
                 max_discharge_power_kw=50.0
             )
+        if self.include_generator and self.generator_config is None:
+            self.generator_config = GeneratorConfig(
+                rated_power_kw=100.0,
+                fuel_type="Diesel",
+                dispatch_mode="peak_shaving_assist",
+                is_backup_mode=False
+            )
 
     @property
     def technology_mix_label(self) -> str:
@@ -185,7 +192,10 @@ class SubScenario:
         if self.include_bess:
             techs.append("BESS")
         if self.include_generator:
-            techs.append("Genset")
+            if self.generator_config and getattr(self.generator_config, "is_backup_mode", False):
+                techs.append("Genset Backup")
+            else:
+                techs.append("Genset")
         if self.use_custom_grid_tariff:
             techs.append("Alt Grid Tariff")
         return " + ".join(techs) if techs else "Grid Only (No Active Modules)"

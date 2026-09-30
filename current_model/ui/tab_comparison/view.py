@@ -28,7 +28,7 @@ import pandas as pd
 import numpy as np
 
 from current_model.models.scenario import BaseScenario, SubScenario, ProjectContainer
-from current_model.models.solar import SolarFinancialConfig
+from current_model.models.solar import SolarLocation, SolarFinancialConfig
 from current_model.core.project_io import export_project_from_session, export_project_json, sync_active_scenario_into_session
 from current_model.core.solar_financial_engine import compute_solar_financial_metrics
 from current_model.core.bess_engine import simulate_bess_dispatch
@@ -308,6 +308,43 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             autarky = 0.0
             self_cons = 0.0
 
+        # Generator Simulation & Multi-Asset Coupling
+        gen_gen_kwh = 0.0
+        gen_op_cost = 0.0
+        gen_lease_annual = 0.0
+        gen_peak_shaved = 0.0
+        gen_sim_res = None
+
+        if sub.include_generator and sub.generator_config:
+            gen_cfg = sub.generator_config
+            if df_load is not None and not df_load.empty:
+                try:
+                    from current_model.core.dracbv_engine import simulate_hybrid_scenario_dispatch
+                    hybrid_run = simulate_hybrid_scenario_dispatch(
+                        sub_scenario=sub,
+                        df_load=df_load,
+                        power_col=p_col,
+                        contract=contract,
+                        location=project.base_scenario.location
+                    )
+                    gen_sim_res = hybrid_run.get("gen_result")
+                except Exception:
+                    gen_sim_res = None
+
+            if gen_sim_res and "kpis" in gen_sim_res:
+                gk = gen_sim_res["kpis"]
+                gen_gen_kwh = float(gk.total_generation_kwh)
+                gen_op_cost = float(gk.total_operating_cost)
+                gen_peak_shaved = float(gen_sim_res.get("peak_shaved_kw", 0.0))
+            else:
+                gen_gen_kwh = float(gen_cfg.rated_power_kw) * 150.0
+                gen_op_cost = gen_gen_kwh * 0.35
+                gen_peak_shaved = min(float(gen_cfg.rated_power_kw), float(base_peak_kw * 0.25))
+
+            gen_lease_annual = float(gen_cfg.monthly_lease_fee) * 12.0
+            peak_shaved = max(peak_shaved, gen_peak_shaved)
+            residual_kwh = max(0.0, residual_kwh - gen_gen_kwh)
+
         direct_mwh = direct_kwh / 1000.0
         residual_mwh = residual_kwh / 1000.0
         surplus_mwh = surplus_kwh / 1000.0
@@ -357,7 +394,8 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             if sub.include_bess and sub.bess_config:
                 hardware_capex += sub.bess_config.total_capex
             if sub.include_generator and sub.generator_config:
-                hardware_capex += sub.generator_config.capital_cost
+                gen_c = float(sub.generator_config.capital_cost) if sub.generator_config.monthly_lease_fee <= 0 else 0.0
+                hardware_capex += gen_c
 
             capex = hardware_capex + grid_upgrade + temp_conn
 
@@ -372,8 +410,13 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             base_costs_sol = fin_m_sol.cumulative_status_quo
 
             opex_y1 = fin_m_fac.annual_opex_year1
+            if sub.include_generator and sub.generator_config:
+                opex_y1 += gen_op_cost + gen_lease_annual
             res_bill_y1 = max(0.0, base_annual_cost - (direct_kwh * 0.18))
             tco_15y = cum_costs_fac[-1] if cum_costs_fac else (capex + opex_y1 * 18.5989)
+            if sub.include_generator and sub.generator_config:
+                tco_15y += (gen_op_cost + gen_lease_annual) * 18.5989
+                net_savings = base_15y_facility_tco - tco_15y
             cash_table = fin_m_fac.cash_flow_table
         elif sub.include_bess and sub.bess_config:
             bess_cfg = sub.bess_config
@@ -412,7 +455,8 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             temp_conn = float(getattr(sub, "temporary_connection_cost", 0.0))
             hardware_capex = fin_m_bess.total_capex
             if sub.include_generator and sub.generator_config:
-                hardware_capex += sub.generator_config.capital_cost
+                gen_c = float(sub.generator_config.capital_cost) if sub.generator_config.monthly_lease_fee <= 0 else 0.0
+                hardware_capex += gen_c
 
             capex = hardware_capex + grid_upgrade + temp_conn
 
@@ -423,18 +467,49 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             cum_costs_fac = fin_m_bess.cumulative_with_bess if fin_m_bess.cumulative_with_bess else fac_cum_series
             base_costs_fac = fin_m_bess.cumulative_status_quo if fin_m_bess.cumulative_status_quo else fac_cum_series
             tco_15y = cum_costs_fac[-1] if cum_costs_fac else (capex + (fin_m_bess.annual_with_bess_total_bill + fin_m_bess.annual_opex_year1) * 18.5989)
+            if sub.include_generator and sub.generator_config:
+                tco_15y += (gen_op_cost + gen_lease_annual) * 18.5989
             net_savings = base_15y_facility_tco - tco_15y
             cum_costs_sol = [capex] * 16 if capex > 0 else solar_cum_series
             base_costs_sol = solar_cum_series
             opex_y1 = fin_m_bess.annual_with_bess_total_bill + fin_m_bess.annual_opex_year1
+            if sub.include_generator and sub.generator_config:
+                opex_y1 += gen_op_cost + gen_lease_annual
             res_bill_y1 = fin_m_bess.annual_with_bess_total_bill
             cash_table = fin_m_bess.cash_flow_table
+        elif sub.include_generator and sub.generator_config:
+            gen_cfg = sub.generator_config
+            grid_upgrade = float(getattr(sub, "grid_connection_upgrade_cost", 0.0))
+            temp_conn = float(getattr(sub, "temporary_connection_cost", 0.0))
+            hardware_capex = float(gen_cfg.capital_cost) if gen_cfg.monthly_lease_fee <= 0 else 0.0
+            capex = hardware_capex + grid_upgrade + temp_conn
+
+            ann_savings = float(gen_sim_res.get("annual_net_savings", 0.0)) if gen_sim_res else 0.0
+            ann_with_gen = float(gen_sim_res.get("annual_with_generator", base_annual_cost)) if gen_sim_res else base_annual_cost
+
+            # 15-year cumulative trajectory
+            cum_costs_fac = [capex]
+            cum_track = capex
+            for y in range(1, 16):
+                cum_track += ann_with_gen * ((1.0 + 0.03) ** (y - 1))
+                cum_costs_fac.append(round(cum_track, 2))
+
+            tco_15y = cum_costs_fac[-1]
+            payback = (capex / ann_savings) if (ann_savings > 0 and capex > 0) else 0.0
+            npv = (ann_savings * 10.3797) - capex
+            irr_val = ((ann_savings / capex) * 100.0) if (ann_savings > 0 and capex > 0) else None
+            lcoe_val = gen_sim_res["kpis"].levelized_cost_per_kwh if (gen_sim_res and gen_sim_res["kpis"].levelized_cost_per_kwh > 0) else None
+            net_savings = base_15y_facility_tco - tco_15y
+            base_costs_fac = fac_cum_series
+            cum_costs_sol = [capex] * 16 if capex > 0 else solar_cum_series
+            base_costs_sol = solar_cum_series
+            opex_y1 = ann_with_gen
+            res_bill_y1 = max(0.0, ann_with_gen - gen_op_cost - gen_lease_annual)
+            cash_table = gen_sim_res["df_zahlungsreihe"].to_dict(orient="records") if (gen_sim_res and "df_zahlungsreihe" in gen_sim_res) else []
         else:
             grid_upgrade = float(getattr(sub, "grid_connection_upgrade_cost", 0.0))
             temp_conn = float(getattr(sub, "temporary_connection_cost", 0.0))
             hardware_capex = 0.0
-            if sub.include_generator and sub.generator_config:
-                hardware_capex += sub.generator_config.capital_cost
 
             capex = hardware_capex + grid_upgrade + temp_conn
             residual_annual_cost = base_annual_cost
@@ -540,7 +615,9 @@ def _build_scenario_evaluation_records(project: ProjectContainer) -> List[Dict[s
             "total_load_mwh": round(base_total_mwh, 1),
             "monthly_load_mwh": base_monthly_mwh,
             "monthly_residual_mwh": sub_monthly_res,
-            "generation_mwh": round(gen_mwh, 1),
+            "generation_mwh": round((annual_gen_kwh + gen_gen_kwh) / 1000.0, 1),
+            "solar_generation_mwh": round(annual_gen_kwh / 1000.0, 1),
+            "generator_mwh": round(gen_gen_kwh / 1000.0, 1),
             "direct_consumption_mwh": round(direct_mwh, 1),
             "residual_grid_mwh": round(residual_mwh, 1),
             "surplus_export_mwh": round(surplus_mwh, 1),
@@ -626,6 +703,7 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
         else:
             if st.button(":material/anchor: Activate Status Quo Baseline", key=f"{key_prefix}_sw_btn_base", use_container_width=True):
                 project.active_sub_scenario_id = None
+                st.session_state["project_container"] = project
                 sync_active_scenario_into_session(project, auto_execute=False)
                 st.rerun()
 
@@ -730,6 +808,7 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                     btn_lbl = f"Switch #{idx+1}"
                     if st.button(f":material/near_me: {btn_lbl}", key=f"{key_prefix}_sw_btn_{sc_id}", use_container_width=True):
                         project.active_sub_scenario_id = sc_id
+                        st.session_state["project_container"] = project
                         sync_active_scenario_into_session(project, auto_execute=False)
                         st.rerun()
             with btn_act_col2:
@@ -739,10 +818,17 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                         st.caption("Active Solution Modules:")
                         t_sol = st.checkbox("Solar PV", value=sub_obj.include_solar, key=f"{key_prefix}_card_chk_sol_{sc_id}")
                         t_bess = st.checkbox("BESS Storage", value=sub_obj.include_bess, key=f"{key_prefix}_card_chk_bess_{sc_id}")
+                        t_gen = st.checkbox("Generator (Genset)", value=sub_obj.include_generator, key=f"{key_prefix}_card_chk_gen_{sc_id}")
                         t_tar = st.checkbox("Tariff Switch", value=sub_obj.use_custom_grid_tariff, key=f"{key_prefix}_card_chk_tar_{sc_id}")
-                        if t_sol != sub_obj.include_solar or t_bess != sub_obj.include_bess or t_tar != sub_obj.use_custom_grid_tariff:
+                        if (
+                            t_sol != sub_obj.include_solar
+                            or t_bess != sub_obj.include_bess
+                            or t_gen != sub_obj.include_generator
+                            or t_tar != sub_obj.use_custom_grid_tariff
+                        ):
                             sub_obj.include_solar = t_sol
                             sub_obj.include_bess = t_bess
+                            sub_obj.include_generator = t_gen
                             sub_obj.use_custom_grid_tariff = t_tar
                             st.session_state["project_container"] = project
                             sync_active_scenario_into_session(project, auto_execute=False)
@@ -768,6 +854,7 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
             st.markdown("**Select Modules to Include:**")
             t_inc_sol = st.checkbox("Solar PV Generation", value=True, key=f"{key_prefix}_tree_new_sol")
             t_inc_bess = st.checkbox("Battery Storage (BESS)", value=False, key=f"{key_prefix}_tree_new_bess")
+            t_inc_gen = st.checkbox("Peaking / Backup Generator (Genset)", value=False, key=f"{key_prefix}_tree_new_gen")
             t_inc_tar = st.checkbox("Tariff Switch / Alternative Contract", value=False, key=f"{key_prefix}_tree_new_tar")
             color_choice_t5 = st.selectbox(
                 "Chart Curve Color:",
@@ -782,6 +869,7 @@ def _render_scenario_visual_cards(project: ProjectContainer, records: List[Dict[
                     color_code=clean_c,
                     include_solar=t_inc_sol,
                     include_bess=t_inc_bess,
+                    include_generator=t_inc_gen,
                     use_custom_grid_tariff=t_inc_tar
                 )
                 project.add_sub_scenario(new_sub)
@@ -1474,7 +1562,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
     # 2. Sub-Scenario Manager & Module Configuration
     # --------------------------------------------------------------------------
     st.markdown("### :material/tune: Sub-Scenario Configuration & Module Selection")
-    st.caption("Select the scenario branch to configure and selectively activate desired solution modules (Solar PV, BESS, Tariff Switch). All inactive modules are completely omitted.")
+    st.caption("Select the scenario branch to configure and selectively activate desired solution modules (Solar PV, BESS, Generator, Tariff Switch). All inactive modules are completely omitted.")
 
     # Branch Switcher
     scenario_ids = ["base"] + [s.id for s in project.sub_scenarios]
@@ -1502,13 +1590,11 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
             proj = export_project_from_session()
             proj.active_sub_scenario_id = None if new_target == "base" else new_target
             st.session_state["project_container"] = proj
-            st.session_state["sidebar_target_scenario_select"] = new_target or "base"
             sync_active_scenario_into_session(proj, auto_execute=False)
 
         st.selectbox(
             "Select Active Scenario to Configure:",
             options=scenario_ids,
-            index=cur_idx,
             format_func=lambda s_id: scenario_label_map.get(s_id, s_id),
             key=tab1_key,
             on_change=_on_tab1_scenario_change
@@ -1521,12 +1607,13 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
             st.markdown("##### :material/add: Create New Sub-Scenario")
             new_sub_name = st.text_input(
                 "Sub-Scenario Name:",
-                value=f"Option {len(project.sub_scenarios) + 1}: Solar & Storage",
+                value=f"Option {len(project.sub_scenarios) + 1}: Hybrid System",
                 key=f"{key_prefix}_new_sub_name_pop"
             )
             st.markdown("**Select Modules to Include:**")
             p_sol = st.checkbox("Solar PV Generation", value=True, key=f"{key_prefix}_pop_new_sol")
             p_bess = st.checkbox("Battery Storage (BESS)", value=False, key=f"{key_prefix}_pop_new_bess")
+            p_gen = st.checkbox("Peaking / Backup Generator (Genset)", value=False, key=f"{key_prefix}_pop_new_gen")
             p_tar = st.checkbox("Tariff Switch / Alternative Contract", value=False, key=f"{key_prefix}_pop_new_tar")
 
             color_choice = st.selectbox(
@@ -1543,6 +1630,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                     color_code=clean_c,
                     include_solar=p_sol,
                     include_bess=p_bess,
+                    include_generator=p_gen,
                     use_custom_grid_tariff=p_tar
                 )
                 project.add_sub_scenario(created_sub)
@@ -1570,11 +1658,11 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
             unsafe_allow_html=True
         )
 
-        mod_col1, mod_col2, mod_col3 = st.columns(3)
+        mod_col1, mod_col2, mod_col3, mod_col4 = st.columns(4)
         with mod_col1:
             with st.container(border=True):
-                st.markdown("#### :material/solar_power: Solar PV Generation")
-                st.caption("System sizing (kWp, tilt, modules) & 15-minute load-coupling yield simulation.")
+                st.markdown("#### :material/solar_power: Solar PV")
+                st.caption("System sizing (kWp, tilt) & 15-min yield simulation.")
                 sol_val = st.checkbox(
                     "Activate Solar PV",
                     value=active_sub.include_solar,
@@ -1589,10 +1677,10 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
 
         with mod_col2:
             with st.container(border=True):
-                st.markdown("#### :material/battery_charging_full: Battery Storage (BESS)")
-                st.caption("Battery storage (kWh capacity, kW power), peak shaving & 15-minute dispatch.")
+                st.markdown("#### :material/battery_charging_full: BESS Storage")
+                st.caption("Battery capacity (kWh, kW) & peak shaving dispatch.")
                 bess_val = st.checkbox(
-                    "Activate Battery Storage (BESS)",
+                    "Activate BESS",
                     value=active_sub.include_bess,
                     key=f"{key_prefix}_chk_mod_bess_{active_sub.id}",
                     help="Enables the 'Battery Storage (BESS)' tab for this sub-scenario."
@@ -1605,8 +1693,24 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
 
         with mod_col3:
             with st.container(border=True):
+                st.markdown("#### :material/local_gas_station: Generator")
+                st.caption("On-site peaking & residual backup dispatch.")
+                gen_val = st.checkbox(
+                    "Activate Generator",
+                    value=active_sub.include_generator,
+                    key=f"{key_prefix}_chk_mod_gen_{active_sub.id}",
+                    help="Enables the 'Generator / Genset' tab for this sub-scenario."
+                )
+                if gen_val != active_sub.include_generator:
+                    active_sub.include_generator = gen_val
+                    st.session_state["project_container"] = project
+                    sync_active_scenario_into_session(project, auto_execute=False)
+                    st.rerun()
+
+        with mod_col4:
+            with st.container(border=True):
                 st.markdown("#### :material/swap_horiz: Tariff Switch")
-                st.caption("Evaluate alternative electricity supply contracts (spot market, fixed rate) & bill savings.")
+                st.caption("Evaluate alternative supply contracts & bill savings.")
                 tariff_val = st.checkbox(
                     "Activate Tariff Switch",
                     value=active_sub.use_custom_grid_tariff,
@@ -1848,7 +1952,7 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
 
                     # Component-level removal and reset options
                     st.markdown("##### :material/delete_sweep: Remove Specific Technologies")
-                    rm_col1, rm_col2, rm_col3 = st.columns(3)
+                    rm_col1, rm_col2, rm_col3, rm_col4 = st.columns(4)
                     with rm_col1:
                         if st.button("Remove Solar", icon=":material/solar_power:", key="tab6_rm_solar_btn", disabled=not target_sub.include_solar, use_container_width=True):
                             target_sub.remove_component("solar")
@@ -1862,6 +1966,12 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                             sync_active_scenario_into_session(project, auto_execute=False)
                             st.rerun()
                     with rm_col3:
+                        if st.button("Remove Generator", icon=":material/local_gas_station:", key="tab6_rm_gen_btn", disabled=not target_sub.include_generator, use_container_width=True):
+                            target_sub.remove_component("generator")
+                            st.session_state["project_container"] = project
+                            sync_active_scenario_into_session(project, auto_execute=False)
+                            st.rerun()
+                    with rm_col4:
                         if st.button("Reset to Blank", icon=":material/restart_alt:", key="tab6_rm_all_btn", use_container_width=True, help="Removes all solar, BESS, and generator hardware from this branch."):
                             target_sub.remove_component("all")
                             st.session_state["project_container"] = project
@@ -2052,9 +2162,10 @@ def render_scenario_management(key_prefix: str = "app_scenarios") -> None:
                             res_series = int_sim_res.df_timeseries["P_Residual_kW"]
                         elif sub.include_solar and sub.solar_config and sub.solar_config.module_count > 0:
                             try:
+                                loc = (project.base_scenario.location if (project.base_scenario and project.base_scenario.location) else None) or getattr(project, "location", None) or SolarLocation(name="Facility Location", latitude=-33.5133, longitude=-69.2561)
                                 sim_tmp = simulate_solar_pv_generation(
                                     config=sub.solar_config,
-                                    location=getattr(project, "location", None),
+                                    location=loc,
                                     load_df=df_load
                                 )
                                 if sim_tmp and sim_tmp.df_timeseries is not None and "P_Residual_kW" in sim_tmp.df_timeseries.columns:

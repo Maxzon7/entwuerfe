@@ -317,23 +317,7 @@ def render_tab_dracbv_beta(key_prefix: str = "app_dracbv_beta") -> None:
     # --------------------------------------------------------------------------
     st.markdown("#### :material/show_chart: 15-Minute Power Dispatch Curve")
 
-    # Build dynamic range options including the complete period
-    step_candidates = [1, 3, 7, 14, 30, 90, 180]
-    range_options = [s for s in step_candidates if s < total_days]
-    if total_days not in range_options:
-        range_options.append(total_days)
-
-    col_ctrl1, col_ctrl2 = st.columns([1.5, 2.5])
-    with col_ctrl1:
-        days_window = st.select_slider(
-            "Timeseries Display Range",
-            options=range_options,
-            value=total_days,  # Default to complete period!
-            format_func=lambda d: f"Complete Period ({d} Days)" if d == total_days else f"{d} Day{'s' if d > 1 else ''}",
-            key=f"{key_prefix}_days_slider"
-        )
-
-    fig_dispatch = create_generator_dispatch_chart(df_dispatch, trigger_kw=trigger_kw, days_to_show=days_window)
+    fig_dispatch = create_generator_dispatch_chart(df_dispatch, trigger_kw=trigger_kw, days_to_show=None)
     st.plotly_chart(fig_dispatch, use_container_width=True)
 
     # --------------------------------------------------------------------------

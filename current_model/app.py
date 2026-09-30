@@ -29,6 +29,7 @@ from current_model.ui.tab1_consumption.view import render_tab1_consumption
 from current_model.ui.tab2_contract.view import render_tab2_base_contract, render_tab2_contract_switch
 from current_model.ui.tab3_solar.view import render_tab3_solar
 from current_model.ui.tab4_bess.view import render_tab4_bess
+from current_model.ui.tab_generator.view import render_tab_generator
 from current_model.ui.tab_dracbv_beta.view import render_tab_dracbv_beta
 from current_model.ui.tab_hybrid_beta.view import render_tab_solar_bess_beta
 from current_model.ui.common.sidebar_scenario_view import render_sidebar_scenario_controller
@@ -53,8 +54,15 @@ with st.sidebar:
 # 3. Main Header & Active Project Indicator
 # --------------------------------------------------------------------------
 active_project_name = st.session_state.get("active_project_name", "Energy Transition & Optimization Project")
-st.title(":material/bolt: Energy Simulator & Multi-Scenario Decision Platform")
-st.caption(f":material/folder_open: **Active Workspace Project:** {active_project_name} | Parametric 15-minute dispatch, electricity contract tariffs, and solar & storage investment assessment.")
+
+hdr_col1, hdr_col2 = st.columns([8.5, 1.5])
+with hdr_col1:
+    st.title(":material/bolt: Energy Simulator & Multi-Scenario Decision Platform")
+    st.caption(f":material/folder_open: **Active Workspace Project:** {active_project_name} | Parametric 15-minute dispatch, electricity contract tariffs, and solar & storage investment assessment.")
+with hdr_col2:
+    st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
+    if st.button(":material/refresh: Reload App", use_container_width=True, help="Force a complete reload of the application and recalculations."):
+        st.rerun()
 
 # Active Scenario Banner Indicator
 render_active_scenario_banner()
@@ -80,6 +88,8 @@ if active_sub is not None:
         nav_tabs.append((":material/solar_power: Solar PV Generation", lambda: render_tab3_solar(key_prefix="app_tab3")))
     if active_sub.include_bess:
         nav_tabs.append((":material/battery_charging_full: Battery Storage (BESS)", lambda: render_tab4_bess(key_prefix="app_tab4_bess")))
+    if active_sub.include_generator:
+        nav_tabs.append((":material/local_gas_station: Generator / Genset", lambda: render_tab_generator(key_prefix="app_tab_generator")))
     if active_sub.use_custom_grid_tariff:
         nav_tabs.append((":material/swap_horiz: Tariff Switch / Alternative Contract", lambda: render_tab2_contract_switch(key_prefix="app_contract_switch")))
 
