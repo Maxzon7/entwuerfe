@@ -1,6 +1,6 @@
-# :material/science: UI Sandbox & Prototyping Laboratory (`ui_sandbox`)
+# :material/science: UI Sandbox & Minimal Contract Lab (`ui_sandbox`)
 
-An isolated, dedicated testing environment for developing, styling, and verifying Streamlit UI components, Plotly visualizations, custom widgets, and layouts **without having to run `app.py`**.
+An isolated, minimal environment for uploading consumption CSV load profiles and configuring electricity supply contracts with live financial calculation **without having to run `app.py`**.
 
 ---
 
@@ -18,9 +18,10 @@ An isolated, dedicated testing environment for developing, styling, and verifyin
 
 ```text
 current_model/ui_sandbox/
-├── __init__.py          # Module package initializer
-├── sandbox_app.py       # Standalone Streamlit test runner & showcase
-└── README.md            # Sandbox architecture & usage guide
+├── __init__.py                   # Module package initializer
+├── minimal_contract_system.py    # Minimal CSV + Contract single-page app
+├── sandbox_app.py                # Standalone Streamlit test runner
+└── README.md                     # Sandbox architecture & usage guide
 ```
 
 ---
@@ -38,13 +39,17 @@ python -m streamlit run ui_sandbox/sandbox_app.py
 ```bash
 python -m streamlit run current_model/ui_sandbox/sandbox_app.py
 ```
+*(or run `minimal_contract_system.py` directly: `python -m streamlit run current_model/ui_sandbox/minimal_contract_system.py`)*
 
 ---
 
-## :material/featured_play_list: Included Playground Views
+## :material/featured_play_list: Core Functionality
 
-* **`:material/upload_file: CSV Consumption Input`**: Complete production CSV real-meter ingestion pipeline, multi-channel upload, 15-min demo data generator, interactive Plotly timeseries charts, and session state diagnostics.
-* **`:material/waving_hand: Hello World & Overview`**: Quick status verification and architectural guidelines.
-* **`:material/dashboard: Component Showcase`**: Test shared KPI cards (`render_kpi_card`) and interactive control inputs.
-* **`:material/query_stats: Interactive Chart Lab`**: Fast Plotly theme, layout, and multi-series dispatch tuning.
-* **`:material/edit_note: Scratchpad Playground`**: Blank sandbox for testing new ad-hoc Streamlit widgets or JSON structures.
+1. **⚡ 1. Consumption (CSV Load Profile Ingestion)**:
+   - Upload single/multi-channel CSV meter files or load the 15-minute demo dataset via `render_csv_inspector()`.
+   - Automatic delimiter detection, column mapping, and 15-minute timeseries visualization.
+
+2. **📄 2. Electricity Contract & Live Financial Assessment**:
+   - Directly underneath, configure contractual supply parameters via `render_tab2_base_contract()`.
+   - Contract presets, dynamic Time-of-Use (TOU) rates, capacity charges, overload penalties, and taxes.
+   - Computes real-time billing metrics, Load vs. Limit curves, 12-month stacked payment schedules, and itemized invoice tables.

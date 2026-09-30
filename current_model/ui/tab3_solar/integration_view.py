@@ -726,14 +726,14 @@ def render_solar_integration_view(key_prefix: str = "tab3_int") -> None:
             # 1. Baseline bill (Facility load before solar)
             df_base = pd.DataFrame({
                 "timestamp": df_ts["timestamp"],
-                "Total_Demand_kW": df_ts["P_Load_kW"]
+                "Total_Demand_kW": np.nan_to_num(df_ts["P_Load_kW"].to_numpy(dtype=float), nan=0.0)
             })
             base_bill = compute_financial_bill(load_data=df_base, contract=active_contract)
 
             # 2. Solar bill (Residual load after direct solar self-consumption)
             df_residual = pd.DataFrame({
                 "timestamp": df_ts["timestamp"],
-                "Total_Demand_kW": df_ts["P_Residual_kW"]
+                "Total_Demand_kW": np.nan_to_num(df_ts["P_Residual_kW"].to_numpy(dtype=float), nan=0.0)
             })
             solar_bill = compute_financial_bill(load_data=df_residual, contract=active_contract)
 

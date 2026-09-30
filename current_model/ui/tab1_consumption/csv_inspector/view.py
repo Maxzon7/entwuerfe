@@ -20,7 +20,7 @@ import os
 import zipfile
 import re
 import datetime
-from typing import List, Tuple
+from typing import List, Tuple, Any, Optional
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -30,7 +30,11 @@ from current_model.core.load_processor import process_load_profile_data
 from current_model.core.metrics_engine import compute_load_profile_kpis
 from current_model.ui.common.cards import render_kpi_card
 from current_model.ui.common.session_utils import detect_load_profile_gaps
-from current_model.ui.tab1_consumption.csv_inspector.charts import create_csv_inspector_figure
+from current_model.ui.tab1_consumption.csv_inspector.charts import (
+    create_csv_inspector_figure,
+    create_monthly_load_breakdown_figure,
+    create_365d_baseline_figure
+)
 from current_model.ui.tab1_consumption.csv_inspector.forms import render_csv_uploader_section
 
 
@@ -127,7 +131,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 sample_raw_str = str(df_raw[time_cols_present[0]].dropna().iloc[0]) if not df_raw[time_cols_present[0]].dropna().empty else ""
             elif len(time_cols_present) > 1:
                 sample_raw_str = " ".join([str(df_raw[c].dropna().iloc[0]) for c in time_cols_present if not df_raw[c].dropna().empty])
-            starts_with_year = bool(re.match(r"^\s*\d{4}", sample_raw_str))
+            starts_with_year = bool(re.match(r"^\s*\d{4}[./-]", sample_raw_str))
             default_dayfirst = not starts_with_year
 
         # Check if full raw parsed data exists in session state
@@ -428,7 +432,16 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 with o_col3:
                     render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
 
-            with st.expander(":material/table_chart: Processed Data Table Preview", expanded=False):
+            # 5. Standardized 365-Day Annual Baseline Profile & Calculation Basis
+            _render_annual_calculation_profile_section(
+                df_clean=df_clean,
+                total_col="Total_Demand_kW",
+                kpis=kpis,
+                file_name=file_name,
+                key_prefix=key_prefix
+            )
+
+            with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
                 st.dataframe(df_clean, use_container_width=True, height=220)
 
 
@@ -483,8 +496,9 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
         st.info(
             f":material/history: **Multi-Year Timeseries Detected ({cal_days:.0f} calendar days):** "
             f"Full period is utilized for high-resolution historical baseline evaluation. "
-            f"For subsequent multi-year project horizons and life-cycle simulations, annualized base metrics "
-            f"and rolling sequence wrapping will project forward while preserving authentic load dynamics.",
+            f"For subsequent multi-year project horizons and life-cycle simulations, an annualized 365-day base profile "
+            f"is established to project forward while preserving authentic load dynamics. "
+            f"*(See Section 4 below for the full 365-day reference breakdown & plain language guide.)*",
             icon=":material/info:"
         )
 
@@ -573,5 +587,190 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
         with o_col3:
             render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
 
-    with st.expander(":material/table_chart: Processed Data Table Preview", expanded=False):
+    # 5. Standardized 365-Day Annual Baseline Profile & Calculation Basis
+    _render_annual_calculation_profile_section(
+        df_clean=df_clean,
+        total_col=total_col,
+        kpis=kpis,
+        file_name=file_name,
+        key_prefix=key_prefix
+    )
+
+    with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
         st.dataframe(df_clean, use_container_width=True, height=220)
+
+
+def _render_annual_calculation_profile_section(
+    df_clean: pd.DataFrame,
+    total_col: str,
+    kpis: Any,
+    file_name: str,
+    key_prefix: str
+) -> None:
+    """
+    Renders the Standardized 365-Day Annual Baseline Profile & Plain-Language Calculation Guide.
+    Allows inspecting the 1-year reference profile in full 15-min resolution and explains how it is derived.
+    """
+    st.write("")
+    st.subheader("5. Standardized 365-Day Annual Baseline Profile & Calculation Basis")
+    st.caption(
+        "Downstream modules (**Tab 2: Contracts & Tariffs**, **Tab 3: Solar PV Sizing & Coupling**, and **Tab 4: BESS Storage**) "
+        "rely on a standardized 365-day annual calculation profile. Inspect the derived reference year and calculation methodology below:"
+    )
+
+    # 1. Compute 365-Day baseline statistics and 12-month calendar aggregation
+    duration_days = float(getattr(kpis, "duration_days", 365.0) or 365.0)
+    total_energy_kwh = float(getattr(kpis, "total_kwh", 0.0) or 0.0)
+    peak_demand_kw = float(getattr(kpis, "peak_kw", 0.0) or 0.0)
+    step_hours = float(getattr(kpis, "hours_per_step", 0.25) or 0.25)
+
+    if duration_days > 0:
+        annual_scale = (365.0 / duration_days) if duration_days != 365.0 else 1.0
+        annualized_energy_kwh = total_energy_kwh * annual_scale
+    else:
+        annualized_energy_kwh = total_energy_kwh
+
+    annual_avg_kw = annualized_energy_kwh / 8760.0
+    annual_load_factor = (annual_avg_kw / peak_demand_kw * 100.0) if peak_demand_kw > 0 else 0.0
+
+    # 2. Extract 365-Day slice for full 15-min timeseries visualization
+    if "timestamp" in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean["timestamp"]):
+        min_ts = df_clean["timestamp"].min()
+        end_365_ts = min_ts + pd.Timedelta(days=365)
+        df_365 = df_clean[(df_clean["timestamp"] >= min_ts) & (df_clean["timestamp"] < end_365_ts)].copy()
+        if len(df_365) < 96:
+            df_365 = df_clean.copy()
+    else:
+        df_365 = df_clean.iloc[:min(len(df_clean), 35040)].copy()
+
+    # 3. KPI Summary Cards for 365-Day Baseline Year
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        render_kpi_card(
+            "Annual Baseline Energy",
+            f"{annualized_energy_kwh:,.0f} kWh",
+            f"Normalized to 365 Days ({annualized_energy_kwh/1000.0:,.1f} MWh)"
+        )
+    with c2:
+        render_kpi_card(
+            "Baseline Peak Demand",
+            f"{peak_demand_kw:,.1f} kW",
+            "Highest physical grid power"
+        )
+    with c3:
+        render_kpi_card(
+            "Annual Load Factor",
+            f"{annual_load_factor:.1f} %",
+            f"Average load: {annual_avg_kw:,.1f} kW"
+        )
+    with c4:
+        is_multi_year = duration_days > 366
+        render_kpi_card(
+            "Simulation Reference",
+            "365 Days Standard",
+            f"Derived from {duration_days:.0f}-day dataset" if is_multi_year else "1:1 Calendar Year",
+            status="ok"
+        )
+
+    # 4. Interactive Inspection Expander (Auf Knopfdruck einsehen)
+    with st.expander(":material/visibility: **Inspect 365-Day Reference Profile (15-Min Timeseries & Monthly Schedule)**", expanded=False):
+        insp_tab1, insp_tab2 = st.tabs([
+            ":material/timeline: 15-Minute Annual Curve (35,040 Intervals)",
+            ":material/calendar_month: 12-Month Calendar Schedule & Table"
+        ])
+
+        with insp_tab1:
+            fig_365_ts = create_365d_baseline_figure(
+                df_365=df_365,
+                total_col=total_col,
+                peak_kw=peak_demand_kw
+            )
+            st.plotly_chart(fig_365_ts, use_container_width=True)
+
+        with insp_tab2:
+            # Build 12-month calendar aggregation
+            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            calendar_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+            monthly_rows = []
+            if "timestamp" in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean["timestamp"]):
+                df_ts = df_clean.copy()
+                df_ts["month_num"] = df_ts["timestamp"].dt.month
+                for m_i in range(1, 13):
+                    m_sub = df_ts[df_ts["month_num"] == m_i]
+                    m_days = calendar_days[m_i - 1]
+                    if not m_sub.empty:
+                        m_p = m_sub[total_col].to_numpy(dtype=float)
+                        m_p_clean = np.nan_to_num(m_p, nan=0.0)
+                        m_kwh = float(m_p_clean.sum() * step_hours)
+                        m_peak = float(m_p_clean.max()) if len(m_p_clean) > 0 else 0.0
+                        m_avg = float(m_p_clean.mean()) if len(m_p_clean) > 0 else 0.0
+                        m_coverage = min(100.0, (len(m_sub) / max(1.0, m_days * 24.0 / step_hours)) * 100.0)
+                    else:
+                        daily_est_kwh = annualized_energy_kwh / 365.0
+                        m_kwh = daily_est_kwh * m_days
+                        m_peak = peak_demand_kw
+                        m_avg = m_kwh / (m_days * 24.0)
+                        m_coverage = 100.0
+
+                    monthly_rows.append({
+                        "Month": month_names[m_i - 1],
+                        "Days": m_days,
+                        "Energy_kWh": round(m_kwh, 1),
+                        "Energy_MWh": round(m_kwh / 1000.0, 2),
+                        "Peak_Demand_kW": round(m_peak, 1),
+                        "Avg_Load_kW": round(m_avg, 1),
+                        "Data_Coverage": f"{m_coverage:.0f}%"
+                    })
+            else:
+                daily_est_kwh = annualized_energy_kwh / 365.0
+                for m_i in range(1, 13):
+                    m_days = calendar_days[m_i - 1]
+                    m_kwh = daily_est_kwh * m_days
+                    monthly_rows.append({
+                        "Month": month_names[m_i - 1],
+                        "Days": m_days,
+                        "Energy_kWh": round(m_kwh, 1),
+                        "Energy_MWh": round(m_kwh / 1000.0, 2),
+                        "Peak_Demand_kW": round(peak_demand_kw, 1),
+                        "Avg_Load_kW": round(m_kwh / (m_days * 24.0), 1),
+                        "Data_Coverage": "100%"
+                    })
+
+            df_monthly = pd.DataFrame(monthly_rows)
+
+            fig_monthly = create_monthly_load_breakdown_figure(df_monthly)
+            st.plotly_chart(fig_monthly, use_container_width=True)
+
+            st.markdown("**12-Month Calendar Schedule & Consumption Breakdown:**")
+            st.dataframe(
+                df_monthly[["Month", "Days", "Energy_MWh", "Energy_kWh", "Peak_Demand_kW", "Avg_Load_kW", "Data_Coverage"]],
+                use_container_width=True,
+                hide_index=True
+            )
+
+    # 5. Concise Plain-Language Guide (In leichter Sprache & auf den Punkt)
+    st.markdown(
+        f"""
+        <div style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 10px; padding: 14px 18px; margin-top: 14px; margin-bottom: 8px;">
+            <div style="font-size: 0.95rem; font-weight: 700; color: #38BDF8; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                <span>:material/menu_book:</span> How the Annual Profile is Created & Projected (Quick Guide)
+            </div>
+            <div style="color: #E2E8F0; font-size: 0.88rem; line-height: 1.5;">
+                <p style="margin-bottom: 6px;">
+                    <strong>1. Raw Ingestion (Eingelesen):</strong><br>
+                    {duration_days:.0f} calendar days of actual interval recordings ({kpis.data_points_count:,} data points at {kpis.hours_per_step*60:.0f}-min resolution) from <code>{file_name}</code>.
+                </p>
+                <p style="margin-bottom: 6px;">
+                    <strong>2. 1-Year Baseline Profile (365-Tage-Berechnungsjahr):</strong><br>
+                    The first full 365-day calendar year (35,040 intervals) is extracted as the standard reference year. Measurement gaps are cleanly isolated without artificial spikes, scaling the annual baseline to <strong>{annualized_energy_kwh:,.0f} kWh/year</strong> at <strong>{peak_demand_kw:,.1f} kW</strong> peak demand.
+                </p>
+                <p style="margin-bottom: 0;">
+                    <strong>3. Multi-Year Simulation & Projection (15-Jahre-Hochrechnung):</strong><br>
+                    This 365-day profile serves as Year 1 benchmark for Solar PV (Tab 3), BESS (Tab 4), and Electricity Tariffs (Tab 2). Subsequent years project forward dynamically with annual tariff inflation and PV degradation.
+                </p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )

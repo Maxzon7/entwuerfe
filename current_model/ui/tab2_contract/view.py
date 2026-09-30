@@ -103,7 +103,7 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
     st.divider()
 
     # 3. Automated Financial Cost Assessment (Status Quo)
-    st.subheader("Monthly Cost & Financial Assessment (Status Quo)")
+    st.subheader("Monthly Cost & Financial Assessment (Current situation)")
 
     if load_data is None:
         st.info("Configure a consumption profile in Tab 2 (Consumption) to view the automated monthly financial assessment.")
@@ -210,7 +210,7 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
             is_full_year = (n_months == 12 or sched_days >= 360 or is_synthetic_annual)
 
             with kpi_col1:
-                total_title = "Annual Total Cost (Full Year)" if is_full_year else "Total Cost over Period"
+                total_title =  "Total Cost over Period"
                 total_sub = (
                     f"Net: {sched_net:,.2f} | 365 days ({sched_kwh:,.0f} kWh)" if is_synthetic_annual else
                     f"Net: {sched_net:,.2f} | {sched_days} days ({sched_kwh:,.0f} kWh)"
@@ -283,7 +283,7 @@ def render_tab2_base_contract(key_prefix: str = "app_tab2") -> Contract:
 
         # 7. Monthly Payment Schedule across Full Duration (Zahlungsreihe)
         st.divider()
-        st.subheader("Monthly Payment Schedule across Full Duration (Zahlungsreihe)")
+        st.subheader("Monthly Payment over Period ")
         st.caption("Month-by-month billing series detailing individual cost components, taxes, and total invoice amounts over the complete analyzed period.")
 
         fig_series = create_monthly_payment_series_figure(

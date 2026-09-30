@@ -18,7 +18,7 @@ import numpy as np
 def _extract_datetime_string(s: str) -> str:
     """Extracts date/time pattern (e.g. DD.MM.YYYY HH:MM:SS) if mixed with extraneous ID text."""
     s_str = str(s).strip()
-    match = re.search(r'(\d{1,4}[./-]\d{1,2}[./-]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)', s_str)
+    match = re.search(r'(\b\d{1,4}[./-]\d{1,2}[./-]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?\b)', s_str)
     return match.group(1) if match else s_str
 
 
@@ -27,7 +27,7 @@ def _try_parse_timestamps(
     cols: List[str],
     dayfirst: Optional[bool] = None
 ) -> Tuple[Optional[pd.Series], bool]:
-    """Helper to try parsing a unified timestamp Series from given column(s)."""
+    """Helper to try parsing a unified timestamp Series from given column(s) with adaptive coverage maximization."""
     if not cols:
         return None, True
 
@@ -37,14 +37,39 @@ def _try_parse_timestamps(
         raw_ts = df[cols].astype(str).agg(' '.join, axis=1)
 
     cleaned_ts = raw_ts.apply(_extract_datetime_string)
+    sample_first = cleaned_ts.dropna().iloc[0] if not cleaned_ts.dropna().empty else ""
+    starts_with_year = bool(re.match(r"^\s*\d{4}", str(sample_first)))
 
-    if dayfirst is None:
-        first_valid = cleaned_ts.dropna().iloc[0] if not cleaned_ts.dropna().empty else ""
-        starts_with_year = bool(re.match(r"^\s*\d{4}", str(first_valid)))
-        dayfirst = not starts_with_year
+    # Candidates:
+    # 1. Standard dayfirst=True (DD/MM/YYYY, DD.MM.YYYY)
+    # 2. Standard dayfirst=False (YYYY-MM-DD or MM/DD/YYYY)
+    # 3. format="mixed"
+    candidates = []
 
-    parsed = pd.to_datetime(cleaned_ts, dayfirst=dayfirst, errors="coerce")
-    return parsed, dayfirst
+    p_dtrue = pd.to_datetime(cleaned_ts, dayfirst=True, errors="coerce")
+    candidates.append((p_dtrue.notnull().sum(), True, p_dtrue))
+
+    p_dfalse = pd.to_datetime(cleaned_ts, dayfirst=False, errors="coerce")
+    candidates.append((p_dfalse.notnull().sum(), False, p_dfalse))
+
+    try:
+        p_mixed = pd.to_datetime(cleaned_ts, format="mixed", errors="coerce")
+        candidates.append((p_mixed.notnull().sum(), not starts_with_year, p_mixed))
+    except Exception:
+        pass
+
+    # Sort candidates by number of successfully parsed timestamps descending
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    best_count, best_dayfirst, best_parsed = candidates[0]
+
+    # If user explicitly requested dayfirst, and it achieves at least 95% of best_count, respect user choice
+    if dayfirst is not None:
+        user_candidates = [c for c in candidates if c[1] == dayfirst]
+        if user_candidates and user_candidates[0][0] >= max(1, int(0.95 * best_count)):
+            return user_candidates[0][2], dayfirst
+
+    # Otherwise return the highest-coverage parser
+    return best_parsed, best_dayfirst
 
 
 def process_load_profile_data(

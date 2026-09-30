@@ -165,9 +165,9 @@ def compute_bess_financial_metrics(
     cap_kwh = max(1.0, float(bess_config.capacity_kwh))
 
     # 2. Extract load curves
-    p_load = df_timeseries["P_Load_kW"].to_numpy(dtype=float) if "P_Load_kW" in df_timeseries.columns else np.zeros(len(df_timeseries))
-    p_grid = df_timeseries["P_Grid_kW"].to_numpy(dtype=float) if "P_Grid_kW" in df_timeseries.columns else np.zeros(len(df_timeseries))
-    p_dis = df_timeseries["P_BESS_Discharge_kW"].to_numpy(dtype=float) if "P_BESS_Discharge_kW" in df_timeseries.columns else np.zeros(len(df_timeseries))
+    p_load = np.nan_to_num(df_timeseries["P_Load_kW"].to_numpy(dtype=float), nan=0.0) if "P_Load_kW" in df_timeseries.columns else np.zeros(len(df_timeseries))
+    p_grid = np.nan_to_num(df_timeseries["P_Grid_kW"].to_numpy(dtype=float), nan=0.0) if "P_Grid_kW" in df_timeseries.columns else np.zeros(len(df_timeseries))
+    p_dis = np.nan_to_num(df_timeseries["P_BESS_Discharge_kW"].to_numpy(dtype=float), nan=0.0) if "P_BESS_Discharge_kW" in df_timeseries.columns else np.zeros(len(df_timeseries))
 
     # 3. Compute baseline utility bill (Status Quo) vs With-BESS bill
     df_base = pd.DataFrame({"Total_Demand_kW": p_load})

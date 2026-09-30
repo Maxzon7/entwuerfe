@@ -46,10 +46,8 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Tab 3: Contract Form** | Electricity tariff input form, TOU rates, taxes & `.drac` transfer bar | [`ui/tab2_contract/form.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/form.py) |
 | **Tab 3: Financial Charts** | Cost distribution donut chart and monthly payment schedule series | [`ui/tab2_contract/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/charts.py) |
 | **Tab 3: Tariff Switch** | Dynamic sub-scenario tab for evaluating alternative supply contracts | [`ui/tab2_contract/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/view.py) |
-| **Tab 4: DRACBV Beta** | Standalone generator peaking and peak shaving simulator (Beta) | [`ui/tab_dracbv_beta/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_dracbv_beta/view.py) |
-| **Tab 4: DRACBV Charts** | 15-minute generator dispatch curve & cumulative payment schedule | [`ui/tab_dracbv_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_dracbv_beta/charts.py) |
-| **Tab 5: Solar + BESS (Beta)** | Standalone isolated Solar PV + BESS hybrid dispatch simulator (Beta) | [`ui/tab_hybrid_beta/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/view.py) |
-| **Tab 5: Hybrid Charts** | 15-min hybrid dispatch curve, stacked BESS SoC profile, monthly balance & tables | [`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py) |
+| **Tab 4: Solar + BESS (Beta)** | Standalone isolated Solar PV + BESS hybrid dispatch simulator (Beta) | [`ui/tab_hybrid_beta/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/view.py) |
+| **Tab 4: Hybrid Charts** | 15-min hybrid dispatch curve, stacked BESS SoC profile, monthly balance & tables | [`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py) |
 | **Dynamic Tab: Solar PV** | Standalone physical generation simulator & load coupling integration | [`ui/tab3_solar/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/view.py) |
 | **Solar Forms & Physics** | Module sizing, tilt/azimuth, GPS coordinates & Perez loss factors | [`ui/tab3_solar/forms.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/forms.py) |
 | **Solar Standalone Charts** | 15-min generation curve, monthly yields, loss waterfall & tech matrix | [`ui/tab3_solar/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/charts.py) |
@@ -85,8 +83,10 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Calendar Models** | `CalendarConfig`, holiday calendars, weekend off-peak logic | [`models/calendar_config.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/calendar_config.py) |
 | **Preset Templates** | Industry, Office, EV-Hub load consumers and contract presets | [`models/presets.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/presets.py) |
 | **UI Testing Sandbox Lab** | Isolated Streamlit playground for UI prototyping & widget testing | [`ui_sandbox/sandbox_app.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/sandbox_app.py) |
+| **Minimal Contract Lab** | Streamlined Electricity Contract & Consumption sandbox module | [`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py) |
 | **Sandbox Architecture Doc** | Sandbox rules, one-way dependency isolation, quick-start guide | [`ui_sandbox/README.md`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/README.md) |
-| **Automated Test Runner** | Regression & health-check runner (129 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
+| **Automated Test Runner** | Regression & health-check runner (130 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
+
 
 ---
 
@@ -185,7 +185,7 @@ The main entry point [`app.py`](file:///c:/Users/mwien/Documents/One%20drive2/On
    * **1. Scenario Management:** Central leaderboard, 15-year TCO curves, energy balances, and comparative analytics.
    * **2. Consumption (Baseline):** Profile definition via bottom-up synthetic simulation or real smart meter CSV ingestion.
    * **3. Current Contract (Status Quo):** Baseline electricity contract, TOU rates, capacity fees, and bill decomposition.
-   * **4. DRACBV Simulator (Beta):** Independent peaking generator simulation and fuel curve analysis.
+   * **4. Solar + BESS (Beta):** Standalone isolated Solar PV + BESS hybrid dispatch simulator.
 
 2. **Dynamic Solution Module Tabs (Appended Based on Active Sub-Scenario):**
    * If `active_sub.include_solar == True`: **Solar PV Generation** tab appears.

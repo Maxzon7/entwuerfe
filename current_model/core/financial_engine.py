@@ -79,16 +79,19 @@ def compute_financial_bill(
 
     # 1. Standardize input data and calculate duration & sampling
     if isinstance(load_data, pd.DataFrame):
-        if "Total_Demand_kW" in load_data.columns:
-            power_series = load_data["Total_Demand_kW"].fillna(0.0)
+        df_clean_ref = load_data.copy()
+        if "Total_Demand_kW" in df_clean_ref.columns:
+            df_clean_ref["Total_Demand_kW"] = pd.to_numeric(df_clean_ref["Total_Demand_kW"], errors="coerce").fillna(0.0)
+            power_series = df_clean_ref["Total_Demand_kW"]
         else:
-            num_cols = load_data.select_dtypes(include=[np.number]).columns
-            power_series = load_data[num_cols].sum(axis=1) if len(num_cols) > 0 else pd.Series([0.0])
+            num_cols = df_clean_ref.select_dtypes(include=[np.number]).columns
+            df_clean_ref[num_cols] = df_clean_ref[num_cols].fillna(0.0)
+            power_series = df_clean_ref[num_cols].sum(axis=1) if len(num_cols) > 0 else pd.Series([0.0])
 
-        count = len(load_data)
+        count = len(df_clean_ref)
 
-        if "timestamp" in load_data.columns and count > 0:
-            ts_series = pd.to_datetime(load_data["timestamp"], errors="coerce")
+        if "timestamp" in df_clean_ref.columns and count > 0:
+            ts_series = pd.to_datetime(df_clean_ref["timestamp"], errors="coerce")
             t_min = ts_series.min()
             t_max = ts_series.max()
             if duration_days is None:
@@ -103,18 +106,16 @@ def compute_financial_bill(
                     duration_days = max(1.0, (count * step_hours) / 24.0)
 
             timestamps = ts_series.tolist()
-            df_clean_ref = load_data.copy()
             df_clean_ref["timestamp"] = ts_series
         else:
             if duration_days is None:
                 duration_days = max(1.0, (count * step_hours) / 24.0)
             timestamps = None
-            df_clean_ref = None
 
-        powers = power_series.to_numpy(dtype=float)
+        powers = np.nan_to_num(power_series.to_numpy(dtype=float), nan=0.0)
 
     else:
-        powers = np.asarray(load_data, dtype=float)
+        powers = np.nan_to_num(np.asarray(load_data, dtype=float), nan=0.0)
         count = len(powers)
         duration_days = duration_days if duration_days is not None else max(1.0, (count * step_hours) / 24.0)
         timestamps = None
@@ -339,9 +340,9 @@ def compute_financial_bill(
                     mask = (ts_series.dt.to_period("M") == period)
                     sub_df = df_clean_ref.loc[mask]
                     if "Total_Demand_kW" in sub_df.columns:
-                        sub_powers = sub_df["Total_Demand_kW"].to_numpy(dtype=float)
+                        sub_powers = np.nan_to_num(sub_df["Total_Demand_kW"].to_numpy(dtype=float), nan=0.0)
                     else:
-                        sub_powers = sub_df.select_dtypes(include=[np.number]).sum(axis=1).to_numpy(dtype=float)
+                        sub_powers = np.nan_to_num(sub_df.select_dtypes(include=[np.number]).sum(axis=1).to_numpy(dtype=float), nan=0.0)
                     sub_ts = sub_df["timestamp"].tolist()
 
                     sub_kwh = float(sub_powers.sum() * step_hours)
