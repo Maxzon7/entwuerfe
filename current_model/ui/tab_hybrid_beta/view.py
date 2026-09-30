@@ -27,6 +27,8 @@ from current_model.core.solar_bess_engine import (
     SolarBESSSimulationResult,
     SolarBESSKPIs
 )
+from current_model.ui.tab3_solar.forms import SITE_PRESETS
+from current_model.core.solar_engine import search_locations_open_meteo
 from current_model.ui.common.session_utils import (
     find_active_load_data_in_session,
     find_active_contract_in_session,
@@ -96,14 +98,14 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
     with col_stat1:
         render_kpi_card(
-            title=":material/analytics: Facility Peak Demand",
+            title="Facility Peak Demand",
             value=f"{peak_kw:.1f} kW",
             subtext=f"Total Demand: {total_kwh:,.0f} kWh/a",
             status="default"
         )
     with col_stat2:
         render_kpi_card(
-            title=":material/speed: Contracted Grid Limit",
+            title="Contracted Grid Limit",
             value=f"{contract_cap_kw:.0f} kW",
             subtext=f"Contract: {active_contract.name[:22]}",
             status="default"
@@ -113,7 +115,7 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
         status_val = f"+{overload_kw:.1f} kW Overload" if is_overloaded else "Within Limit"
         status_sub = "Grid Overload Detected" if is_overloaded else "No Overload Violations"
         render_kpi_card(
-            title=":material/warning: Overload Status",
+            title="Overload Status",
             value=status_val,
             subtext=status_sub,
             status=status_theme
@@ -122,7 +124,7 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
         # Suggested battery size indicator
         sugg_cap = round(overload_kw * 2.0 / 25.0) * 25.0 if is_overloaded else 100.0
         render_kpi_card(
-            title=":material/battery_charging_full: Recommended BESS",
+            title="Recommended BESS",
             value=f"{max(50.0, sugg_cap):.0f} kWh",
             subtext="Baseline Sizing Benchmark",
             status="default"
@@ -140,12 +142,93 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     suggested_bess_kwh = max(50.0, round((peak_kw * 0.50) / 25.0) * 25.0)
     suggested_bess_kw = max(25.0, round((suggested_bess_kwh * 0.50) / 10.0) * 10.0)
 
+    state_lat_key = f"{key_prefix}_lat"
+    state_lon_key = f"{key_prefix}_lon"
+    state_name_key = f"{key_prefix}_name"
+
+    if state_lat_key not in st.session_state:
+        st.session_state[state_lat_key] = -33.5133
+        st.session_state[state_lon_key] = -69.2561
+        st.session_state[state_name_key] = "Tunuyán, Mendoza (Bodegas Salentein)"
+
+    # Location Quick Search & Preset Bar (Matched to Solar Module)
+    with st.expander(":material/location_on: Geographic Site Location & Solar Radiation Site", expanded=False):
+        col_s_srch, col_s_pres = st.columns(2)
+        with col_s_srch:
+            search_query = st.text_input(
+                "Search City / Address (Worldwide):",
+                placeholder="e.g. Mendoza, Santiago, Madrid, Berlin, Miami...",
+                key=f"{key_prefix}_city_search"
+            )
+            if search_query and len(search_query.strip()) >= 2:
+                results = search_locations_open_meteo(search_query.strip(), count=5)
+                if results:
+                    opts = {f"{r['display_name']} ({r['lat']}°, {r['lon']}°)": r for r in results}
+                    chosen_label = st.selectbox(
+                        "Matching Results (Select to apply):",
+                        options=list(opts.keys()),
+                        key=f"{key_prefix}_search_res"
+                    )
+                    if chosen_label in opts:
+                        ch = opts[chosen_label]
+                        if abs(st.session_state[state_lat_key] - ch["lat"]) > 0.001 or abs(st.session_state[state_lon_key] - ch["lon"]) > 0.001:
+                            st.session_state[state_lat_key] = ch["lat"]
+                            st.session_state[state_lon_key] = ch["lon"]
+                            st.session_state[state_name_key] = ch["display_name"]
+                            st.rerun()
+        with col_s_pres:
+            preset_choice = st.selectbox(
+                "Quick Site Presets:",
+                options=["-- Custom / Keep Current --"] + list(SITE_PRESETS.keys()),
+                index=0,
+                key=f"{key_prefix}_preset_choice"
+            )
+            if preset_choice in SITE_PRESETS:
+                p_info = SITE_PRESETS[preset_choice]
+                if abs(st.session_state[state_lat_key] - p_info["lat"]) > 0.001 or abs(st.session_state[state_lon_key] - p_info["lon"]) > 0.001:
+                    st.session_state[state_lat_key] = p_info["lat"]
+                    st.session_state[state_lon_key] = p_info["lon"]
+                    st.session_state[state_name_key] = p_info["name"]
+                    st.rerun()
+
+    cur_lat = float(st.session_state[state_lat_key])
+    cur_lon = float(st.session_state[state_lon_key])
+    cur_name = st.session_state.get(state_name_key, f"Site ({cur_lat:.3f}, {cur_lon:.3f})")
+
+    # Optimal hemisphere defaults for tilt and azimuth
+    default_azimuth = 0.0 if cur_lat < 0 else 180.0
+    default_tilt = float(round(max(10.0, min(60.0, abs(cur_lat) * 0.85)), 0))
+
     with st.form(key=f"{key_prefix}_hybrid_form"):
         col_solar, col_bess = st.columns(2)
 
         # 3.1 Solar PV Parameters
         with col_solar:
-            st.markdown("##### :material/solar_power: Solar PV Sizing")
+            st.markdown("##### :material/solar_power: Solar PV Sizing & Site Coordinates")
+            st.caption(f"Active Site: **{cur_name}** (`{cur_lat:.4f}°, {cur_lon:.4f}°`)")
+
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                form_lat = st.number_input(
+                    "Latitude (°N / °S)",
+                    min_value=-90.0,
+                    max_value=90.0,
+                    value=cur_lat,
+                    step=0.01,
+                    format="%.4f",
+                    help="Positive = North, Negative = South"
+                )
+            with col_c2:
+                form_lon = st.number_input(
+                    "Longitude (°E / °W)",
+                    min_value=-180.0,
+                    max_value=180.0,
+                    value=cur_lon,
+                    step=0.01,
+                    format="%.4f",
+                    help="Positive = East, Negative = West"
+                )
+
             solar_kwp = st.number_input(
                 "Installed Solar Capacity (kWp)",
                 min_value=5.0,
@@ -165,22 +248,21 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
 
             col_s1, col_s2 = st.columns(2)
             with col_s1:
-                tech_choice = st.selectbox(
-                    "Cell Technology",
-                    options=["TOPCon", "PERC", "Backcontact"],
-                    index=0,
-                    help="TOPCon (N-Type standard), PERC (P-Type legacy), or Backcontact (IBC high-efficiency)."
+                tilt_deg = st.number_input(
+                    "Tilt Angle (°)",
+                    min_value=0.0,
+                    max_value=90.0,
+                    value=float(st.session_state.get(f"{key_prefix}_tilt", default_tilt)),
+                    step=5.0
                 )
-                tilt_deg = st.number_input("Tilt Angle (°)", min_value=0.0, max_value=90.0, value=30.0, step=5.0)
             with col_s2:
-                mounting = st.selectbox("Mounting Type", options=["Open-Rack (Ground/Carport)", "Flush Roof"], index=0)
                 azimuth_deg = st.number_input(
                     "Azimuth (°)",
                     min_value=-180.0,
                     max_value=180.0,
-                    value=0.0,
+                    value=float(st.session_state.get(f"{key_prefix}_azimuth", default_azimuth)),
                     step=15.0,
-                    help="0° = North (South Hemisphere), 180° = South (North Hemisphere)."
+                    help="0° = North (Southern Hemisphere), 180° = South (Northern Hemisphere)."
                 )
 
         # 3.2 BESS Parameters
@@ -202,7 +284,7 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
                     max_value=5000.0,
                     value=float(st.session_state.get(f"{key_prefix}_bess_chg_kw", suggested_bess_kw)),
                     step=10.0,
-                    help="Maximum continuous charging power (from solar surplus)."
+                    help="Maximum continuous charging power (from solar surplus or grid headroom)."
                 )
                 soc_min = st.slider("Min State of Charge (SoC Min %)", min_value=0.0, max_value=30.0, value=10.0, step=5.0)
             with col_b2:
@@ -219,11 +301,11 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
             dispatch_strat = st.radio(
                 "BESS Discharge Strategy",
                 options=[
-                    "Self-Consumption Maximization (Discharge on any residual load)",
-                    "Peak Shaving (Only discharge when residual load exceeds target cap)"
+                    "Peak Shaving (Only discharge when residual load exceeds target cap)",
+                    "Self-Consumption Maximization (Discharge on any residual load)"
                 ],
                 index=0,
-                help="Choose whether the battery discharges to cover all deficit load or strictly preserves energy for peaks above a limit."
+                help="Choose whether the battery prioritizes peak shaving or maximizes instantaneous self-consumption."
             )
 
             is_peak_shaving = ("Peak Shaving" in dispatch_strat)
@@ -236,14 +318,24 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
                 help="Used in peak shaving mode to cap residual demand draw from the utility grid."
             )
 
+            allow_grid_chg = st.checkbox(
+                "Allow Utility Grid Recharging (when Solar is unavailable)",
+                value=True,
+                help="Allows replenishing the battery from the utility grid up to the target cap when solar power is insufficient."
+            )
+
         submit_btn = st.form_submit_button(
             ":material/play_arrow: Run 15-Minute Solar + BESS Hybrid Simulation",
             type="primary"
         )
 
     # Persist input settings in session state for reactivity
+    st.session_state[state_lat_key] = form_lat
+    st.session_state[state_lon_key] = form_lon
     st.session_state[f"{key_prefix}_solar_kwp"] = solar_kwp
     st.session_state[f"{key_prefix}_inverter_kw"] = inverter_kw
+    st.session_state[f"{key_prefix}_tilt"] = tilt_deg
+    st.session_state[f"{key_prefix}_azimuth"] = azimuth_deg
     st.session_state[f"{key_prefix}_bess_kwh"] = bess_kwh
     st.session_state[f"{key_prefix}_bess_chg_kw"] = bess_chg_kw
     st.session_state[f"{key_prefix}_bess_dis_kw"] = bess_dis_kw
@@ -251,20 +343,21 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     # --------------------------------------------------------------------------
     # 4. Assemble Configurations & Execute Simulation
     # --------------------------------------------------------------------------
-    # Module spec calculation
-    tech_spec = TECHNOLOGY_SPECS.get(tech_choice, TECHNOLOGY_SPECS["TOPCon"])
-    mod_wp = float(tech_spec.get("power_wp", 450.0))
-    mod_count = max(1, int(round((solar_kwp * 1000.0) / mod_wp)))
+    solar_loc = SolarLocation(
+        name=cur_name,
+        latitude=float(form_lat),
+        longitude=float(form_lon)
+    )
 
     solar_config = SolarPVConfig(
-        module_count=mod_count,
-        module_power_wp=mod_wp,
-        technology_preset=tech_choice,
-        module_technology=tech_spec.get("name", "N-Type TOPCon"),
+        module_count=max(1, int(round((solar_kwp * 1000.0) / 450.0))),
+        module_power_wp=450.0,
+        technology_preset="TOPCon",
+        module_technology="N-Type TOPCon",
         inverter_capacity_kw=float(inverter_kw),
         tilt_deg=float(tilt_deg),
         azimuth_deg=float(azimuth_deg),
-        mounting_type=mounting,
+        mounting_type="Open-Rack",
         weather_mode="TMY"
     )
 
@@ -278,6 +371,7 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
         initial_soc_pct=50.0,
         dispatch_strategy=strat_key,
         peak_shaving_threshold_kw=float(target_shaving_cap),
+        allow_grid_charging=bool(allow_grid_chg),
         round_trip_efficiency_pct=90.0,
         is_financial_enabled=False
     )
@@ -287,6 +381,7 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
             load_df=df_load,
             solar_config=solar_config,
             bess_config=bess_config,
+            location=solar_loc,
             grid_limit_kw=float(contract_cap_kw),
             power_col=power_col,
             step_hours=0.25
@@ -307,21 +402,21 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     col_k1, col_k2, col_k3, col_k4 = st.columns(4)
     with col_k1:
         render_kpi_card(
-            title=":material/solar_power: Solar PV Generation",
+            title="Solar PV Generation",
             value=f"{kpis.annual_solar_kwh:,.0f} kWh/a",
             subtext=f"Installed DC: {solar_kwp:.1f} kWp",
             status="default"
         )
     with col_k2:
         render_kpi_card(
-            title=":material/bolt: Autarky / Solar Fraction",
+            title="Autarky / Solar Fraction",
             value=f"{kpis.autarky_rate_pct:.1f} %",
             subtext=f"Direct: {kpis.direct_consumption_pct:.1f}% | BESS: {kpis.bess_charged_from_pv_pct:.1f}%",
             status="ok" if kpis.autarky_rate_pct >= 40.0 else "default"
         )
     with col_k3:
         render_kpi_card(
-            title=":material/sync: Total Self-Consumption",
+            title="Total Self-Consumption",
             value=f"{kpis.self_consumption_rate_pct:.1f} %",
             subtext=f"Used On-Site: {kpis.total_self_consumption_kwh:,.0f} kWh/a",
             status="ok" if kpis.self_consumption_rate_pct >= 70.0 else "default"
@@ -329,7 +424,7 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     with col_k4:
         peak_status = "ok" if kpis.peak_shaved_kw > 0.1 else "default"
         render_kpi_card(
-            title=":material/trending_down: Grid Peak Reduction",
+            title="Grid Peak Reduction",
             value=f"-{kpis.peak_shaved_kw:.1f} kW",
             subtext=f"{kpis.orig_peak_kw:.1f} kW → {kpis.new_peak_kw:.1f} kW (-{kpis.peak_reduction_pct:.1f}%)",
             status=peak_status
@@ -339,21 +434,21 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     col_k5, col_k6, col_k7, col_k8 = st.columns(4)
     with col_k5:
         render_kpi_card(
-            title=":material/arrow_downward: Grid Import Avoided",
+            title="Grid Import Avoided",
             value=f"-{kpis.grid_import_reduction_kwh:,.0f} kWh",
             subtext=f"Remaining Import: {kpis.annual_grid_import_kwh:,.0f} kWh/a (-{kpis.grid_import_reduction_pct:.1f}%)",
             status="ok"
         )
     with col_k6:
         render_kpi_card(
-            title=":material/sync_alt: Battery Utilization",
+            title="Battery Utilization",
             value=f"{kpis.bess_full_cycles:.1f} Cycles/a",
             subtext=f"Throughput: {kpis.bess_discharged_kwh:,.0f} kWh/a",
             status="default"
         )
     with col_k7:
         render_kpi_card(
-            title=":material/upload: Surplus Grid Feed-in",
+            title="Surplus Grid Feed-in",
             value=f"{kpis.annual_grid_export_kwh:,.0f} kWh/a",
             subtext=f"Export Share: {kpis.grid_export_pct:.1f}% of Solar",
             status="default"
@@ -361,7 +456,7 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
     with col_k8:
         v_status = "ok" if kpis.new_violations_count == 0 else "alert"
         render_kpi_card(
-            title=":material/security: Overload Violations",
+            title="Overload Violations",
             value=f"{kpis.new_violations_count} intervals",
             subtext=f"Before: {kpis.orig_violations_count} ({kpis.violations_eliminated_pct:.0f}% eliminated)",
             status=v_status
@@ -411,7 +506,8 @@ def render_tab_solar_bess_beta(key_prefix: str = "app_solar_bess_beta") -> None:
                 "Load Demand (MWh)": round(m["load_kwh"] / 1000.0, 2),
                 "Solar PV (MWh)": round(m["solar_kwh"] / 1000.0, 2),
                 "Direct PV (MWh)": round(m["direct_kwh"] / 1000.0, 2),
-                "BESS Charge (MWh)": round(m["bess_charge_kwh"] / 1000.0, 2),
+                "BESS Charge Solar (MWh)": round(m.get("bess_charge_pv_kwh", 0.0) / 1000.0, 2),
+                "BESS Charge Grid (MWh)": round(m.get("bess_charge_grid_kwh", 0.0) / 1000.0, 2),
                 "BESS Discharge (MWh)": round(m["bess_discharge_kwh"] / 1000.0, 2),
                 "Net Grid Import (MWh)": round(m["grid_import_kwh"] / 1000.0, 2),
                 "Grid Feed-In (MWh)": round(m["grid_export_kwh"] / 1000.0, 2),

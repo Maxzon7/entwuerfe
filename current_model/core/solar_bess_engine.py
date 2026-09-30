@@ -40,6 +40,8 @@ class SolarBESSKPIs:
     direct_consumption_pct: float = 0.0
     bess_charged_from_pv_kwh: float = 0.0
     bess_charged_from_pv_pct: float = 0.0
+    bess_charged_from_grid_kwh: float = 0.0
+    bess_charged_total_kwh: float = 0.0
     annual_grid_export_kwh: float = 0.0
     grid_export_pct: float = 0.0
     
@@ -110,8 +112,12 @@ def simulate_solar_bess_dispatch(
            Priority 2: Any remaining solar is exported to the grid.
       3. If P_Solar(t) < P_Load(t):
            Residual load P_Residual(t) = P_Load(t) - P_Solar(t).
-           Priority 1: BESS discharges to cover residual load (or peaks above target_cap).
-           Priority 2: Grid import covers the remaining residual load.
+           In Peak Shaving mode:
+             - If P_Residual(t) > target_cap_kw: BESS discharges to shave peak down to target_cap_kw.
+             - If P_Residual(t) < target_cap_kw: BESS recharges from available grid headroom if allow_grid_charging is True.
+           In Self-Consumption mode:
+             - BESS discharges to cover residual load from stored solar energy.
+           Grid import covers remaining unmet electrical demand.
     """
     # 1. Extract Facility Load Time Series
     if power_col and power_col in load_df.columns:
@@ -169,12 +175,14 @@ def simulate_solar_bess_dispatch(
         target_cap_kw = float(grid_limit_kw)
 
     strategy = getattr(bess_config, "dispatch_strategy", "self_consumption")
+    allow_grid_chg = getattr(bess_config, "allow_grid_charging", True)
 
     # 5. Output Arrays
     p_direct = np.zeros(n_steps, dtype=float)
     p_surplus = np.zeros(n_steps, dtype=float)
     p_residual = np.zeros(n_steps, dtype=float)
-    p_bess_chg = np.zeros(n_steps, dtype=float)
+    p_bess_chg_pv = np.zeros(n_steps, dtype=float)
+    p_bess_chg_grid = np.zeros(n_steps, dtype=float)
     p_bess_dis = np.zeros(n_steps, dtype=float)
     p_grid_import = np.zeros(n_steps, dtype=float)
     p_grid_export = np.zeros(n_steps, dtype=float)
@@ -204,6 +212,7 @@ def simulate_solar_bess_dispatch(
             p_surplus[i] = surplus_kw
             p_residual[i] = residual_kw
             p_bess_dis[i] = 0.0
+            p_bess_chg_grid[i] = 0.0
 
             # Priority 1: Charge BESS from solar surplus
             if curr_soc < soc_max_kwh and surplus_kw > 0.0:
@@ -211,7 +220,7 @@ def simulate_solar_bess_dispatch(
                 p_room_kw = room_kwh / (eta_chg * step_hours)
                 actual_chg_kw = min(surplus_kw, p_chg_max, p_room_kw)
 
-                p_bess_chg[i] = actual_chg_kw
+                p_bess_chg_pv[i] = actual_chg_kw
                 energy_added_kwh = actual_chg_kw * eta_chg * step_hours
                 curr_soc = min(soc_max_kwh, curr_soc + energy_added_kwh)
 
@@ -219,7 +228,7 @@ def simulate_solar_bess_dispatch(
                 export_kw = surplus_kw - actual_chg_kw
                 p_grid_export[i] = export_kw
             else:
-                p_bess_chg[i] = 0.0
+                p_bess_chg_pv[i] = 0.0
                 p_grid_export[i] = surplus_kw
 
             p_grid_import[i] = 0.0
@@ -234,35 +243,110 @@ def simulate_solar_bess_dispatch(
             p_direct[i] = direct_kw
             p_surplus[i] = surplus_kw
             p_residual[i] = residual_kw
-            p_bess_chg[i] = 0.0
+            p_bess_chg_pv[i] = 0.0
             p_grid_export[i] = 0.0
 
-            # Priority 1: Discharge BESS to cover residual load
-            if curr_soc > soc_min_kwh and residual_kw > 0.0:
-                avail_kwh = max(0.0, curr_soc - soc_min_kwh)
-                p_avail_kw = (avail_kwh * eta_dis) / step_hours
-
-                if strategy == "peak_shaving":
-                    # Only discharge when residual load exceeds target peak shaving limit
-                    if residual_kw > target_cap_kw:
+            if strategy == "peak_shaving":
+                if residual_kw > target_cap_kw:
+                    # Peak Shaving Discharge
+                    if curr_soc > soc_min_kwh:
+                        avail_kwh = max(0.0, curr_soc - soc_min_kwh)
+                        p_avail_kw = (avail_kwh * eta_dis) / step_hours
                         req_shave_kw = residual_kw - target_cap_kw
                         actual_dis_kw = min(req_shave_kw, p_dis_max, p_avail_kw)
+
+                        p_bess_dis[i] = actual_dis_kw
+                        energy_drawn_kwh = (actual_dis_kw / eta_dis) * step_hours
+                        curr_soc = max(soc_min_kwh, curr_soc - energy_drawn_kwh)
                     else:
-                        actual_dis_kw = 0.0
+                        p_bess_dis[i] = 0.0
+
+                    p_bess_chg_grid[i] = 0.0
+                    net_import_kw = residual_kw - p_bess_dis[i]
+                    p_grid_import[i] = net_import_kw
+                    p_unmet_peak[i] = max(0.0, net_import_kw - target_cap_kw)
+
                 else:
-                    # Self-consumption mode: discharge to cover any residual load
+                    # Residual load is under target cap: No discharge needed
+                    p_bess_dis[i] = 0.0
+                    if allow_grid_chg and curr_soc < soc_max_kwh:
+                        grid_headroom_kw = max(0.0, target_cap_kw - residual_kw)
+                        room_kwh = max(0.0, soc_max_kwh - curr_soc)
+                        p_room_kw = room_kwh / (eta_chg * step_hours)
+                        actual_chg_grid_kw = min(grid_headroom_kw, p_chg_max, p_room_kw)
+
+                        p_bess_chg_grid[i] = actual_chg_grid_kw
+                        energy_added_kwh = actual_chg_grid_kw * eta_chg * step_hours
+                        curr_soc = min(soc_max_kwh, curr_soc + energy_added_kwh)
+                        p_grid_import[i] = residual_kw + actual_chg_grid_kw
+                    else:
+                        p_bess_chg_grid[i] = 0.0
+                        p_grid_import[i] = residual_kw
+
+                    p_unmet_peak[i] = 0.0
+
+            elif strategy == "tariff_arbitrage":
+                # Check scheduled window
+                ts_val = ts_series[i] if i < len(ts_series) else None
+                hour = ts_val.hour if (ts_val is not None and hasattr(ts_val, "hour")) else (int(i * step_hours) % 24)
+                try:
+                    chg_start_h = int(bess_config.arbitrage_charge_start.split(":")[0])
+                    chg_end_h = int(bess_config.arbitrage_charge_end.split(":")[0])
+                except Exception:
+                    chg_start_h, chg_end_h = 0, 6
+                try:
+                    dis_start_h = int(bess_config.arbitrage_discharge_start.split(":")[0])
+                    dis_end_h = int(bess_config.arbitrage_discharge_end.split(":")[0])
+                except Exception:
+                    dis_start_h, dis_end_h = 17, 22
+
+                in_chg_win = (chg_start_h <= hour < chg_end_h) if chg_start_h < chg_end_h else (hour >= chg_start_h or hour < chg_end_h)
+                in_dis_win = (dis_start_h <= hour < dis_end_h) if dis_start_h < dis_end_h else (hour >= dis_start_h or hour < dis_end_h)
+
+                if in_chg_win and allow_grid_chg and curr_soc < soc_max_kwh:
+                    grid_headroom_kw = max(0.0, target_cap_kw - residual_kw)
+                    room_kwh = max(0.0, soc_max_kwh - curr_soc)
+                    p_room_kw = room_kwh / (eta_chg * step_hours)
+                    actual_chg_grid_kw = min(grid_headroom_kw, p_chg_max, p_room_kw)
+
+                    p_bess_chg_grid[i] = actual_chg_grid_kw
+                    p_bess_dis[i] = 0.0
+                    curr_soc = min(soc_max_kwh, curr_soc + actual_chg_grid_kw * eta_chg * step_hours)
+                    p_grid_import[i] = residual_kw + actual_chg_grid_kw
+                    p_unmet_peak[i] = max(0.0, p_grid_import[i] - target_cap_kw)
+                elif in_dis_win and curr_soc > soc_min_kwh and residual_kw > 0.0:
+                    avail_kwh = max(0.0, curr_soc - soc_min_kwh)
+                    p_avail_kw = (avail_kwh * eta_dis) / step_hours
                     actual_dis_kw = min(residual_kw, p_dis_max, p_avail_kw)
 
-                p_bess_dis[i] = actual_dis_kw
-                energy_drawn_kwh = (actual_dis_kw / eta_dis) * step_hours
-                curr_soc = max(soc_min_kwh, curr_soc - energy_drawn_kwh)
-            else:
-                p_bess_dis[i] = 0.0
+                    p_bess_dis[i] = actual_dis_kw
+                    p_bess_chg_grid[i] = 0.0
+                    curr_soc = max(soc_min_kwh, curr_soc - (actual_dis_kw / eta_dis) * step_hours)
+                    p_grid_import[i] = residual_kw - actual_dis_kw
+                    p_unmet_peak[i] = max(0.0, p_grid_import[i] - target_cap_kw)
+                else:
+                    p_bess_dis[i] = 0.0
+                    p_bess_chg_grid[i] = 0.0
+                    p_grid_import[i] = residual_kw
+                    p_unmet_peak[i] = max(0.0, residual_kw - target_cap_kw)
 
-            # Priority 2: Net Grid Import covers remaining residual load
-            net_import_kw = residual_kw - p_bess_dis[i]
-            p_grid_import[i] = net_import_kw
-            p_unmet_peak[i] = max(0.0, net_import_kw - target_cap_kw)
+            else:
+                # Default: self_consumption mode
+                if curr_soc > soc_min_kwh and residual_kw > 0.0:
+                    avail_kwh = max(0.0, curr_soc - soc_min_kwh)
+                    p_avail_kw = (avail_kwh * eta_dis) / step_hours
+                    actual_dis_kw = min(residual_kw, p_dis_max, p_avail_kw)
+
+                    p_bess_dis[i] = actual_dis_kw
+                    energy_drawn_kwh = (actual_dis_kw / eta_dis) * step_hours
+                    curr_soc = max(soc_min_kwh, curr_soc - energy_drawn_kwh)
+                else:
+                    p_bess_dis[i] = 0.0
+
+                p_bess_chg_grid[i] = 0.0
+                net_import_kw = residual_kw - p_bess_dis[i]
+                p_grid_import[i] = net_import_kw
+                p_unmet_peak[i] = max(0.0, net_import_kw - target_cap_kw)
 
         soc_kwh[i] = curr_soc
         soc_pct[i] = (curr_soc / cap_kwh) * 100.0
@@ -275,7 +359,9 @@ def simulate_solar_bess_dispatch(
         "P_Direct_kW": np.round(p_direct, 2),
         "P_Surplus_kW": np.round(p_surplus, 2),
         "P_Residual_kW": np.round(p_residual, 2),
-        "P_BESS_Charge_PV_kW": np.round(p_bess_chg, 2),
+        "P_BESS_Charge_PV_kW": np.round(p_bess_chg_pv, 2),
+        "P_BESS_Charge_Grid_kW": np.round(p_bess_chg_grid, 2),
+        "P_BESS_Charge_Total_kW": np.round(p_bess_chg_pv + p_bess_chg_grid, 2),
         "P_BESS_Discharge_kW": np.round(p_bess_dis, 2),
         "P_Grid_Import_kW": np.round(p_grid_import, 2),
         "P_Grid_Export_kW": np.round(p_grid_export, 2),
@@ -297,14 +383,16 @@ def simulate_solar_bess_dispatch(
             m_load_kwh = float(m_df["P_Load_kW"].sum() * step_hours)
             m_solar_kwh = float(m_df["P_Solar_kW"].sum() * step_hours)
             m_direct_kwh = float(m_df["P_Direct_kW"].sum() * step_hours)
-            m_bess_chg_kwh = float(m_df["P_BESS_Charge_PV_kW"].sum() * step_hours)
+            m_bess_chg_pv_kwh = float(m_df["P_BESS_Charge_PV_kW"].sum() * step_hours)
+            m_bess_chg_grid_kwh = float(m_df["P_BESS_Charge_Grid_kW"].sum() * step_hours)
+            m_bess_chg_total_kwh = m_bess_chg_pv_kwh + m_bess_chg_grid_kwh
             m_bess_dis_kwh = float(m_df["P_BESS_Discharge_kW"].sum() * step_hours)
             m_grid_imp_kwh = float(m_df["P_Grid_Import_kW"].sum() * step_hours)
             m_grid_exp_kwh = float(m_df["P_Grid_Export_kW"].sum() * step_hours)
             m_orig_peak = float(m_df["P_Load_kW"].max())
             m_new_peak = float(m_df["P_Grid_Import_kW"].max())
         else:
-            m_load_kwh = m_solar_kwh = m_direct_kwh = m_bess_chg_kwh = 0.0
+            m_load_kwh = m_solar_kwh = m_direct_kwh = m_bess_chg_pv_kwh = m_bess_chg_grid_kwh = m_bess_chg_total_kwh = 0.0
             m_bess_dis_kwh = m_grid_imp_kwh = m_grid_exp_kwh = m_orig_peak = m_new_peak = 0.0
 
         monthly_metrics.append({
@@ -313,7 +401,9 @@ def simulate_solar_bess_dispatch(
             "load_kwh": round(m_load_kwh, 1),
             "solar_kwh": round(m_solar_kwh, 1),
             "direct_kwh": round(m_direct_kwh, 1),
-            "bess_charge_kwh": round(m_bess_chg_kwh, 1),
+            "bess_charge_pv_kwh": round(m_bess_chg_pv_kwh, 1),
+            "bess_charge_grid_kwh": round(m_bess_chg_grid_kwh, 1),
+            "bess_charge_kwh": round(m_bess_chg_total_kwh, 1),
             "bess_discharge_kwh": round(m_bess_dis_kwh, 1),
             "grid_import_kwh": round(m_grid_imp_kwh, 1),
             "grid_export_kwh": round(m_grid_exp_kwh, 1),
@@ -325,12 +415,14 @@ def simulate_solar_bess_dispatch(
     annual_load_kwh = float(np.sum(p_load) * step_hours)
     annual_solar_kwh = float(np.sum(p_solar) * step_hours)
     direct_consumption_kwh = float(np.sum(p_direct) * step_hours)
-    bess_charged_pv_kwh = float(np.sum(p_bess_chg) * step_hours)
+    bess_charged_pv_kwh = float(np.sum(p_bess_chg_pv) * step_hours)
+    bess_charged_grid_kwh = float(np.sum(p_bess_chg_grid) * step_hours)
+    bess_charged_total_kwh = bess_charged_pv_kwh + bess_charged_grid_kwh
     bess_discharged_kwh = float(np.sum(p_bess_dis) * step_hours)
     annual_grid_import_kwh = float(np.sum(p_grid_import) * step_hours)
     annual_grid_export_kwh = float(np.sum(p_grid_export) * step_hours)
 
-    bess_losses_kwh = max(0.0, bess_charged_pv_kwh - bess_discharged_kwh)
+    bess_losses_kwh = max(0.0, bess_charged_total_kwh - bess_discharged_kwh)
     total_self_consumption_kwh = direct_consumption_kwh + bess_discharged_kwh
 
     direct_consumption_pct = (direct_consumption_kwh / annual_solar_kwh * 100.0) if annual_solar_kwh > 0 else 0.0
@@ -368,6 +460,8 @@ def simulate_solar_bess_dispatch(
         direct_consumption_pct=round(direct_consumption_pct, 1),
         bess_charged_from_pv_kwh=round(bess_charged_pv_kwh, 1),
         bess_charged_from_pv_pct=round(bess_charged_pv_pct, 1),
+        bess_charged_from_grid_kwh=round(bess_charged_grid_kwh, 1),
+        bess_charged_total_kwh=round(bess_charged_total_kwh, 1),
         annual_grid_export_kwh=round(annual_grid_export_kwh, 1),
         grid_export_pct=round(grid_export_pct, 1),
         bess_discharged_kwh=round(bess_discharged_kwh, 1),

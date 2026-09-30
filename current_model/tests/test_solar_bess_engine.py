@@ -100,8 +100,8 @@ class TestSolarBESSEngine(unittest.TestCase):
         # Remaining 10 kW is imported from grid
         self.assertEqual(step_0["P_Grid_Import_kW"], 10.0)
 
-    def test_peak_shaving_strategy(self):
-        """Verify that in peak_shaving mode, BESS only discharges when residual load > target_cap."""
+    def test_peak_shaving_strategy_without_grid_recharge(self):
+        """Verify that in peak_shaving mode with grid charging disabled, BESS does not charge and does not discharge when residual < cap."""
         cfg_ps = BESSConfig(
             capacity_kwh=200.0,
             max_charge_power_kw=50.0,
@@ -110,11 +110,12 @@ class TestSolarBESSEngine(unittest.TestCase):
             soc_max_pct=90.0,
             initial_soc_pct=50.0,
             dispatch_strategy="peak_shaving",
-            peak_shaving_threshold_kw=80.0
+            peak_shaving_threshold_kw=80.0,
+            allow_grid_charging=False
         )
 
         # Load = 100 kW, Solar = 40 kW -> Residual = 60 kW.
-        # Since Residual (60 kW) < Threshold (80 kW), BESS should NOT discharge in peak_shaving mode
+        # Since Residual (60 kW) < Threshold (80 kW), BESS should NOT discharge and should NOT charge
         p_solar = np.full(self.n_steps, 40.0)
         precomputed_solar = pd.DataFrame({"P_AC_kW": p_solar})
 
@@ -129,7 +130,47 @@ class TestSolarBESSEngine(unittest.TestCase):
         df = res.df_dispatch
         step_0 = df.iloc[0]
         self.assertEqual(step_0["P_BESS_Discharge_kW"], 0.0)
+        self.assertEqual(step_0["P_BESS_Charge_Grid_kW"], 0.0)
         self.assertEqual(step_0["P_Grid_Import_kW"], 60.0)
+
+    def test_grid_recharging_under_target_cap_when_solar_zero(self):
+        """Verify that BESS charges from available grid headroom under target cap when solar is 0."""
+        cfg_ps = BESSConfig(
+            capacity_kwh=200.0,
+            max_charge_power_kw=50.0,
+            max_discharge_power_kw=50.0,
+            soc_min_pct=10.0,
+            soc_max_pct=90.0,
+            initial_soc_pct=50.0,
+            dispatch_strategy="peak_shaving",
+            peak_shaving_threshold_kw=80.0,
+            allow_grid_charging=True
+        )
+
+        # Load = 60 kW constant, Solar = 0 kW -> Headroom under 80 kW target cap is 20 kW
+        load_df_60 = pd.DataFrame({
+            "timestamp": self.ts,
+            "Total_Demand_kW": np.full(self.n_steps, 60.0)
+        })
+        p_solar = np.zeros(self.n_steps)
+        precomputed_solar = pd.DataFrame({"P_AC_kW": p_solar})
+
+        res = simulate_solar_bess_dispatch(
+            load_df=load_df_60,
+            solar_config=self.solar_cfg,
+            bess_config=cfg_ps,
+            grid_limit_kw=80.0,
+            precomputed_solar_df=precomputed_solar
+        )
+
+        df = res.df_dispatch
+        step_0 = df.iloc[0]
+        self.assertEqual(step_0["P_BESS_Discharge_kW"], 0.0)
+        # Should charge at headroom = 20.0 kW
+        self.assertEqual(step_0["P_BESS_Charge_Grid_kW"], 20.0)
+        # Net grid import = 60 kW demand + 20 kW charging = 80 kW (capped exactly at target cap)
+        self.assertEqual(step_0["P_Grid_Import_kW"], 80.0)
+        self.assertGreater(res.kpis.bess_charged_from_grid_kwh, 0.0)
 
     def test_soc_envelope_boundaries(self):
         """Verify SoC stays strictly within [soc_min_pct, soc_max_pct]."""

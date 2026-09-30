@@ -259,10 +259,11 @@ If the active scenario is set to **Status Quo (Base Scenario)**, the application
     1. *Solar Direct Supply*: $P_{\text{Direct}}(t) = \min(P_{\text{Load}}(t), P_{\text{Solar}}(t))$.
     2. *Solar Surplus to BESS*: Excess solar charges the battery ($P_{\text{BESS,chg,PV}}$) up to $P_{\text{chg,max}}$ and $\text{SoC}_{\max}$.
     3. *Grid Feed-in / Export*: Any remaining solar surplus after battery full charge is exported to the grid ($P_{\text{Grid,Export}}$).
-    4. *BESS Discharge on Deficit / Peak*: When load exceeds solar, the battery discharges ($P_{\text{BESS,dis}}$) to cover residual load or shave peaks above target limit.
-    5. *Residual Grid Import*: Net grid import covers any remaining unmet demand.
-  * **Physical KPIs**: Solar generation, autarky / solar fraction (%), combined self-consumption (direct + battery stored), avoided grid import, peak demand shaved ($\Delta kW$), full equivalent battery cycles, and grid overload violations eliminated.
-  * **Interactive Visualizations ([`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py))**: 15-minute multi-layer dispatch curve with stacked synchronous State of Charge (SoC %) and Stored Energy (kWh) envelope, monthly energy balance bars, and monthly summary metrics.
+    4. *BESS Peak Shaving Discharge*: When residual load exceeds the target limit ($P_{\text{Residual}} > P_{\text{Target}}$), the battery discharges ($P_{\text{BESS,dis}}$) to shave the peak down to $P_{\text{Target}}$.
+    5. *Utility Grid Recharging*: When solar power is unavailable/insufficient and residual load is below target limit ($P_{\text{Residual}} < P_{\text{Target}}$), the battery recharges from available grid headroom ($P_{\text{BESS,chg,Grid}} = \min(P_{\text{Target}} - P_{\text{Residual}}, P_{\text{chg,max}}, P_{\text{room}})$) when `allow_grid_charging` is enabled.
+    6. *Residual Grid Import*: Net grid import covers remaining unmet facility demand plus any battery grid recharging.
+  * **Physical KPIs**: Solar generation, autarky / solar fraction (%), combined self-consumption (direct + battery stored), avoided grid import, peak demand shaved ($\Delta kW$), full equivalent battery cycles, grid recharge throughput, and grid overload violations eliminated.
+  * **Interactive Visualizations ([`ui/tab_hybrid_beta/charts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_hybrid_beta/charts.py))**: 15-minute multi-layer dispatch curve with stacked synchronous State of Charge (SoC %) and Stored Energy (kWh) envelope, monthly energy balance bars, and monthly summary metrics with solar vs grid charge breakdowns.
 
 ---
 

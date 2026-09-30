@@ -12,6 +12,9 @@ from typing import Optional
 import streamlit as st
 
 
+import re
+
+
 def render_kpi_card(
     title: str,
     value: str,
@@ -27,18 +30,22 @@ def render_kpi_card(
         subtext (Optional[str]): Explanatory text beneath the value.
         status (str): Card theme ('default', 'ok', or 'alert').
     """
+    # Clean any accidental :material/...: or :material_...: prefixes for clean HTML rendering
+    clean_title = re.sub(r":material[/:_][a-zA-Z0-9_-]+:\s*", "", title).strip() if title else ""
+    clean_subtext = re.sub(r":material[/:_][a-zA-Z0-9_-]+:\s*", "", subtext).strip() if subtext else ""
+
     card_class = "sandbox-card"
     if status == "alert":
         card_class = "sandbox-card-alert"
     elif status == "ok":
         card_class = "sandbox-card-ok"
 
-    sub_html = f'<div class="sandbox-sub">{subtext}</div>' if subtext else ""
+    sub_html = f'<div class="sandbox-sub">{clean_subtext}</div>' if clean_subtext else ""
 
     st.markdown(
         f"""
         <div class="{card_class}">
-            <div class="sandbox-title">{title}</div>
+            <div class="sandbox-title">{clean_title}</div>
             <div class="sandbox-value">{value}</div>
             {sub_html}
         </div>

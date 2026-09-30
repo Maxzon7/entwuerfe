@@ -109,14 +109,14 @@ def render_tab_dracbv_beta(key_prefix: str = "app_dracbv_beta") -> None:
     col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
     with col_stat1:
         render_kpi_card(
-            title=":material/analytics: Facility Peak Demand",
+            title="Facility Peak Demand",
             value=f"{peak_kw:.1f} kW",
             subtext=f"Total: {total_kwh:,.0f} kWh/a",
             status="default"
         )
     with col_stat2:
         render_kpi_card(
-            title=":material/speed: Contracted Grid Limit",
+            title="Contracted Grid Limit",
             value=f"{contract_cap_kw:.0f} kW",
             subtext=f"Contract: {sim_contract.name[:22]}",
             status="default"
@@ -126,14 +126,14 @@ def render_tab_dracbv_beta(key_prefix: str = "app_dracbv_beta") -> None:
         status_val = f"+{overload_kw:.1f} kW Overload" if is_overloaded else "Within Limit"
         status_sub = "Grid Capacity Exceeded!" if is_overloaded else "No Overload Violations"
         render_kpi_card(
-            title=":material/warning: Overload Status",
+            title="Overload Status",
             value=status_val,
             subtext=status_sub,
             status=status_theme
         )
     with col_stat4:
         render_kpi_card(
-            title=":material/payments: Capacity Tariff Rate",
+            title="Capacity Tariff Rate",
             value=f"{sim_contract.monthly_capacity_tariff:,.2f} {currency}/kW/mo",
             subtext=f"Penalty Rate: {sim_contract.peak_penalty_rate:,.2f} {currency}/kW",
             status="default"
@@ -284,21 +284,21 @@ def render_tab_dracbv_beta(key_prefix: str = "app_dracbv_beta") -> None:
     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
     with col_r1:
         render_kpi_card(
-            title=":material/compress: Shaved Peak Demand",
+            title="Shaved Peak Demand",
             value=f"{shaved_peak:.1f} kW",
             subtext=f"New Grid Peak: {new_peak:.1f} kW",
             status="ok" if shaved_peak > 0 else "default"
         )
     with col_r2:
         render_kpi_card(
-            title=":material/timer: Generator Runtime",
+            title="Generator Runtime",
             value=f"{kpis.operating_hours:.1f} hrs",
             subtext=f"Total Generated: {kpis.total_generation_kwh:,.0f} kWh",
             status="default"
         )
     with col_r3:
         render_kpi_card(
-            title=":material/local_gas_station: Fuel Consumption",
+            title="Fuel Consumption",
             value=f"{kpis.total_fuel_units:,.1f} Liters",
             subtext=f"Fuel Cost: {kpis.fuel_cost_total:,.0f} {currency}",
             status="default"
@@ -306,7 +306,7 @@ def render_tab_dracbv_beta(key_prefix: str = "app_dracbv_beta") -> None:
     with col_r4:
         is_pos = (annual_savings > 0)
         render_kpi_card(
-            title=":material/savings: Net Financial Savings",
+            title="Net Financial Savings",
             value=f"{annual_savings:,.0f} {currency}/a",
             subtext="Generates Net Savings!" if is_pos else "Generator More Expensive",
             status="ok" if is_pos else "alert"

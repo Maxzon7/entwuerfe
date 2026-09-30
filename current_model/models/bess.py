@@ -40,6 +40,7 @@ class BESSConfig:
     # Options: "self_consumption", "peak_shaving", "tariff_arbitrage"
     dispatch_strategy: str = "self_consumption"
     peak_shaving_threshold_kw: float = 200.0      # Grid capping limit in kW for peak shaving mode
+    allow_grid_charging: bool = True              # Allow replenishing BESS from grid when solar is insufficient / under target cap
     arbitrage_charge_start: str = "00:00"         # TOU low-rate charge start time
     arbitrage_charge_end: str = "06:00"           # TOU low-rate charge end time
     arbitrage_discharge_start: str = "17:00"      # TOU high-rate discharge start time
@@ -93,6 +94,7 @@ class BESSConfig:
             "max_dod_pct": float(self.max_dod_pct),
             "dispatch_strategy": str(self.dispatch_strategy),
             "peak_shaving_threshold_kw": float(self.peak_shaving_threshold_kw),
+            "allow_grid_charging": bool(self.allow_grid_charging),
             "arbitrage_charge_start": str(self.arbitrage_charge_start),
             "arbitrage_charge_end": str(self.arbitrage_charge_end),
             "arbitrage_discharge_start": str(self.arbitrage_discharge_start),
@@ -129,6 +131,7 @@ class BESSConfig:
             max_dod_pct=float(data.get("max_dod_pct", 85.0)),
             dispatch_strategy=str(data.get("dispatch_strategy", "self_consumption")),
             peak_shaving_threshold_kw=float(data.get("peak_shaving_threshold_kw", 200.0)),
+            allow_grid_charging=bool(data.get("allow_grid_charging", True)),
             arbitrage_charge_start=str(data.get("arbitrage_charge_start", "00:00")),
             arbitrage_charge_end=str(data.get("arbitrage_charge_end", "06:00")),
             arbitrage_discharge_start=str(data.get("arbitrage_discharge_start", "17:00")),

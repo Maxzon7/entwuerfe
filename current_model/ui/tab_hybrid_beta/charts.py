@@ -90,10 +90,23 @@ def create_hybrid_dispatch_chart(
             y=plot_df["P_BESS_Charge_PV_kW"],
             name="BESS Charge (Solar Surplus)",
             line=dict(color="#06B6D4", width=1.8, dash="dot"),
-            hovertemplate="BESS Charge: <b>%{y:,.1f} kW</b><extra></extra>",
+            hovertemplate="BESS Charge (Solar): <b>%{y:,.1f} kW</b><extra></extra>",
             showlegend=True
         )
     )
+
+    # 4b. BESS Charging from Utility Grid (Indigo Dot/Dash)
+    if "P_BESS_Charge_Grid_kW" in plot_df.columns and (plot_df["P_BESS_Charge_Grid_kW"] > 0.01).any():
+        fig.add_trace(
+            go.Scattergl(
+                x=timestamps,
+                y=plot_df["P_BESS_Charge_Grid_kW"],
+                name="BESS Charge (Utility Grid)",
+                line=dict(color="#818CF8", width=1.8, dash="dashdot"),
+                hovertemplate="BESS Charge (Grid): <b>%{y:,.1f} kW</b><extra></extra>",
+                showlegend=True
+            )
+        )
 
     # 5. BESS Discharge (Purple Area)
     fig.add_trace(

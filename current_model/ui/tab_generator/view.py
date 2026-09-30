@@ -150,14 +150,14 @@ def render_tab_generator(key_prefix: str = "app_tab_generator") -> None:
     col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
     with col_stat1:
         render_kpi_card(
-            title=":material/analytics: Facility Peak Demand",
+            title="Facility Peak Demand",
             value=f"{peak_kw:.1f} kW",
             subtext=f"Total: {total_kwh:,.0f} kWh/a",
             status="default"
         )
     with col_stat2:
         render_kpi_card(
-            title=":material/speed: Contracted Grid Limit",
+            title="Contracted Grid Limit",
             value=f"{contract_cap_kw:.0f} kW",
             subtext=f"Contract: {active_contract.name[:22]}",
             status="default"
@@ -165,7 +165,7 @@ def render_tab_generator(key_prefix: str = "app_tab_generator") -> None:
     with col_stat3:
         if is_hybrid:
             render_kpi_card(
-                title=":material/alt_route: Residual Peak to Genset",
+                title="Residual Peak to Genset",
                 value=f"{residual_peak_kw:.1f} kW",
                 subtext=f"Residual Demand: {residual_total_kwh:,.0f} kWh",
                 status="alert" if is_overloaded else "ok"
@@ -173,7 +173,7 @@ def render_tab_generator(key_prefix: str = "app_tab_generator") -> None:
         else:
             status_theme = "alert" if is_overloaded else "ok"
             render_kpi_card(
-                title=":material/warning: Overload Status",
+                title="Overload Status",
                 value=f"+{overload_kw:.1f} kW Overload" if is_overloaded else "Within Limit",
                 subtext="Grid Capacity Exceeded!" if is_overloaded else "No Overload Violations",
                 status=status_theme
@@ -181,7 +181,7 @@ def render_tab_generator(key_prefix: str = "app_tab_generator") -> None:
     with col_stat4:
         suggested_kw = max(50.0, round((overload_kw * 1.25) / 25.0) * 25.0) if is_overloaded else 100.0
         render_kpi_card(
-            title=":material/local_gas_station: Configured Capacity",
+            title="Configured Capacity",
             value=f"{gen_cfg.rated_power_kw:.0f} kW",
             subtext=f"Role: {'Residual Backup' if getattr(gen_cfg, 'is_backup_mode', False) else 'Peak Shaver'}",
             status="default"
@@ -391,21 +391,21 @@ def render_tab_generator(key_prefix: str = "app_tab_generator") -> None:
     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
     with col_r1:
         render_kpi_card(
-            title=":material/compress: Shaved Peak Demand",
+            title="Shaved Peak Demand",
             value=f"{shaved_peak:.1f} kW",
             subtext=f"New Grid Peak: {new_peak:.1f} kW",
             status="ok" if shaved_peak > 0 else "default"
         )
     with col_r2:
         render_kpi_card(
-            title=":material/timer: Generator Runtime",
+            title="Generator Runtime",
             value=f"{kpis.operating_hours:.1f} hrs",
             subtext=f"Generated: {kpis.total_generation_kwh:,.0f} kWh ({kpis.starts_count} starts)",
             status="default"
         )
     with col_r3:
         render_kpi_card(
-            title=":material/local_gas_station: Fuel Consumption",
+            title="Fuel Consumption",
             value=f"{kpis.total_fuel_units:,.1f} {('L' if gen_cfg.fuel_type != 'Natural Gas' else 'm³')}",
             subtext=f"Fuel OPEX: {kpis.fuel_cost_total:,.0f} {currency}",
             status="default"
@@ -413,7 +413,7 @@ def render_tab_generator(key_prefix: str = "app_tab_generator") -> None:
     with col_r4:
         is_pos = (annual_savings > 0)
         render_kpi_card(
-            title=":material/payments: Net Annual Impact",
+            title="Net Annual Impact",
             value=f"{annual_savings:,.0f} {currency}/a",
             subtext="Generates Net Savings!" if is_pos else "Genset Adds Operational Cost",
             status="ok" if is_pos else "alert"
