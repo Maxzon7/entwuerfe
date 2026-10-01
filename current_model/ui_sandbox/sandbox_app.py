@@ -24,23 +24,27 @@ for path in [WORKSPACE_ROOT, CURRENT_MODEL_DIR]:
 try:
     from current_model.ui.common.styles import apply_custom_styles
     from current_model.ui_sandbox.minimal_contract_system import render_minimal_contract_system
+    from current_model.ui_sandbox.standalone_monthly_baseline_lab import render_monthly_baseline_lab
 except ImportError:
     try:
         from ui.common.styles import apply_custom_styles
         from ui_sandbox.minimal_contract_system import render_minimal_contract_system
+        from ui_sandbox.standalone_monthly_baseline_lab import render_monthly_baseline_lab
     except ImportError:
         try:
             from minimal_contract_system import render_minimal_contract_system
+            from standalone_monthly_baseline_lab import render_monthly_baseline_lab
             apply_custom_styles = None
         except ImportError:
             render_minimal_contract_system = None
+            render_monthly_baseline_lab = None
             apply_custom_styles = None
 
 
 def main():
     st.set_page_config(
-        page_title="Simple Electricity Contract Lab",
-        page_icon=":material/electric_meter:",
+        page_title="UI Sandbox & Tariff Laboratory",
+        page_icon=":material/science:",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
@@ -48,10 +52,32 @@ def main():
     if apply_custom_styles:
         apply_custom_styles()
 
-    if render_minimal_contract_system:
-        render_minimal_contract_system(key_prefix="sandbox_app")
+    # Laboratory Selector Header
+    st.markdown("### :material/science: UI Sandbox & Tariff Laboratory Suite")
+    st.caption("Isolated experimentation environment with zero production risk for `app.py`.")
+
+    lab_mode = st.radio(
+        "Select Laboratory Module:",
+        options=[
+            ":material/calendar_month: Monthly Baseline & Tariff Lab (Pozo 600 & Enexis)",
+            ":material/bolt: 15-Minute Load Profile & Supply Contract Lab"
+        ],
+        horizontal=True,
+        key="sandbox_suite_mode_selector"
+    )
+
+    st.markdown("---")
+
+    if "Monthly Baseline" in lab_mode:
+        if render_monthly_baseline_lab:
+            render_monthly_baseline_lab(key_prefix="suite_monthly_lab")
+        else:
+            st.error("Could not load `render_monthly_baseline_lab`. Check import paths.", icon=":material/error:")
     else:
-        st.error("Could not load `minimal_contract_system`. Check import paths.", icon=":material/error:")
+        if render_minimal_contract_system:
+            render_minimal_contract_system(key_prefix="suite_contract_app")
+        else:
+            st.error("Could not load `render_minimal_contract_system`. Check import paths.", icon=":material/error:")
 
 
 if __name__ == "__main__":

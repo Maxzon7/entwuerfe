@@ -20,6 +20,7 @@ COST_PALETTE: Dict[str, str] = {
     "Demand (Measured)": "#FB923C",      # Orange
     "Peak Penalty": "#EF4444",          # Red
     "Base Fee": "#8B5CF6",              # Violet
+    "Network (Volume)": "#06B6D4",      # Cyan
     "Taxes & Levies": "#10B981",        # Emerald
     "Other": "#94A3B8"                  # Slate
 }
@@ -136,6 +137,18 @@ def create_monthly_payment_series_figure(
             hovertemplate=f"<b>Capacity</b>: %{{y:,.2f}} {currency}<extra></extra>"
         )
     )
+
+    network_costs = [getattr(m, "network_cost_net", 0.0) for m in breakdown.monthly_series]
+    if any(n > 0 for n in network_costs):
+        fig.add_trace(
+            go.Bar(
+                x=months,
+                y=network_costs,
+                name="Network (Volume)",
+                marker_color=COST_PALETTE["Network (Volume)"],
+                hovertemplate=f"<b>Network Volume</b>: %{{y:,.2f}} {currency}<extra></extra>"
+            )
+        )
 
     if any(p > 0 for p in penalty_costs):
         fig.add_trace(

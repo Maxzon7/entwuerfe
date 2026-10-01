@@ -21,6 +21,7 @@ import pandas as pd
 
 from current_model.models.contract import Contract
 from current_model.models.financial import CostLineItem, MonthlyPaymentRecord, FinancialCostBreakdown
+from current_model.core.market_price_engine import get_aligned_market_prices
 
 DAYS_PER_MONTH = 30.4167  # Average days per month across the year
 
@@ -174,73 +175,117 @@ def compute_financial_bill(
     base_fee_monthly = float(getattr(contract, "base_monthly_fee", 0.0))
     taxes_and_fees_config = getattr(contract, "taxes_and_fees", [])
 
-    # 2. Compute Active Energy Costs across Dynamic TOU Windows
-    tou_rates_config = getattr(contract, "tou_rates", [])
-    if not tou_rates_config:
-        def_rate = getattr(contract, "default_energy_rate", 0.20)
-        tou_rates_config = [{"name": "Standard Rate", "rate": def_rate, "start_time": "00:00", "end_time": "24:00"}]
-
-    tou_energy_buckets: Dict[str, Dict[str, Any]] = {}
-    for idx, tou in enumerate(tou_rates_config):
-        t_name = tou.get("name", f"Tariff {idx+1}")
-        t_rate = float(tou.get("rate", 0.20))
-        tou_energy_buckets[t_name] = {
-            "name": t_name,
-            "rate": t_rate,
-            "kwh": 0.0,
-            "cost": 0.0
-        }
-
-    # Evaluate each interval
-    for idx, p_kw in enumerate(powers):
-        slot_kwh = p_kw * step_hours
-
-        if timestamps and idx < len(timestamps) and pd.notnull(timestamps[idx]):
-            dt = timestamps[idx]
-            slot_month = dt.month if hasattr(dt, "month") else 1
-            slot_contract = _resolve_contract_for_month(contract, slot_month, default_contract=primary_contract)
-        else:
-            minute_of_day = int((idx * (step_hours * 60)) % 1440)
-            dt = datetime.time(minute_of_day // 60, minute_of_day % 60)
-            slot_contract = primary_contract
-
-        matched_bucket_name = None
-        matched_rate = slot_contract.get_energy_rate(dt)
-
-        for tou in tou_rates_config:
-            if float(tou.get("rate", 0.0)) == matched_rate:
-                matched_bucket_name = tou.get("name")
-                break
-
-        if not matched_bucket_name:
-            matched_bucket_name = tou_rates_config[0].get("name", "Standard Rate")
-
-        if matched_bucket_name in tou_energy_buckets:
-            tou_energy_buckets[matched_bucket_name]["kwh"] += slot_kwh
-            tou_energy_buckets[matched_bucket_name]["cost"] += (slot_kwh * matched_rate)
-
+    # 2. Compute Active Energy Costs across Dynamic TOU Windows or Day-Ahead Spot Market
+    is_primary_dynamic = (getattr(primary_contract, "pricing_model", "time_of_use") == "day_ahead_dynamic")
     line_items: List[CostLineItem] = []
     total_energy_period = 0.0
 
-    for b_name, b_data in tou_energy_buckets.items():
-        b_kwh = float(b_data["kwh"])
-        b_cost = float(b_data["cost"])
-        b_rate = float(b_data["rate"])
-        total_energy_period += b_cost
-        b_monthly = b_cost * monthly_multiplier
+    if is_primary_dynamic:
+        profile_id = getattr(primary_contract, "market_price_profile_id", "epex_nl_2025") or "epex_nl_2025"
+        def_rate = getattr(primary_contract, "default_energy_rate", 0.20)
+        supp_margin = float(getattr(primary_contract, "supplier_margin", 0.0))
 
-        if b_kwh > 0 or len(tou_energy_buckets) == 1:
+        aligned_spot_prices = get_aligned_market_prices(
+            timestamps=timestamps,
+            profile_id=profile_id,
+            default_rate=def_rate,
+            n_steps=count,
+            step_hours=step_hours
+        )
+
+        spot_cost_period = float(np.sum(powers * step_hours * aligned_spot_prices))
+        margin_cost_period = float(np.sum(powers * step_hours * supp_margin))
+        total_energy_period = spot_cost_period + margin_cost_period
+
+        avg_spot_rate = (spot_cost_period / total_consumption_kwh) if total_consumption_kwh > 0 else def_rate
+        profile_label = "EPEX Spot NL 2025" if "nl" in profile_id.lower() else profile_id.upper()
+        line_items.append(
+            CostLineItem(
+                category="Energy (Active)",
+                description=f"Day-Ahead Spot Energy ({profile_label})",
+                basis_quantity=round(total_consumption_kwh, 2),
+                unit="kWh",
+                unit_rate=round(avg_spot_rate, 4),
+                cost_period=round(spot_cost_period, 2),
+                cost_monthly=round(spot_cost_period * monthly_multiplier, 2)
+            )
+        )
+        if supp_margin > 0:
             line_items.append(
                 CostLineItem(
                     category="Energy (Active)",
-                    description=f"{b_name}",
-                    basis_quantity=round(b_kwh, 2),
+                    description="Supplier Surcharge / Margin (Opslag)",
+                    basis_quantity=round(total_consumption_kwh, 2),
                     unit="kWh",
-                    unit_rate=b_rate,
-                    cost_period=round(b_cost, 2),
-                    cost_monthly=round(b_monthly, 2)
+                    unit_rate=supp_margin,
+                    cost_period=round(margin_cost_period, 2),
+                    cost_monthly=round(margin_cost_period * monthly_multiplier, 2)
                 )
             )
+    else:
+        tou_rates_config = getattr(contract, "tou_rates", [])
+        if not tou_rates_config:
+            def_rate = getattr(contract, "default_energy_rate", 0.20)
+            tou_rates_config = [{"name": "Standard Rate", "rate": def_rate, "start_time": "00:00", "end_time": "24:00"}]
+
+        tou_energy_buckets: Dict[str, Dict[str, Any]] = {}
+        for idx, tou in enumerate(tou_rates_config):
+            t_name = tou.get("name", f"Tariff {idx+1}")
+            t_rate = float(tou.get("rate", 0.20))
+            tou_energy_buckets[t_name] = {
+                "name": t_name,
+                "rate": t_rate,
+                "kwh": 0.0,
+                "cost": 0.0
+            }
+
+        # Evaluate each interval
+        for idx, p_kw in enumerate(powers):
+            slot_kwh = p_kw * step_hours
+
+            if timestamps and idx < len(timestamps) and pd.notnull(timestamps[idx]):
+                dt = timestamps[idx]
+                slot_month = dt.month if hasattr(dt, "month") else 1
+                slot_contract = _resolve_contract_for_month(contract, slot_month, default_contract=primary_contract)
+            else:
+                minute_of_day = int((idx * (step_hours * 60)) % 1440)
+                dt = datetime.time(minute_of_day // 60, minute_of_day % 60)
+                slot_contract = primary_contract
+
+            matched_bucket_name = None
+            matched_rate = slot_contract.get_energy_rate(dt)
+
+            for tou in tou_rates_config:
+                if float(tou.get("rate", 0.0)) == matched_rate:
+                    matched_bucket_name = tou.get("name")
+                    break
+
+            if not matched_bucket_name:
+                matched_bucket_name = tou_rates_config[0].get("name", "Standard Rate")
+
+            if matched_bucket_name in tou_energy_buckets:
+                tou_energy_buckets[matched_bucket_name]["kwh"] += slot_kwh
+                tou_energy_buckets[matched_bucket_name]["cost"] += (slot_kwh * matched_rate)
+
+        for b_name, b_data in tou_energy_buckets.items():
+            b_kwh = float(b_data["kwh"])
+            b_cost = float(b_data["cost"])
+            b_rate = float(b_data["rate"])
+            total_energy_period += b_cost
+            b_monthly = b_cost * monthly_multiplier
+
+            if b_kwh > 0 or len(tou_energy_buckets) == 1:
+                line_items.append(
+                    CostLineItem(
+                        category="Energy (Active)",
+                        description=f"{b_name}",
+                        basis_quantity=round(b_kwh, 2),
+                        unit="kWh",
+                        unit_rate=b_rate,
+                        cost_period=round(b_cost, 2),
+                        cost_monthly=round(b_monthly, 2)
+                    )
+                )
 
     total_energy_monthly = total_energy_period * monthly_multiplier
 
@@ -279,6 +324,24 @@ def compute_financial_bill(
             )
         )
 
+    # 3c. Regulated Grid Transport / Volume Charge (Netznutzungsentgelt Enexis)
+    net_vol_tariff = float(getattr(primary_contract, "network_volume_tariff", 0.0))
+    net_vol_cost_period = total_consumption_kwh * net_vol_tariff
+    net_vol_cost_monthly = net_vol_cost_period * monthly_multiplier
+
+    if net_vol_tariff > 0:
+        line_items.append(
+            CostLineItem(
+                category="Network (Volume)",
+                description=f"Grid Transport Volume Fee ({net_vol_tariff:.4f} {currency}/kWh)",
+                basis_quantity=round(total_consumption_kwh, 2),
+                unit="kWh",
+                unit_rate=net_vol_tariff,
+                cost_period=round(net_vol_cost_period, 2),
+                cost_monthly=round(net_vol_cost_monthly, 2)
+            )
+        )
+
     # 4. Peak Overload Penalty (Exceso de Potencia)
     excess_kw = max(0.0, peak_demand_kw - contracted_kw)
     penalty_cost_monthly = excess_kw * penalty_rate if excess_kw > 0 else 0.0
@@ -297,7 +360,7 @@ def compute_financial_bill(
             )
         )
 
-    # 5. Base Monthly Fee (Cargo Comercialización)
+    # 5. Base Monthly Fee (Cargo Comercialización / Vastrecht)
     base_fee_period = base_fee_monthly * months_in_period
     if base_fee_monthly > 0:
         line_items.append(
@@ -317,8 +380,8 @@ def compute_financial_bill(
     reactive_cost_period = 0.0
 
     # Net Subtotals
-    total_net_period = total_energy_period + capacity_cost_period + demand_cost_period + penalty_cost_period + base_fee_period + reactive_cost_period
-    total_net_monthly = total_energy_monthly + capacity_cost_monthly + demand_cost_monthly + penalty_cost_monthly + base_fee_monthly + reactive_cost_monthly
+    total_net_period = total_energy_period + capacity_cost_period + demand_cost_period + penalty_cost_period + base_fee_period + reactive_cost_period + net_vol_cost_period
+    total_net_monthly = total_energy_monthly + capacity_cost_monthly + demand_cost_monthly + penalty_cost_monthly + base_fee_monthly + reactive_cost_monthly + net_vol_cost_monthly
 
     # 7. Taxes & Dynamic Levies
     total_taxes_period = 0.0
@@ -404,19 +467,35 @@ def compute_financial_bill(
                     sub_penalty_rate = float(getattr(sub_contract, "peak_penalty_rate", 0.0))
                     sub_base_monthly = float(getattr(sub_contract, "base_monthly_fee", 0.0))
                     sub_taxes_config = getattr(sub_contract, "taxes_and_fees", [])
+                    sub_pricing_model = getattr(sub_contract, "pricing_model", "time_of_use")
+                    sub_supp_margin = float(getattr(sub_contract, "supplier_margin", 0.0))
+                    sub_net_vol_tariff = float(getattr(sub_contract, "network_volume_tariff", 0.0))
+                    sub_net_vol_cost = sub_kwh * sub_net_vol_tariff
 
                     # Compute energy cost for this calendar month
-                    sub_energy_cost = 0.0
-                    for s_idx, s_kw in enumerate(sub_powers):
-                        s_dt = sub_ts[s_idx]
-                        sub_energy_cost += (s_kw * step_hours * sub_contract.get_energy_rate(s_dt))
+                    if sub_pricing_model == "day_ahead_dynamic":
+                        sub_profile_id = getattr(sub_contract, "market_price_profile_id", "epex_nl_2025") or "epex_nl_2025"
+                        sub_def_rate = getattr(sub_contract, "default_energy_rate", 0.20)
+                        sub_spot_prices = get_aligned_market_prices(
+                            timestamps=sub_ts,
+                            profile_id=sub_profile_id,
+                            default_rate=sub_def_rate,
+                            n_steps=len(sub_powers),
+                            step_hours=step_hours
+                        )
+                        sub_energy_cost = float(np.sum(sub_powers * step_hours * (sub_spot_prices + sub_supp_margin)))
+                    else:
+                        sub_energy_cost = 0.0
+                        for s_idx, s_kw in enumerate(sub_powers):
+                            s_dt = sub_ts[s_idx]
+                            sub_energy_cost += (s_kw * step_hours * sub_contract.get_energy_rate(s_dt))
 
                     # Capacity & Demand & Base fees for this month
                     sub_cap_cost = sub_contracted_kw * sub_cap_tariff + (sub_peak * sub_demand_cap_tariff)
                     sub_excess = max(0.0, sub_peak - sub_contracted_kw)
                     sub_penalty = sub_excess * sub_penalty_rate
                     sub_base = sub_base_monthly
-                    sub_net = sub_energy_cost + sub_cap_cost + sub_penalty + sub_base
+                    sub_net = sub_energy_cost + sub_cap_cost + sub_penalty + sub_base + sub_net_vol_cost
                     sub_taxes = _calculate_taxes_for_subtotal(sub_net, sub_kwh, 1.0, sub_taxes_config)
                     sub_gross = sub_net + sub_taxes
                     sub_rate = (sub_gross / sub_kwh) if sub_kwh > 0 else 0.0
@@ -435,7 +514,8 @@ def compute_financial_bill(
                             total_net=round(sub_net, 2),
                             taxes_and_levies=round(sub_taxes, 2),
                             total_gross=round(sub_gross, 2),
-                            effective_rate_kwh=round(sub_rate, 4)
+                            effective_rate_kwh=round(sub_rate, 4),
+                            network_cost_net=round(sub_net_vol_cost, 2)
                         )
                     )
 
@@ -456,26 +536,41 @@ def compute_financial_bill(
             m_penalty_rate = float(getattr(m_contract, "peak_penalty_rate", 0.0))
             m_base_monthly = float(getattr(m_contract, "base_monthly_fee", 0.0))
             m_taxes_config = getattr(m_contract, "taxes_and_fees", [])
+            m_pricing_model = getattr(m_contract, "pricing_model", "time_of_use")
+            m_supp_margin = float(getattr(m_contract, "supplier_margin", 0.0))
+            m_net_vol_tariff = float(getattr(m_contract, "network_volume_tariff", 0.0))
 
-            # Compute daily energy cost using this month's contract
-            m_daily_energy_cost = 0.0
-            for idx, p_kw in enumerate(powers):
-                slot_kwh = p_kw * step_hours
-                if timestamps and idx < len(timestamps) and pd.notnull(timestamps[idx]):
-                    dt = timestamps[idx]
-                else:
-                    minute_of_day = int((idx * (step_hours * 60)) % 1440)
-                    dt = datetime.time(minute_of_day // 60, minute_of_day % 60)
-                m_daily_energy_cost += (slot_kwh * m_contract.get_energy_rate(dt))
-            m_daily_energy_cost = m_daily_energy_cost / max(1.0, duration_days)
+            if m_pricing_model == "day_ahead_dynamic":
+                m_profile_id = getattr(m_contract, "market_price_profile_id", "epex_nl_2025") or "epex_nl_2025"
+                m_def_rate = getattr(m_contract, "default_energy_rate", 0.20)
+                m_spot_prices = get_aligned_market_prices(
+                    timestamps=timestamps,
+                    profile_id=m_profile_id,
+                    default_rate=m_def_rate,
+                    n_steps=len(powers),
+                    step_hours=step_hours
+                )
+                m_daily_energy_cost = float(np.sum(powers * step_hours * (m_spot_prices + m_supp_margin))) / max(1.0, duration_days)
+            else:
+                m_daily_energy_cost = 0.0
+                for idx, p_kw in enumerate(powers):
+                    slot_kwh = p_kw * step_hours
+                    if timestamps and idx < len(timestamps) and pd.notnull(timestamps[idx]):
+                        dt = timestamps[idx]
+                    else:
+                        minute_of_day = int((idx * (step_hours * 60)) % 1440)
+                        dt = datetime.time(minute_of_day // 60, minute_of_day % 60)
+                    m_daily_energy_cost += (slot_kwh * m_contract.get_energy_rate(dt))
+                m_daily_energy_cost = m_daily_energy_cost / max(1.0, duration_days)
 
             m_kwh = daily_kwh * m_days
             m_energy_cost = m_daily_energy_cost * m_days
+            m_net_vol_cost = m_kwh * m_net_vol_tariff
             m_cap_cost = m_contracted_kw * m_cap_tariff + (peak_demand_kw * m_demand_cap_tariff)
             m_excess = max(0.0, peak_demand_kw - m_contracted_kw)
             m_penalty = m_excess * m_penalty_rate
             m_base = m_base_monthly
-            m_net = m_energy_cost + m_cap_cost + m_penalty + m_base
+            m_net = m_energy_cost + m_cap_cost + m_penalty + m_base + m_net_vol_cost
             m_taxes = _calculate_taxes_for_subtotal(m_net, m_kwh, 1.0, m_taxes_config)
             m_gross = m_net + m_taxes
             m_rate = (m_gross / m_kwh) if m_kwh > 0 else 0.0
@@ -494,7 +589,8 @@ def compute_financial_bill(
                     total_net=round(m_net, 2),
                     taxes_and_levies=round(m_taxes, 2),
                     total_gross=round(m_gross, 2),
-                    effective_rate_kwh=round(m_rate, 4)
+                    effective_rate_kwh=round(m_rate, 4),
+                    network_cost_net=round(m_net_vol_cost, 2)
                 )
             )
 
@@ -517,26 +613,60 @@ def compute_financial_bill(
         total_gross_monthly = total_gross_period / m_count
 
         demand_cap_tariff = float(getattr(primary_contract, "demand_capacity_tariff", 0.0))
+        net_vol_tariff = float(getattr(primary_contract, "network_volume_tariff", 0.0))
+        supp_margin = float(getattr(primary_contract, "supplier_margin", 0.0))
+
+        meas_demand_sum = sum(m.peak_demand_kw * demand_cap_tariff for m in monthly_series)
+        contracted_cap_sum = capacity_cost_period - meas_demand_sum
+
         for item in line_items:
             if item.category == "Peak Penalty":
                 item.cost_period = round(penalty_cost_period, 2)
                 item.cost_monthly = round(penalty_cost_monthly, 2)
             elif item.category == "Capacity (Contracted)":
-                item.cost_period = round(capacity_cost_period, 2)
-                item.cost_monthly = round(capacity_cost_monthly, 2)
+                item.cost_period = round(contracted_cap_sum, 2)
+                item.cost_monthly = round(contracted_cap_sum / m_count, 2)
             elif item.category == "Demand (Measured)":
-                meas_demand_sum = sum(m.peak_demand_kw * demand_cap_tariff for m in monthly_series)
                 item.cost_period = round(meas_demand_sum, 2)
                 item.cost_monthly = round(meas_demand_sum / m_count, 2)
             elif item.category == "Base Fee":
                 item.cost_period = round(base_fee_period, 2)
                 item.cost_monthly = round(base_fee_monthly, 2)
-            elif item.category == "Active Energy":
-                item.cost_period = round(total_energy_period, 2)
-                item.cost_monthly = round(total_energy_monthly, 2)
+            elif item.category == "Network (Volume)":
+                net_vol_sum = sum(m.energy_kwh * net_vol_tariff for m in monthly_series)
+                item.cost_period = round(net_vol_sum, 2)
+                item.cost_monthly = round(net_vol_sum / m_count, 2)
+            elif item.category == "Energy (Active)":
+                if "Supplier" in item.description or "Opslag" in item.description:
+                    supp_margin_sum = sum(m.energy_kwh * supp_margin for m in monthly_series)
+                    item.cost_period = round(supp_margin_sum, 2)
+                    item.cost_monthly = round(supp_margin_sum / m_count, 2)
+                elif is_primary_dynamic:
+                    spot_sum = total_energy_period - sum(m.energy_kwh * supp_margin for m in monthly_series)
+                    item.cost_period = round(spot_sum, 2)
+                    item.cost_monthly = round(spot_sum / m_count, 2)
+                else:
+                    item.cost_period = round(total_energy_period, 2)
+                    item.cost_monthly = round(total_energy_monthly, 2)
             elif item.category == "Taxes & Levies":
-                item.cost_period = round(total_taxes_period, 2)
-                item.cost_monthly = round(total_taxes_monthly, 2)
+                # Find matching tax rule
+                t_match = None
+                for t in taxes_and_fees_config:
+                    if t.get("name", "") in item.description:
+                        t_match = t
+                        break
+                if t_match:
+                    t_type = t_match.get("type", "percentage")
+                    t_val = float(t_match.get("value", 0.0))
+                    if t_type == "percentage":
+                        t_cost = total_net_period * (t_val / 100.0)
+                    elif t_type == "per_kwh":
+                        t_cost = total_consumption_kwh * t_val
+                    else:
+                        t_cost = t_val * m_count
+                    item.cost_period = round(t_cost, 2)
+                    item.cost_monthly = round(t_cost / m_count, 2)
+
             item.share_pct = round((item.cost_period / total_gross_period * 100.0), 1) if total_gross_period > 0 else 0.0
 
         effective_kwh_price = (total_gross_period / total_consumption_kwh) if total_consumption_kwh > 0 else 0.0

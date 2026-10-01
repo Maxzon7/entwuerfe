@@ -286,27 +286,110 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
             with q3:
                 reactive_allowance = st.number_input("Free Reactive Allowance (% of kWh):", min_value=0.0, max_value=100.0, value=float(current.reactive_power_allowance_pct), step=1.0, format="%.1f")
 
-            # 4. Dynamic Time-of-Use (TOU) Energy Rates
-            st.subheader("4. Time-of-Use (TOU) Energy Rates")
-            st.caption("Define Time-of-Use rate windows. The table supports adding and deleting rows:")
+            # 4. Electricity Energy Supply Pricing (Fixed TOU vs Dynamic Spot Market)
+            st.subheader("4. Energy Supply Pricing Model")
+            st.caption("Choose whether energy is billed via fixed Time-of-Use hourly windows or dynamically linked to wholesale Day-Ahead spot market prices:")
 
-            edited_tou = st.data_editor(
-                st.session_state[state_tou_key],
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "name": st.column_config.TextColumn("Tariff Name", required=True),
-                    "rate": st.column_config.NumberColumn(f"Rate ({currency}/kWh)", format="%.4f", min_value=0.0, step=0.0001, required=True),
-                    "start_time": st.column_config.TextColumn("Start Time (HH:MM)", required=True),
-                    "end_time": st.column_config.TextColumn("End Time (HH:MM)", required=True)
-                },
-                key=f"{key_prefix}_tou_editor"
-            )
+            pricing_options = [
+                "Fixed Time-of-Use Tariffs",
+                "Dynamic Spot Market (Day-Ahead NL 2025)"
+            ]
+            current_pricing_model = getattr(current, "pricing_model", "time_of_use")
+            default_pricing_idx = 1 if current_pricing_model == "day_ahead_dynamic" else 0
 
-            weekend_off_peak = st.checkbox(
-                "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
-                value=bool(current.weekend_is_off_peak)
+            selected_pricing_mode = st.radio(
+                "Supply Pricing Mode:",
+                options=pricing_options,
+                index=default_pricing_idx,
+                horizontal=True,
+                help="Select between fixed Time-of-Use rate windows or dynamic spot market wholesale hourly auction prices.",
+                key=f"{key_prefix}_pricing_mode_radio"
             )
+            is_dynamic_selected = (selected_pricing_mode == "Dynamic Spot Market (Day-Ahead NL 2025)")
+
+            if is_dynamic_selected:
+                st.markdown("##### :material/trending_up: Day-Ahead Spot Market Settings")
+                dyn_c1, dyn_c2 = st.columns(2)
+                with dyn_c1:
+                    supplier_margin_val = st.number_input(
+                        f"Supplier Margin / Opslag ({currency}/kWh):",
+                        min_value=0.0,
+                        value=float(getattr(current, "supplier_margin", 0.0075)),
+                        step=0.0010,
+                        format="%.4f",
+                        help="Fixed supplier service fee added on top of the wholesale spot price (e.g. 0.0075 EUR/kWh)."
+                    )
+                    network_volume_tariff_val = st.number_input(
+                        f"Grid Transport Volume Fee ({currency}/kWh):",
+                        min_value=0.0,
+                        value=float(getattr(current, "network_volume_tariff", 0.0250)),
+                        step=0.0025,
+                        format="%.4f",
+                        help="Regulated grid operator transport fee charged per delivered kWh (e.g. Enexis MS-D: 0.0250 EUR/kWh)."
+                    )
+                with dyn_c2:
+                    market_profile_val = st.selectbox(
+                        "Wholesale Market Price Dataset:",
+                        options=["epex_nl_2025"],
+                        format_func=lambda x: "Netherlands Day-Ahead (EPEX Spot NL 2025)",
+                        index=0,
+                        help="Wholesale auction dataset used to price every interval."
+                    )
+                    default_rate_val = st.number_input(
+                        f"Fallback Energy Rate ({currency}/kWh):",
+                        min_value=0.0,
+                        value=float(getattr(current, "default_energy_rate", 0.0900)),
+                        step=0.0050,
+                        format="%.4f",
+                        help="Safety backup rate applied if a price timestamp is missing."
+                    )
+
+                try:
+                    from current_model.core.market_price_engine import get_market_price_kpis
+                    kpi_meta = get_market_price_kpis("epex_nl_2025")
+                    st.info(
+                        f":material/info: **Linked Wholesale Dataset:** EPEX Spot Netherlands 2025 | "
+                        f"**Annual Mean Price:** {kpi_meta['mean_eur_kwh']:.4f} {currency}/kWh ({kpi_meta['mean_eur_mwh']:.2f} {currency}/MWh) | "
+                        f"**Negative Price Hours:** {kpi_meta['negative_price_hours']:.0f} h | "
+                        f"**Coverage:** {kpi_meta['total_hours']:.0f} hours (100% complete)"
+                    )
+                except Exception:
+                    pass
+
+                edited_tou = None
+                weekend_off_peak = False
+            else:
+                edited_tou = st.data_editor(
+                    st.session_state[state_tou_key],
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "name": st.column_config.TextColumn("Tariff Name", required=True),
+                        "rate": st.column_config.NumberColumn(f"Rate ({currency}/kWh)", format="%.4f", min_value=0.0, step=0.0001, required=True),
+                        "start_time": st.column_config.TextColumn("Start Time (HH:MM)", required=True),
+                        "end_time": st.column_config.TextColumn("End Time (HH:MM)", required=True)
+                    },
+                    key=f"{key_prefix}_tou_editor"
+                )
+
+                col_w, col_net = st.columns(2)
+                with col_w:
+                    weekend_off_peak = st.checkbox(
+                        "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
+                        value=bool(current.weekend_is_off_peak)
+                    )
+                with col_net:
+                    network_volume_tariff_val = st.number_input(
+                        f"Grid Transport Volume Fee ({currency}/kWh):",
+                        min_value=0.0,
+                        value=float(getattr(current, "network_volume_tariff", 0.0)),
+                        step=0.0025,
+                        format="%.4f",
+                        help="Optional grid operator volume transport charge per delivered kWh (0 if already bundled)."
+                    )
+                supplier_margin_val = 0.0
+                market_profile_val = getattr(current, "market_price_profile_id", "epex_nl_2025") or "epex_nl_2025"
+                default_rate_val = float(getattr(current, "default_energy_rate", 0.20))
 
             # 5. Dynamic Taxes & Additional Fees Table
             st.subheader("5. Taxes & Additional Fees")
@@ -332,14 +415,22 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
             submitted = st.form_submit_button("Save Contract Configuration", icon=":material/save:", type="primary", use_container_width=True)
 
         if submitted:
-            cleaned_tou = edited_tou.dropna(subset=["name", "rate"]).to_dict(orient="records") if edited_tou is not None and not edited_tou.empty else []
-            for r in cleaned_tou:
-                r["rate"] = _sanitize_rate_val(r.get("rate", 0.20))
-                if r.get("name") == "Resto" and r.get("end_time") == "23:00":
-                    r["end_time"] = "18:00"
+            pricing_model_val = "day_ahead_dynamic" if is_dynamic_selected else "time_of_use"
 
-            if not cleaned_tou:
-                cleaned_tou = [{"name": "Standard Rate", "rate": 0.20, "start_time": "00:00", "end_time": "24:00"}]
+            if is_dynamic_selected:
+                cleaned_tou = [{"name": "Day-Ahead Dynamic Spot", "rate": default_rate_val, "start_time": "00:00", "end_time": "24:00"}]
+                default_energy_rate = default_rate_val
+            else:
+                cleaned_tou = edited_tou.dropna(subset=["name", "rate"]).to_dict(orient="records") if edited_tou is not None and not edited_tou.empty else []
+                for r in cleaned_tou:
+                    r["rate"] = _sanitize_rate_val(r.get("rate", 0.20))
+                    if r.get("name") == "Resto" and r.get("end_time") == "23:00":
+                        r["end_time"] = "18:00"
+
+                if not cleaned_tou:
+                    cleaned_tou = [{"name": "Standard Rate", "rate": 0.20, "start_time": "00:00", "end_time": "24:00"}]
+                default_energy_rate = float(cleaned_tou[0].get("rate", 0.20)) if cleaned_tou else 0.20
+
             st.session_state[state_tou_key] = pd.DataFrame(cleaned_tou)
 
             cleaned_taxes = []
@@ -361,8 +452,6 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
 
             st.session_state[state_taxes_key] = pd.DataFrame(cleaned_taxes) if cleaned_taxes else pd.DataFrame(columns=["name", "type", "value", "description"])
 
-            default_energy_rate = float(cleaned_tou[0].get("rate", 0.20)) if cleaned_tou else 0.20
-
             updated_contract = Contract(
                 name=contract_name_val,
                 currency=currency,
@@ -372,6 +461,10 @@ def render_simplified_contract_form(key_prefix: str = "sandbox_contract") -> Con
                 demand_capacity_tariff=demand_tariff,
                 max_physical_limit_kw=max_physical_kw,
                 peak_penalty_rate=penalty_rate,
+                network_volume_tariff=network_volume_tariff_val,
+                pricing_model=pricing_model_val,
+                supplier_margin=supplier_margin_val,
+                market_price_profile_id=market_profile_val,
                 reactive_power_tariff=reactive_tariff,
                 min_power_factor=min_cos_phi,
                 reactive_power_allowance_pct=reactive_allowance,
@@ -466,9 +559,10 @@ def render_minimal_contract_system(key_prefix: str = "sandbox_min") -> None:
         is_single_month = (selected_period != overview_label)
         if is_single_month:
             active_month_c = _resolve_contract_for_month(contracts_portfolio, selected_period, default_contract=contract)
+            pricing_type_str = "Dynamic Day-Ahead Spot" if getattr(active_month_c, "pricing_model", "time_of_use") == "day_ahead_dynamic" else "Fixed / TOU"
             st.info(
                 f":material/contract: Active Contract for **{selected_period}**: **{active_month_c.name}** "
-                f"({active_month_c.contracted_capacity_kw:.0f} kW, {active_month_c.monthly_capacity_tariff:.4f} {active_month_c.currency}/kW/mo)"
+                f"({pricing_type_str} | {active_month_c.contracted_capacity_kw:.0f} kW, {active_month_c.monthly_capacity_tariff:.4f} {active_month_c.currency}/kW/mo)"
             )
         else:
             distinct_names = list(dict.fromkeys(c.name for c in contracts_portfolio))

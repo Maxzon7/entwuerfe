@@ -42,6 +42,7 @@ class MonthlyPaymentRecord:
     taxes_and_levies: float    # Total taxes & levies (€)
     total_gross: float         # Total gross amount (€)
     effective_rate_kwh: float  # Total gross / energy_kwh (€/kWh)
+    network_cost_net: float = 0.0  # Regulated network transport volume charge (€)
 
 
 @dataclass
@@ -65,6 +66,9 @@ class FinancialCostBreakdown:
 
     capacity_cost_period: float = 0.0
     capacity_cost_monthly: float = 0.0
+
+    network_cost_period: float = 0.0
+    network_cost_monthly: float = 0.0
 
     penalty_cost_period: float = 0.0
     penalty_cost_monthly: float = 0.0

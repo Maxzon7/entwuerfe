@@ -65,6 +65,8 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Load Processor Engine** | Load data normalization, unit conversion (kW/kWh), validation | [`core/load_processor.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/load_processor.py) |
 | **Metrics Engine** | Peak demand, load factor, base load, duration curve analytics | [`core/metrics_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/metrics_engine.py) |
 | **Contract Billing Engine** | TOU matching, capacity penalties, dynamic taxes, invoice schedules | [`core/financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/financial_engine.py) |
+| **Market Price Engine** | Wholesale Day-Ahead spot price ingestion, 15-min forward-fill & load profile coupling | [`core/market_price_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/market_price_engine.py) |
+| **Market Price Datasets** | Historical reference spot market timeseries repository (EPEX Spot NL 2025) | [`sample_data/market_prices/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/sample_data/market_prices/) |
 | **Solar Physics Engine** | Solar geometry, Perez transposition, cell temperature, clipping, diurnal calendar alignment | [`core/solar_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_engine.py) |
 | **Solar Financial Engine** | Solar LCOE, NPV, IRR, amortisation payback, 15-year cashflows | [`core/solar_financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/solar_financial_engine.py) |
 | **BESS Dispatch Engine** | 15-min interval battery dispatch, SoC boundaries, grid peak shaving | [`core/bess_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/bess_engine.py) |
@@ -84,9 +86,12 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Preset Templates** | Industry, Office, EV-Hub load consumers and contract presets | [`models/presets.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/presets.py) |
 | **UI Testing Sandbox Lab** | Isolated Streamlit playground for UI prototyping & widget testing | [`ui_sandbox/sandbox_app.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/sandbox_app.py) |
 | **Minimal Contract Lab** | Streamlined Electricity Contract & Consumption sandbox module with monthly validity | [`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py) |
+| **Monthly Baseline Lab** | Autarkic 12-month baseline & tariff lab validating Pozo 600 target (€ 36,234.97) and Enexis MS-D | [`ui_sandbox/standalone_monthly_baseline_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/standalone_monthly_baseline_lab.py) |
 | **Sandbox Architecture Doc** | Sandbox rules, one-way dependency isolation, quick-start guide | [`ui_sandbox/README.md`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/README.md) |
 | **Monthly Contract Tests** | Unit tests for monthly contract validity periods, resolution & billing | [`tests/test_monthly_contracts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_contracts.py) |
-| **Automated Test Runner** | Regression & health-check runner (136 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
+| **Dynamic Contract Tests** | Unit tests for dual-tier contract architecture, day-ahead spot pricing, and Enexis network tariffs | [`tests/test_dynamic_contract.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_dynamic_contract.py) |
+| **Monthly Baseline Lab Tests** | Unit tests validating cent-precise Pozo 600 reproduction (€ 36,234.97) and Dutch benchmarks | [`tests/test_monthly_baseline_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_baseline_lab.py) |
+| **Automated Test Runner** | Regression & health-check runner (147 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
 
 
 ---
@@ -231,21 +236,33 @@ If the active scenario is set to **Status Quo (Base Scenario)**, the application
 ---
 
 ### 3. Tab 3: Electricity Contract & Billing Engine
-* **Contract Domain Model ([`models/contract.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/contract.py))**:
-  * **Capacity & Demand Tariffs**: Fixed base monthly charge, contracted active capacity charge ($/kW/month$), and measured peak demand fee ($/kW/month$).
-  * **Dynamic Time-of-Use (TOU) Rates**: Configurable table of tariff intervals (*Peak/Pico*, *Shoulder/Resto*, *Off-Peak/Valle*) with overnight interval support and weekend off-peak rules.
-  * **Monthly Validity Periods (`applicable_months`)**: Contracts specify which calendar months they govern (defaults to all 12 months `[1..12]`). Enables multi-contract portfolios for jurisdictions with monthly varying supply rates (e.g. Netherlands dynamic or seasonal commercial contracts).
-  * **Power Factor & Reactive Penalties**: $\cos\phi$ threshold monitoring and excess reactive energy charges ($/kVARh$).
-  * **Dynamic Taxes & Levies**: Percentage-based taxes (VAT, provincial surcharges), per-kWh levies, and fixed monthly charges.
-  * **Presets**: Includes Argentina T2/T3, European Commercial, and Dutch Commercial Multi-Tariff (`Netherlands Commercial Multi-Tariff (EUR)`).
-* **Financial Billing Engine ([`core/financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/financial_engine.py))**:
-  * Couples dynamically with the active load profile across single contracts or multi-contract monthly portfolios via `_resolve_contract_for_month`.
-  * Evaluates each month in the timeseries against its designated contract parameters (capacity fees, peak limits, TOU rate intervals, taxes).
-  * Generates itemized monthly cost breakdowns, effective unit costs ($/kWh$), fixed vs. variable cost splits, and full 12-month payment schedules (*Zahlungsreihe*).
-* **Dynamic Tariff Switcher ([`ui/tab2_contract/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab2_contract/view.py))**:
-  * Evaluates alternative electricity supply contracts for sub-scenarios, calculating direct annual cost savings and bill reductions against the Status Quo.
+* **Two-Tier Contract Architecture (Regulated Grid vs. Energy Supply)**:
+  * **Regulated Grid Operator Level (Infrastruktur / Netzkosten)**:
+    * Fixed base charge (`base_monthly_fee`, $/month)
+    * Contracted active capacity charge (`monthly_capacity_tariff`, $/kW/month for booked $GTV$)
+    * Measured monthly peak demand charge (`demand_capacity_tariff`, $/kW/month)
+    * Network volume tariff (`network_volume_tariff`, $/kWh, e.g. Enexis MS-D: 0.0250 €/kWh) levied on every imported kWh
+    * Peak overload penalty rate (`peak_penalty_rate`, $/kW)
+  * **Competitive Energy Supplier Level (Energiebezug / Markt)**:
+    * Pricing model switch (`pricing_model`):
+      * `"time_of_use"`: Fixed Time-of-Use intervals (*Peak/Pico*, *Shoulder/Resto*, *Off-Peak/Valle*) with overnight support.
+      * `"day_ahead_dynamic"`: Direct coupling to wholesale spot market auction timeseries (EPEX Spot €/MWh).
+    * Supplier margin / Opslag (`supplier_margin`, $/kWh, e.g. 0.0050 – 0.0100 €/kWh).
+    * Linked market profile (`market_price_profile_id`, e.g. `"epex_nl_2025"`).
+    * Fallback energy rate (`default_energy_rate`, $/kWh) in case timestamps lack market spot values.
+* **Wholesale Spot Market Engine ([`core/market_price_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/market_price_engine.py))**:
+  * Ingests reference wholesale datasets from [`sample_data/market_prices/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/sample_data/market_prices/).
+  * Harmonizes 60-minute auction prices and 15-minute intraday auction prices into a seamless 15-minute timeseries ($35,040\text{ intervals/year}$) with forward-filling.
+  * Dynamically aligns market curves to any facility load profile (calendar-matched or year-agnostic month/day/time alignment).
+* **Financial Billing & Calculation Engine ([`core/financial_engine.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/core/financial_engine.py))**:
+  * Interval-by-interval cost multiplication for dynamic tariffs:
+    $$\text{Cost}(t) = \text{Load}_{\text{kWh}}(t) \times \Big( P_{\text{Spot}}(t) + \text{Supplier Margin} + \text{Network Volume Tariff} + \text{Taxes} \Big)$$
+  * Dedicated `"Network (Volume)"` item in monthly cost breakdown and payment series chart.
+  * Preserves full backward compatibility with TOU, capacity charges, reactive power penalties, and dynamic taxes.
 * **UI Testing Sandbox Lab ([`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py))**:
-  * Rapid interactive playground with streamlined terminology, 1-click contract duplication, month selection, and an interactive 12-month visual assignment matrix.
+  * Dual-mode UI switch between Fixed TOU and Dynamic Spot Market (Day-Ahead NL 2025).
+  * Simplified, professional terminology (*Reserved Power Limit*, *Fee per Reserved Power*, *Grid Transport Volume Fee*, *Supplier Margin / Opslag*).
+  * Direct display of wholesale price statistics (mean, min, max, negative price hours).
 
 ---
 
@@ -419,12 +436,14 @@ python run_tests.py
 | [`test_core_engines.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_core_engines.py) | 8 | CSV parser, date filtering, European delimiters, load processor units, metrics engine KPIs |
 | [`test_csv_persistence.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_csv_persistence.py) | 4 | Project container CSV snapshotting, data restoration, CSV inspector figure reconstruction |
 | [`test_dracbv_beta.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_dracbv_beta.py) | 5 | Generator peaking simulation, fuel calculation, rental vs purchase, cumulative payment schedules |
+| [`test_dynamic_contract.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_dynamic_contract.py) | 7 | Dual-tier contract architecture, EPEX Spot NL 2025 dataset loader, dynamic interval billing, Enexis MS-D plausibility |
 | [`test_example1_scenario.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_example1_scenario.py) | 3 | End-to-end integration and dispatch consistency on real-world reference datasets |
 | [`test_financial.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_financial.py) | 8 | TOU tariff intervals, peak demand fees, reactive power penalties, dynamic tax computation |
 | [`test_generator_model.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_generator_model.py) | 5 | GeneratorConfig properties, presets, fuel parameters, residual backup mode, serialization |
 | [`test_generator_subscenario_integration.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_generator_subscenario_integration.py) | 3 | Standalone peaker dispatch, tri-hybrid (Solar+BESS+Genset) dispatch, and Tab 1 leaderboard evaluation |
 | [`test_load_simulation.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_load_simulation.py) | 6 | SimpleConsumer modeling, operational time windows, peak duration events, daily power profiles |
 | [`test_models.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_models.py) | 8 | Dataclass validation, dictionary serialization, round-trip fidelity across all models |
+| [`test_monthly_contracts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_contracts.py) | 8 | Multi-contract monthly portfolios, applicable months resolution, 12-month calendar aggregation |
 | [`test_multi_upload.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_multi_upload.py) | 3 | Multi-channel CSV ingestion, channel alignment, and aggregate power curve generation |
 | [`test_project_io.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_project_io.py) | 7 | ProjectContainer serialization, `.dracproj` and `.drac` schema validation, session sync |
 | [`test_scenario_component_deletion.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_scenario_component_deletion.py) | 5 | Dynamic opt-in/opt-out toggling and removal of hardware components from sub-scenarios |
@@ -435,7 +454,8 @@ python run_tests.py
 | [`test_solar_integration_tab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_solar_integration_tab.py) | 4 | Fast coupled dispatch, auto-sizing coverage targets (40-100%), UI figure generators |
 | [`test_syntax_compilation.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_syntax_compilation.py) | 1 | AST parsing and bytecode compilation verification across all Python source files in the project |
 | [`test_ui_sandbox.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_ui_sandbox.py) | 2 | Isolated sandbox directory existence and zero reverse-dependency verification on production codebase |
-| **Total Test Suite** | **128** | **100% Passed (Zero Failures, Zero Errors)** |
+| [`test_monthly_baseline_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_baseline_lab.py) | 4 | Dynamic N-tier TOU windows, peak penalties, and Pozo 600 cent-precise verification |
+| **Total Test Suite** | **147** | **100% Passed (Zero Failures, Zero Errors)** |
 
 ---
 

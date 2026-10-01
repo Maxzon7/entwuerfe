@@ -31,6 +31,14 @@ class Contract:
     max_physical_limit_kw: float = 1000.0          # Absolute physical grid fuse limit (kW)
     peak_penalty_rate: float = 0.25                # Penalty rate for exceeding contracted capacity (€/kW)
 
+    # Regulated Grid / Network Usage (Netznutzungsentgelt)
+    network_volume_tariff: float = 0.0             # Regulated grid transport charge per active kWh (€/kWh - Enexis/Liander)
+
+    # Wholesale Supplier Pricing Model & Dynamic Day-Ahead Parameters
+    pricing_model: str = "time_of_use"             # "time_of_use" (fixed/TOU) or "day_ahead_dynamic" (EPEX Spot)
+    supplier_margin: float = 0.0                   # Supplier markup on spot market price (€/kWh - Opslag)
+    market_price_profile_id: str = "epex_nl_2025"  # Linked spot price time series ID or path
+
     # Reactive Power Parameters
     reactive_power_tariff: float = 0.03            # Tariff for excess reactive energy (€/kVARh)
     min_power_factor: float = 0.90                 # Minimum allowed power factor (cos phi)
@@ -158,6 +166,10 @@ class Contract:
             "demand_capacity_tariff": float(self.demand_capacity_tariff),
             "max_physical_limit_kw": float(self.max_physical_limit_kw),
             "peak_penalty_rate": float(self.peak_penalty_rate),
+            "network_volume_tariff": float(self.network_volume_tariff),
+            "pricing_model": str(self.pricing_model),
+            "supplier_margin": float(self.supplier_margin),
+            "market_price_profile_id": str(self.market_price_profile_id or "epex_nl_2025"),
             "reactive_power_tariff": float(self.reactive_power_tariff),
             "min_power_factor": float(self.min_power_factor),
             "reactive_power_allowance_pct": float(self.reactive_power_allowance_pct),
@@ -198,6 +210,12 @@ class Contract:
         demand_capacity_tariff = float(data.get("demand_capacity_tariff", 0.0))
         max_physical_limit_kw = float(data.get("max_physical_limit_kw", 1000.0))
         peak_penalty_rate = float(data.get("peak_penalty_rate", 0.25))
+        network_volume_tariff = float(data.get("network_volume_tariff", 0.0))
+        pricing_model = str(data.get("pricing_model", "time_of_use")).strip().lower()
+        if pricing_model not in ["time_of_use", "day_ahead_dynamic"]:
+            pricing_model = "time_of_use"
+        supplier_margin = float(data.get("supplier_margin", 0.0))
+        market_price_profile_id = str(data.get("market_price_profile_id", "epex_nl_2025") or "epex_nl_2025")
         reactive_power_tariff = float(data.get("reactive_power_tariff", 0.03))
         min_power_factor = float(data.get("min_power_factor", 0.90))
         reactive_power_allowance_pct = float(data.get("reactive_power_allowance_pct", 33.0))
@@ -258,6 +276,10 @@ class Contract:
             demand_capacity_tariff=demand_capacity_tariff,
             max_physical_limit_kw=max_physical_limit_kw,
             peak_penalty_rate=peak_penalty_rate,
+            network_volume_tariff=network_volume_tariff,
+            pricing_model=pricing_model,
+            supplier_margin=supplier_margin,
+            market_price_profile_id=market_price_profile_id,
             reactive_power_tariff=reactive_power_tariff,
             min_power_factor=min_power_factor,
             reactive_power_allowance_pct=reactive_power_allowance_pct,
@@ -433,6 +455,27 @@ def get_contract_presets() -> Dict[str, Contract]:
             taxes_and_fees=[
                 {"name": "Energiebelasting (EB)", "type": "per_kwh", "value": 0.0131, "description": "National energy tax per kWh"},
                 {"name": "ODE-heffing", "type": "per_kwh", "value": 0.0055, "description": "Opslag Duurzame Energie"},
+                {"name": "BTW / VAT (21%)", "type": "percentage", "value": 21.00, "description": "Dutch Value Added Tax"}
+            ]
+        ),
+        "Netherlands Dynamic Day-Ahead (Enexis MS-D 2025)": Contract(
+            name="Netherlands Enexis MS-D Dynamic",
+            currency="EUR",
+            base_monthly_fee=125.00,
+            contracted_capacity_kw=500.0,
+            monthly_capacity_tariff=3.85,
+            demand_capacity_tariff=1.20,
+            max_physical_limit_kw=800.0,
+            peak_penalty_rate=8.50,
+            network_volume_tariff=0.0250,
+            pricing_model="day_ahead_dynamic",
+            supplier_margin=0.0075,
+            market_price_profile_id="epex_nl_2025",
+            default_energy_rate=0.0900,
+            weekend_is_off_peak=False,
+            applicable_months=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            taxes_and_fees=[
+                {"name": "Energiebelasting (EB)", "type": "per_kwh", "value": 0.0131, "description": "National energy tax per kWh"},
                 {"name": "BTW / VAT (21%)", "type": "percentage", "value": 21.00, "description": "Dutch Value Added Tax"}
             ]
         )
