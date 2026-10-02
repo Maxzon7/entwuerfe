@@ -34,6 +34,12 @@ from current_model.ui_sandbox.standalone_monthly_baseline_lab import (
     get_3tier_argentine_preset,
     get_netherlands_commercial_preset,
     compute_monthly_billing,
+    build_enexis_2025_tariff_dataframe,
+    build_liander_2025_tariff_dataframe,
+    ENEXIS_2025_GRID_TIERS,
+    ENEXIS_2025_CONNECTION_CAPACITIES,
+    LIANDER_2025_GRID_TIERS,
+    LIANDER_2025_CONNECTION_CAPACITIES,
     TOUTierConfig,
     AnnualBillingSummary
 )
@@ -90,7 +96,7 @@ class TestMonthlyBaselineLab(unittest.TestCase):
         self.assertGreater(summary_3t.cost_penalty_annual_eur, 0.0)
 
     def test_netherlands_commercial_preset(self):
-        """Verifies universal transferability to Dutch commercial energy tariffs with EUR and 1.0 FX."""
+        """Verifies universal transferability to Dutch commercial energy tariffs with EUR, Enexis MS-D, and 1.0 FX."""
         c_df, t_df, tiers, cur, fx, name = get_netherlands_commercial_preset()
         summary_nl = compute_monthly_billing(c_df, t_df, tiers, cur, fx)
 
@@ -101,6 +107,51 @@ class TestMonthlyBaselineLab(unittest.TestCase):
         # Check September exceedance (P_max = 260 kW vs P_contract = 250 kW -> 10 kW excess)
         self.assertEqual(summary_nl.months_with_excess_peak, 1)
         self.assertAlmostEqual(summary_nl.total_excess_peak_kw_months, 10.0)
+
+        # Verify annual equivalence: Monthly Accrual vs Annual Settlement (Month 12)
+        c_df_m, t_df_m, _, _, _, _ = get_netherlands_commercial_preset(billing_schedule="monthly")
+        c_df_a, t_df_a, _, _, _, _ = get_netherlands_commercial_preset(billing_schedule="annual_settlement")
+
+        sum_m = compute_monthly_billing(c_df_m, t_df_m, tiers, "EUR", 1.0)
+        sum_a = compute_monthly_billing(c_df_a, t_df_a, tiers, "EUR", 1.0)
+
+        # Total annual cost must match cent-precisely between monthly accrual and annual settlement
+        self.assertAlmostEqual(sum_m.cost_total_annual_eur, sum_a.cost_total_annual_eur, delta=0.05)
+        self.assertAlmostEqual(sum_m.cost_fixed_annual_eur, sum_a.cost_fixed_annual_eur, delta=0.05)
+
+        # Verify that all 8 Enexis voltage levels construct valid 12-month tariff tables
+        for tier_key in ENEXIS_2025_GRID_TIERS.keys():
+            df_tier = build_enexis_2025_tariff_dataframe(grid_tier_key=tier_key)
+            self.assertEqual(len(df_tier), 12)
+            self.assertIn("rate_peak_demand_kw", df_tier.columns)
+
+    def test_liander_commercial_preset(self):
+        """Verifies Dutch commercial energy tariffs with EUR, Liander MS (Medium Voltage), and 1.0 FX."""
+        c_df, t_df, tiers, cur, fx, name = get_netherlands_commercial_preset(provider="liander")
+        summary_lia = compute_monthly_billing(c_df, t_df, tiers, cur, fx)
+
+        self.assertEqual(summary_lia.total_kwh, 338400.0)
+        self.assertEqual(cur, "EUR")
+        self.assertEqual(fx, 1.0)
+        self.assertGreater(summary_lia.cost_total_annual_eur, 0.0)
+        self.assertIn("Liander", name)
+
+        # Verify annual equivalence: Monthly Accrual vs Annual Settlement (Month 12)
+        c_df_m, t_df_m, _, _, _, _ = get_netherlands_commercial_preset(provider="liander", billing_schedule="monthly")
+        c_df_a, t_df_a, _, _, _, _ = get_netherlands_commercial_preset(provider="liander", billing_schedule="annual_settlement")
+
+        sum_m = compute_monthly_billing(c_df_m, t_df_m, tiers, "EUR", 1.0)
+        sum_a = compute_monthly_billing(c_df_a, t_df_a, tiers, "EUR", 1.0)
+
+        # Total annual cost must match cent-precisely between monthly accrual and annual settlement
+        self.assertAlmostEqual(sum_m.cost_total_annual_eur, sum_a.cost_total_annual_eur, delta=0.05)
+        self.assertAlmostEqual(sum_m.cost_fixed_annual_eur, sum_a.cost_fixed_annual_eur, delta=0.05)
+
+        # Verify that all 6 Liander grid tiers construct valid 12-month tariff tables
+        for tier_key in LIANDER_2025_GRID_TIERS.keys():
+            df_tier = build_liander_2025_tariff_dataframe(grid_tier_key=tier_key)
+            self.assertEqual(len(df_tier), 12)
+            self.assertIn("rate_peak_demand_kw", df_tier.columns)
 
     def test_dynamic_n_tier_addition(self):
         """Verifies adding a 3rd custom TOU tier dynamically recalculates billing accurately."""
