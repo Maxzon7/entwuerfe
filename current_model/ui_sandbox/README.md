@@ -20,6 +20,23 @@ An isolated, enterprise-grade sandbox environment for testing 15-minute interval
 current_model/ui_sandbox/
 ├── __init__.py                           # Module package initializer
 ├── sandbox_app.py                        # Standalone Streamlit test runner & suite selector
+├── Currentsituation_sandbox/             # Replicated baseline laboratory directly copied from main app
+│   ├── __init__.py                       # Package exports
+│   ├── app.py                            # Standalone Streamlit application entrypoint
+│   ├── consumption/                      # Copied from current_model/ui/tab1_consumption (CSV Inspector & Synthetic)
+│   ├── contract/                         # Copied from current_model/ui/tab2_contract (Contract form & Zahlungsreihe)
+│   └── README.md                         # Current situation sandbox architecture & user guide
+├── status_quo_2025/                      # Unbundled 5-Layer 2025 Accounting & 4-Point Audit Package
+│   ├── __init__.py                       # Package exports
+│   ├── config_and_models.py              # Layer 1: Data models (LoadSeries2025, DSOTariff, etc.)
+│   ├── tariff_defaults_2025.py           # Stage 1: Liander 2025 and benchmark presets
+│   ├── consumption_pipeline.py           # Layer 2: 35,040 normalization & TOU segmentation
+│   ├── dso_accounting.py                 # Layer 3: DSO calculations & capacity breach logic
+│   ├── commercial_accounting.py          # Layer 4: Fixed/Var/Spot supplier, metering & levies
+│   ├── status_quo_master.py              # Layer 5: Consolidation, blended €/kWh & 15-year TCO NPV
+│   ├── audit.py                          # 14-criteria verification battery across 4 audit points
+│   ├── status_quo_lab.py                 # Streamlit UI laboratory page
+│   └── README.md                         # Status Quo 2025 detailed architecture & formulas
 ├── minimal_contract_system.py            # 3-Party Unbundled Contract Lab (15-min interval CSV + DSO + Meetbedrijf + Supplier)
 ├── standalone_monthly_baseline_lab.py    # Lean coordinator for the 12-Month Baseline & Tariff Lab
 ├── monthly_presets.py                    # Standard contract presets & Dutch DSO rate catalogs (Enexis & Liander 2025)
@@ -40,17 +57,22 @@ current_model/ui_sandbox/
 
 You can run any sandbox laboratory directly with Streamlit:
 
-### 1. Run the Suite Runner (Switch between both labs):
+### 1. Run the Suite Runner (Switch between all 3 labs):
 ```bash
 python -m streamlit run current_model/ui_sandbox/sandbox_app.py
 ```
 
-### 2. Run the 3-Party Unbundled Contract Lab directly (15-min CSV Profile):
+### 2. Run the Status Quo 2025 Unbundled Accounting Lab directly:
+```bash
+python -m streamlit run current_model/ui_sandbox/status_quo_2025/status_quo_lab.py
+```
+
+### 3. Run the 3-Party Unbundled Contract Lab directly (15-min CSV Profile):
 ```bash
 python -m streamlit run current_model/ui_sandbox/minimal_contract_system.py
 ```
 
-### 3. Run the 12-Month Baseline & Commercial Tariff Lab directly:
+### 4. Run the 12-Month Baseline & Commercial Tariff Lab directly:
 ```bash
 python -m streamlit run current_model/ui_sandbox/standalone_monthly_baseline_lab.py
 ```

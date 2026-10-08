@@ -29,6 +29,10 @@ class TestUISandboxIsolation(unittest.TestCase):
         self.assertTrue(os.path.isfile(entrypoint), "ui_sandbox/sandbox_app.py must exist")
         baseline_lab = os.path.join(self.sandbox_dir, "standalone_monthly_baseline_lab.py")
         self.assertTrue(os.path.isfile(baseline_lab), "ui_sandbox/standalone_monthly_baseline_lab.py must exist")
+        currsit_dir = os.path.join(self.sandbox_dir, "Currentsituation_sandbox")
+        self.assertTrue(os.path.isdir(currsit_dir), "ui_sandbox/Currentsituation_sandbox directory must exist")
+        currsit_app = os.path.join(currsit_dir, "app.py")
+        self.assertTrue(os.path.isfile(currsit_app), "ui_sandbox/Currentsituation_sandbox/app.py must exist")
 
     def test_production_codebase_never_imports_ui_sandbox(self):
         """Strict architectural guard: Main app, core, models, and ui must NEVER import ui_sandbox."""

@@ -1,0 +1,76 @@
+flowchart TD
+    %% =========================================================
+    %% 1. UPPER SECTION: INPUTS & CURRENT SITUATION
+    %% =========================================================
+    subgraph S_MARKET ["Market Entities"]
+        METER["Meter Company"]
+        DSO["Grid Operator (DSO)"]
+        SUPP["Energy Supplier"]
+    end
+
+    subgraph S_CONSUMPTION ["Consumption"]
+        MAT["Matrix Input"]
+        CSV["CSV Ingestion"]
+        SYN["Synthetic Profile"]
+    end
+
+    METER --> FP["Financial Profile"]
+    DSO --> FP
+    SUPP --> FP
+
+    MAT --> CP["Consumption Profile"]
+    CSV --> CP
+    SYN --> CP
+
+    FP --> CS["Current Situation (Status Quo)<br/><i>Baseline: 100% Grid Supply</i>"]
+    CP --> CS
+
+    %% =========================================================
+    %% 2. LOWER SECTION: SUB-SCENARIOS & SOLUTION PATHS
+    %% =========================================================
+    subgraph S_SUBS ["Sub-Scenarios (Alternative Solution Paths)"]
+        SUB_OPT["<b>Option 1: Tariff Optimization</b><br/>Contract Switch / Dynamic Spot"]
+        SUB_PV["<b>Option 2: Solar PV Generation</b><br/>Direct Self-Consumption (40-100%)"]
+        SUB_BESS["<b>Option 3: Battery Storage (BESS)</b><br/>Peak Shaving & Capacity Reduction"]
+        SUB_GEN["<b>Option 4: Backup Generator</b><br/>Peaking & Congestion Bridging"]
+        SUB_HYB["<b>Option 5: Hybrid Solution</b><br/>Solar PV + BESS (+ Genset)"]
+    end
+
+    CS --> SUB_OPT
+    CS --> SUB_PV
+    CS --> SUB_BESS
+    CS --> SUB_GEN
+    CS --> SUB_HYB
+
+    %% =========================================================
+    %% 3. EVALUATION & DECISION MATRIX
+    %% =========================================================
+    EVAL["<b>Master Decision Dashboard & Comparison</b><br/>15-Year TCO | CAPEX vs. OPEX | Payback (ROI) | Autarky %"]
+
+    SUB_OPT --> EVAL
+    SUB_PV --> EVAL
+    SUB_BESS --> EVAL
+    SUB_GEN --> EVAL
+    SUB_HYB --> EVAL
+
+    %% Styling
+    style S_MARKET fill:#0f172a,stroke:#f59e0b,stroke-width:1.5px,color:#f8fafc
+    style S_CONSUMPTION fill:#0f172a,stroke:#3b82f6,stroke-width:1.5px,color:#f8fafc
+    style FP fill:#1e293b,stroke:#fbbf24,stroke-width:2px,color:#f8fafc
+    style CP fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
+    style CS fill:#1e293b,stroke:#10b981,stroke-width:2.5px,color:#f8fafc
+    style S_SUBS fill:#0f172a,stroke:#64748b,stroke-width:1.5px,color:#f8fafc
+    style EVAL fill:#1e293b,stroke:#a855f7,stroke-width:2px,color:#f8fafc
+
+    style METER fill:#1e293b,stroke:#64748b,color:#f8fafc
+    style DSO fill:#1e293b,stroke:#64748b,color:#f8fafc
+    style SUPP fill:#1e293b,stroke:#64748b,color:#f8fafc
+    style MAT fill:#1e293b,stroke:#64748b,color:#f8fafc
+    style CSV fill:#1e293b,stroke:#64748b,color:#f8fafc
+    style SYN fill:#1e293b,stroke:#64748b,color:#f8fafc
+
+    style SUB_OPT fill:#1e293b,stroke:#38bdf8,color:#f8fafc
+    style SUB_PV fill:#1e293b,stroke:#f59e0b,color:#f8fafc
+    style SUB_BESS fill:#1e293b,stroke:#10b981,color:#f8fafc
+    style SUB_GEN fill:#1e293b,stroke:#ef4444,color:#f8fafc
+    style SUB_HYB fill:#1e293b,stroke:#a855f7,color:#f8fafc

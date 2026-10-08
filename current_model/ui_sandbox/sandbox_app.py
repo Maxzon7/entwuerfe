@@ -25,19 +25,27 @@ try:
     from current_model.ui.common.styles import apply_custom_styles
     from current_model.ui_sandbox.minimal_contract_system import render_minimal_contract_system
     from current_model.ui_sandbox.standalone_monthly_baseline_lab import render_monthly_baseline_lab
+    from current_model.ui_sandbox.status_quo_2025.status_quo_lab import render_status_quo_lab
+    from current_model.ui_sandbox.Currentsituation_sandbox.app import render_current_situation_sandbox
 except ImportError:
     try:
         from ui.common.styles import apply_custom_styles
         from ui_sandbox.minimal_contract_system import render_minimal_contract_system
         from ui_sandbox.standalone_monthly_baseline_lab import render_monthly_baseline_lab
+        from ui_sandbox.status_quo_2025.status_quo_lab import render_status_quo_lab
+        from ui_sandbox.Currentsituation_sandbox.app import render_current_situation_sandbox
     except ImportError:
         try:
             from minimal_contract_system import render_minimal_contract_system
             from standalone_monthly_baseline_lab import render_monthly_baseline_lab
+            from status_quo_2025.status_quo_lab import render_status_quo_lab
+            from Currentsituation_sandbox.app import render_current_situation_sandbox
             apply_custom_styles = None
         except ImportError:
             render_minimal_contract_system = None
             render_monthly_baseline_lab = None
+            render_status_quo_lab = None
+            render_current_situation_sandbox = None
             apply_custom_styles = None
 
 
@@ -59,6 +67,8 @@ def main():
     lab_mode = st.radio(
         "Select Laboratory Module:",
         options=[
+            ":material/analytics: Current Situation (Status Quo) Lab (Tab 1 & 2 Main Replicas)",
+            ":material/account_balance: Status Quo 2025 Lab (Unbundled 3-Party & 4-Point Audit)",
             ":material/calendar_month: Monthly Baseline & Tariff Lab (Pozo 600 & Enexis)",
             ":material/bolt: 15-Minute Load Profile & Supply Contract Lab"
         ],
@@ -68,7 +78,17 @@ def main():
 
     st.markdown("---")
 
-    if "Monthly Baseline" in lab_mode:
+    if "Current Situation" in lab_mode:
+        if render_current_situation_sandbox:
+            render_current_situation_sandbox(key_prefix="suite_currsit_lab")
+        else:
+            st.error("Could not load `render_current_situation_sandbox`. Check import paths.", icon=":material/error:")
+    elif "Status Quo 2025" in lab_mode:
+        if render_status_quo_lab:
+            render_status_quo_lab(key_prefix="suite_sq2025_lab")
+        else:
+            st.error("Could not load `render_status_quo_lab`. Check import paths.", icon=":material/error:")
+    elif "Monthly Baseline" in lab_mode:
         if render_monthly_baseline_lab:
             render_monthly_baseline_lab(key_prefix="suite_monthly_lab")
         else:

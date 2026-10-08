@@ -85,6 +85,10 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Calendar Models** | `CalendarConfig`, holiday calendars, weekend off-peak logic | [`models/calendar_config.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/calendar_config.py) |
 | **Preset Templates** | Industry, Office, EV-Hub load consumers and contract presets | [`models/presets.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/models/presets.py) |
 | **UI Testing Sandbox Lab** | Isolated Streamlit playground for UI prototyping & widget testing | [`ui_sandbox/sandbox_app.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/sandbox_app.py) |
+| **Currentsituation Sandbox** | Unbundled 3-party contract sandbox with sub-tabs for Grid Operator, Energy Retailer, and Metering Company + Period Filter | [`ui_sandbox/Currentsituation_sandbox/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/Currentsituation_sandbox/) |
+| **Status Quo 2025 Package** | Unbundled 5-layer 2025 commercial accounting & 4-point audit framework | [`ui_sandbox/status_quo_2025/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/status_quo_2025/) |
+| **Status Quo 2025 Lab UI** | Standalone Streamlit lab with Stage 1/2 switch & automated audit dashboard | [`ui_sandbox/status_quo_2025/status_quo_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/status_quo_2025/status_quo_lab.py) |
+| **Status Quo 2025 Tests** | Unit test suite validating 14 audit criteria, dual TOU commodity & AST isolation | [`tests/test_status_quo_2025.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_status_quo_2025.py) |
 | **3-Party Contract Lab** | European 3-party unbundled electricity contract lab (DSO + Meetbedrijf + Supplier + Taxes) with 15-min CSV load profiles | [`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py) |
 | **Monthly Baseline Lab** | Autarkic 12-month baseline & tariff lab validating Pozo 600 target (€ 36,234.97) and official Dutch 2025 grid tariffs (Enexis & Liander, LS to HS) | [`ui_sandbox/standalone_monthly_baseline_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/standalone_monthly_baseline_lab.py) |
 | **Monthly Presets & Catalogs** | Decoupled Dutch DSO catalogs (Enexis/Liander 2025), Argentine presets, and table reload engine | [ui_sandbox/monthly_presets.py](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/monthly_presets.py) |
@@ -100,7 +104,7 @@ The application follows a strictly modular architecture where every UI tab, core
 | **Monthly Contract Tests** | Unit tests for monthly contract validity periods, resolution & billing | [`tests/test_monthly_contracts.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_contracts.py) |
 | **Dynamic Contract Tests** | Unit tests for dual-tier contract architecture, day-ahead spot pricing, and Enexis network tariffs | [`tests/test_dynamic_contract.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_dynamic_contract.py) |
 | **Monthly Baseline Lab Tests** | Unit tests validating cent-precise Pozo 600 reproduction (€ 36,234.97) and Dutch benchmarks | [`tests/test_monthly_baseline_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_baseline_lab.py) |
-| **Automated Test Runner** | Regression & health-check runner (149 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
+| **Automated Test Runner** | Regression & health-check runner (157 automated unit tests) | [`run_tests.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/run_tests.py) |
 
 
 ---
@@ -462,9 +466,23 @@ python run_tests.py
 | [`test_solar_integration.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_solar_integration.py) | 5 | Interval-by-interval dispatch physics, electrical conservation of energy, self-consumption |
 | [`test_solar_integration_tab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_solar_integration_tab.py) | 4 | Fast coupled dispatch, auto-sizing coverage targets (40-100%), UI figure generators |
 | [`test_syntax_compilation.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_syntax_compilation.py) | 1 | AST parsing and bytecode compilation verification across all Python source files in the project |
+| [`test_status_quo_2025.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_status_quo_2025.py) | 8 | Unbundled 5-layer 2025 accounting, Liander breach, Spot pricing, dual TOU commodity accounting, monthly breakdown adapter, 14-criteria audit battery & AST isolation |
 | [`test_ui_sandbox.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_ui_sandbox.py) | 2 | Isolated sandbox directory existence and zero reverse-dependency verification on production codebase |
 | [`test_monthly_baseline_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/tests/test_monthly_baseline_lab.py) | 4 | Dynamic N-tier TOU windows, peak penalties, and Pozo 600 cent-precise verification |
-| **Total Test Suite** | **147** | **100% Passed (Zero Failures, Zero Errors)** |
+| **Total Test Suite** | **157** | **100% Passed (Zero Failures, Zero Errors)** |
+
+---
+
+## :material/science: UI Sandbox Laboratories (`ui_sandbox`)
+
+For focused testing and baseline validation without loading downstream hardware dispatch models (PV, BESS, genset), the sandbox suite provides isolated environments:
+
+| Laboratory Module | Location | Purpose & Capabilities |
+| :--- | :--- | :--- |
+| **Current Situation (Status Quo) Sandbox** | [`ui_sandbox/Currentsituation_sandbox/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/Currentsituation_sandbox/) | Advanced 3-party unbundled commercial workbench. Features **Tab 1: Consumption Profile Ingestion & Visualizer** (15-min load curves, peak demand, diurnal curves, overload inspector) and **Tab 2: Unbundled Electricity Contract** with three dedicated actor sub-tabs: (1) Regulated Grid Operator (Enexis, Liander, Stedin official 2025 catalogs), (2) Energy Retailer (Vattenfall, Eneco, Essent, Shell, TotalEnergies, Greenchoice, Tibber with dual TOU auto-prefill), (3) Metering Company & Statutory Levies (Fudura, Joulz, Kenter, tax reduction credits, 21% VAT, TCO parameters). Includes dynamic TOU schedule visualizer, Period Filter Inspector (Full Year vs single-month deep-dive), and triple export toolbar (CSV/JSON). |
+| **Status Quo 2025 Lab** | [`ui_sandbox/status_quo_2025/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/status_quo_2025/) | Unbundled 5-layer Dutch electricity accounting (Liander 2025 MS grid tariff, dynamic spot/fixed supplier, certified metering, statutory levies, and 14-criteria audit battery). |
+| **Monthly Baseline & Tariff Lab** | [`ui_sandbox/standalone_monthly_baseline_lab.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/standalone_monthly_baseline_lab.py) | 12-month calendar portfolio analysis for multi-tariff contracts (Pozo 600, Enexis). |
+| **3-Party Contract Lab** | [`ui_sandbox/minimal_contract_system.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/minimal_contract_system.py) | Direct 15-minute interval CSV mapping against unbundled supplier and grid fees. |
 
 ---
 
@@ -484,8 +502,15 @@ Run the main Streamlit application from the project root:
 python -m streamlit run current_model/app.py
 ```
 
-### Launching the Isolated UI Sandbox Lab:
-Run the UI testing environment independently without loading `app.py`:
+### Launching the Current Situation (Status Quo) Sandbox:
+Run the standalone Current Situation lab directly:
+
+```bash
+python -m streamlit run current_model/ui_sandbox/Currentsituation_sandbox/app.py
+```
+
+### Launching the UI Sandbox Hub:
+Run the full sandbox suite to switch between all laboratory modules:
 
 ```bash
 python -m streamlit run current_model/ui_sandbox/sandbox_app.py
