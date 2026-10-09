@@ -41,7 +41,9 @@ current_model/ui_sandbox/Currentsituation_sandbox/
 ## 3. Key Capabilities
 
 ### A. Consumption Profile Inspector (`consumption/`)
-- **CSV Ingestion**: Auto-detects delimiters, encodings, and headers for 15-minute interval files.
+- **CSV Ingestion & Full Year 2025 Demo**:
+  * Auto-detects delimiters, encodings, and headers for 15-minute interval files.
+  * One-click **"Load 15-Min Demo CSV (Full Year 2025)"** button instantly generates all 365 days of 2025 (`2025-01-01 00:00` to `2025-12-31 23:45`, 35,040 intervals) featuring realistic seasonal modulation across multiple meters (HVAC, Production, EV Chargers, Baseload).
 - **Interactive Plotly Load Curve**:
   * Full 35,040-interval time series with range slider, zoom, and unified hover tooltips.
   * Visual peak power marker with annotation badges.
@@ -58,11 +60,16 @@ current_model/ui_sandbox/Currentsituation_sandbox/
 - **3 Dedicated Actor Sub-Tabs & Multi-Tier Catalogs**:
   * **Sub-Tab 1: Regulated Grid Operator (Netzbetreiber / DSO)**:
     - Official 2025 Dutch DSO rate catalogs for **Enexis Netbeheer**, **Liander Netbeheer**, and **Stedin Netbeheer** across all voltage tiers (`LS ≤ 50 kW`, `MS/LS 50–136 kW`, `MS-D 125–1,500 kW`, `MS 136–2,000 kW`, `MS-T > 1,500 kW`, `HS/MS`, `TS`, `HS`).
-    - Structured into the proven 4-section numbered layout:
-      * **`1. General & Active Capacity Parameters`**: Contract Name / Identifier, Currency, Base Monthly Fee (Cargo Comercialización / Vastrecht + Aansluitdienst), Contracted Active Capacity (kW), Contracted Capacity Tariff (€/kW/mo), Measured Demand Tariff (€/kW/mo), Max Physical Limit (kW), and Peak Penalty Rate (€/kW).
-      * **`2. Reactive Power Parameters`**: Reactive Energy Tariff (€/kVARh), Min Power Factor ($\cos \varphi$), Reactive Allowance (% of kWh).
-      * **`3. Time-of-Use (TOU) Energy Rates`**: High Tariff HT / Normaal (€/kWh), Off-Peak NT / Dal (€/kWh), Weekend Off-Peak toggle, and Dutch breach capacity adjustment rule.
-      * **`Save Contract Configuration`** action button.
+      * **`Reload Preset Defaults`** & **`Always reload catalog defaults on tier switch`**: Instant one-click restoration of official catalog values or continuous synchronization when selecting different grid tiers.
+      * **`1. Grid Capacity & Fixed Fees`**: Simplified & professional naming aligned with official tariff tables:
+        - `Fixed Monthly Grid Fee (€/month)`: Fixed standing charge for grid access (Tabelle 2.1 Festgebühr Transport / Vastrecht, € 36.75/month for MS/LS; connection fee *Aansluitdienst* omitted in baseline stage).
+        - `Reserved Grid Capacity (kW)`: Power reserved on the grid (*kW-Vertrag*), dynamically sized to the measured peak load.
+        - `Reserved Capacity Rate (€/kW/month)`: Monthly fee per reserved kW (*kW-Vertrag Tarif*, € 3.6567/kW/mo for MS/LS).
+        - `Monthly Peak Demand Rate (€/kW/month)`: Measured maximum 15-min peak rate (*kW max. pro Monat*, € 3.4600/kW/mo).
+        - `Physical Transformer Limit (kW)` & `Capacity Exceedance Penalty (€/kW)`.
+      * **`2. Reactive Power & Power Factor (Blindenergie)`**: `Reactive Power Rate (€/kVARh)` (€ 0.0000), `Target Power Factor (cos φ)` (0.90), `Free Reactive Energy Allowance (%)` (33%).
+      * **`3. Time-of-Use Electricity Rates (Interactive Matrix Editor)`**: Dynamic `st.data_editor` table matching Tab 2 with intuitive rows (`Daytime / Working Hours (kWh hoch)` at € 0.2200/kWh, `Night & Weekend / Off-Peak (kWh niedrig)` at € 0.2200/kWh 1:1 matching printed PDF Table 2.1), Weekend Off-Peak toggle, and Dutch breach capacity adjustment rule.
+      * Encapsulated in a performant **`st.form`** with primary **`Save Contract Configuration`** submit button.
   * **Sub-Tab 2: Energy Retailer (Energielieferant / Supplier)**:
     - Commercial suppliers: **Vattenfall Zakelijk**, **Eneco Zakelijk**, **Essent Zakelijk**, **Shell Energy**, **TotalEnergies**, **Greenchoice**, **Tibber / Dynamisch**, **Custom**.
     - Multi-tier product selector: *Fixed 1-Year (Dubbeltarief HT/NT)*, *Fixed 1-Year (Enkeltarief)*, *Fixed 3-Year (Prijszekerheid)*, *Dynamic Spot (EPEX Spot NL 2025)*, *Variable Monthly (12-mo schedule)*, *100% Dutch Green Power (GvO)*.
@@ -83,16 +90,29 @@ current_model/ui_sandbox/Currentsituation_sandbox/
   * Single-month reactive mode: KPI cards, Donut chart, and statement table immediately isolate that month's Net, Gross, Peak kW, Overload breach, and DSO/Supplier/Meter/Levies cost split.
   * Full-year overview mode: Annual Net invoice (€), Blended Net Rate (€/kWh), Annual Peak Demand (kW) & Breach status, and 15-Year TCO Net Present Value (NPV).
 
-- **14-Criteria / 4-Point Verification Battery (`perform_full_status_quo_audit`)**:
-  * Point 1: Load series integrity (35,040 intervals, calendar alignment, HT/NT energy conservation).
-  * Point 2: DSO accounting accuracy (12 monthly peaks, breach detection, no negative fees).
-  * Point 3: Commercial contract consistency (energy volume match, dual TOU split, spot pricing alignment, metering & levy calculations).
-  * Point 4: Master accounting arithmetic (Total = DSO + Supplier + Metering + Levies, blended price, 15-year TCO NPV).
+- **15-Year Long-Term Cost Structure & Lifecycle Projection**:
+  * **Complete 4-Pillar Consolidation**: Fully consolidates all 4 cost aspects: Regulated DSO Grid, Energy Supplier Commodity, Certified Metering, and Statutory Taxes into a 15-year lifecycle trajectory ($y \in [1, 15]$).
+  * **Compounded Price Escalation & WACC Discounting**: Accounts for user-configured annual electricity price escalation ($g = 3.0\%$) and WACC discount rate ($r = 5.0\%$).
+  * **4 Executive Lifecycle KPI Cards**:
+    - `15-Year Spend (Nominal)`: Cumulative cash outlay across 15 years.
+    - `15-Year TCO (NPV)`: Discounted Net Present Value of lifetime electricity spend.
+    - `Average Annual Spend`: Mean annual consolidated budget over 15 years.
+    - `Projected Year 15 Cost (2039)`: Final year compounded annual electricity expenditure.
+  * **Interactive Plotly 15-Year Stacked Figure**:
+    - Color-coded stacked bars showing the 3 core parties (DSO Grid, Energy Supplier, Metering & Taxes).
+    - Violet dashed curve tracking annual Discounted Present Value ($PV$).
+    - Secondary Y-axis tracking cumulative 15-year expenditure trajectory.
+  * **15-Year Annual Financial Schedule Table**:
+    - Detailed row-by-row table showing Year, Calendar Year (2025–2039), DSO Grid (€), Supplier (€), Metering & Taxes (€), Annual Net Spend (€), Cumulative Spend (€), Discount Factor, Present Value (€), and Blended Rate (€/kWh).
 
-- **Visual Cost Distribution & Export Toolbar**:
+- **Visual Cost Distribution & 4-Way Export Toolbar**:
   * Cost Share Donut chart (adapts to selected month or full year) and 12-Month Stacked Payment Series (*Zahlungsreihe*).
-  * Itemized statement table.
-  * Triple export toolbar: CSV 12-Month Statement, JSON Audit Report, and JSON Contract Model Configuration.
+  * 12-Month itemized statement table.
+  * Quadruple export toolbar:
+    1. CSV 12-Month Statement (`status_quo_2025_statement.csv`)
+    2. CSV 15-Year TCO Lifecycle Projection (`status_quo_15_year_lifecycle_projection.csv`)
+    3. JSON Audit Report (`status_quo_2025_audit.json`)
+    4. JSON Contract Model Configuration (`unbundled_contract_2025.json`)
 
 ---
 

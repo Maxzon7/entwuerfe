@@ -362,3 +362,154 @@ def create_tou_schedule_diurnal_figure(
 
     return fig
 
+
+def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) -> go.Figure:
+    """
+    Constructs an executive-grade 15-year lifecycle cost projection figure:
+      - Stacked bars for the 3 main cost parties: DSO Grid, Energy Supplier, Metering & Taxes.
+      - Line trace for Discounted Present Value (PV @ WACC).
+      - Secondary Y-axis line trace for Cumulative Lifetime Cashflow.
+    """
+    horizon = int(getattr(result.config, "evaluation_horizon_years", 15))
+    g = float(getattr(result.config, "energy_escalation_pct", 3.0)) / 100.0
+    r = float(getattr(result.config, "discount_rate_pct", 5.0)) / 100.0
+
+    years = [start_year + i for i in range(horizon)]
+    year_labels = [f"Yr {i+1} ({start_year + i})" for i in range(horizon)]
+
+    base_dso = float(getattr(result, "total_dso_net", 0.0))
+    base_supp = float(getattr(result, "total_supplier_net", 0.0))
+    base_meter_taxes = float(getattr(result, "total_metering_net", 0.0)) + float(getattr(result, "total_levies_net", 0.0))
+
+    dso_series: List[float] = []
+    supp_series: List[float] = []
+    meter_taxes_series: List[float] = []
+    total_series: List[float] = []
+    pv_series: List[float] = []
+    cumulative_series: List[float] = []
+    cum_sum = 0.0
+
+    for i in range(horizon):
+        esc = (1.0 + g) ** i
+        df = 1.0 / ((1.0 + r) ** (i + 1))
+
+        dso_val = round(base_dso * esc, 2)
+        supp_val = round(base_supp * esc, 2)
+        met_val = round(base_meter_taxes * esc, 2)
+        tot_val = round(dso_val + supp_val + met_val, 2)
+        pv_val = round(tot_val * df, 2)
+
+        cum_sum += tot_val
+
+        dso_series.append(dso_val)
+        supp_series.append(supp_val)
+        meter_taxes_series.append(met_val)
+        total_series.append(tot_val)
+        pv_series.append(pv_val)
+        cumulative_series.append(round(cum_sum, 2))
+
+    fig = go.Figure()
+
+    # 1. Stacked Bars: DSO Grid
+    fig.add_trace(
+        go.Bar(
+            x=year_labels,
+            y=dso_series,
+            name="Regulated Grid Operator (DSO)",
+            marker=dict(color="#F59E0B"),
+            hovertemplate="<b>DSO Grid</b>: € %{y:,.2f}<extra></extra>"
+        )
+    )
+
+    # 2. Stacked Bars: Energy Supplier
+    fig.add_trace(
+        go.Bar(
+            x=year_labels,
+            y=supp_series,
+            name="Energy Retailer (Supplier)",
+            marker=dict(color="#38BDF8"),
+            hovertemplate="<b>Energy Supplier</b>: € %{y:,.2f}<extra></extra>"
+        )
+    )
+
+    # 3. Stacked Bars: Metering & Taxes
+    fig.add_trace(
+        go.Bar(
+            x=year_labels,
+            y=meter_taxes_series,
+            name="Metering & Statutory Taxes",
+            marker=dict(color="#10B981"),
+            hovertemplate="<b>Metering & Taxes</b>: € %{y:,.2f}<extra></extra>"
+        )
+    )
+
+    # 4. Present Value Curve (Discounted Cashflow)
+    fig.add_trace(
+        go.Scatter(
+            x=year_labels,
+            y=pv_series,
+            name=f"Discounted PV (@ {r*100:.1f}% WACC)",
+            mode="lines+markers",
+            line=dict(color="#A78BFA", width=3, dash="dot"),
+            marker=dict(size=7, color="#A78BFA"),
+            hovertemplate="<b>Present Value (PV)</b>: € %{y:,.2f}<extra></extra>"
+        )
+    )
+
+    # 5. Cumulative Lifetime Expenditure (Secondary Y-Axis)
+    fig.add_trace(
+        go.Scatter(
+            x=year_labels,
+            y=cumulative_series,
+            name="Cumulative Total Spend (Nominal)",
+            mode="lines+markers",
+            line=dict(color="#F43F5E", width=2.5),
+            marker=dict(size=6, color="#F43F5E"),
+            yaxis="y2",
+            hovertemplate="<b>Cumulative 15y Spend</b>: € %{y:,.2f}<extra></extra>"
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=f"<b>15-Year Long-Term Cost Structure & Lifecycle Projection ({years[0]} – {years[-1]})</b>",
+            font=dict(size=15, color="#F8FAFC")
+        ),
+        barmode="stack",
+        xaxis=dict(
+            title="Projection Year",
+            gridcolor="#1E293B"
+        ),
+        yaxis=dict(
+            title="Annual Expenditure (€ / year)",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155"
+        ),
+        yaxis2=dict(
+            title=dict(
+                text="Cumulative 15-Year Spend (€)",
+                font=dict(color="#F43F5E")
+            ),
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            zeroline=False,
+            tickfont=dict(color="#F43F5E")
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(l=50, r=60, t=80, b=40),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=450,
+        hovermode="x unified"
+    )
+
+    return fig
+

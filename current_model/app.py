@@ -1,4 +1,4 @@
-# To Run: python -m streamlit run current_model/app.py
+# To Run: python -m streamlit run app.py
 # Updated: 2026-09-07 17:36 - Solar PV Sizing & Reactive Form Synchronization
 """
 ========================================================================================

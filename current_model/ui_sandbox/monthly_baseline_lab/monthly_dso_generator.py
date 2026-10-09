@@ -19,7 +19,7 @@ import streamlit as st
 
 # Safe imports
 try:
-    from current_model.ui_sandbox.monthly_presets import (
+    from current_model.ui_sandbox.monthly_baseline_lab.monthly_presets import (
         ENEXIS_2025_GRID_TIERS,
         ENEXIS_2025_CONNECTION_CAPACITIES,
         build_enexis_2025_tariff_dataframe,

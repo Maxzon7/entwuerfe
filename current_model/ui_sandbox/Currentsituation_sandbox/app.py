@@ -35,15 +35,29 @@ except ImportError:
     from ui.common.styles import apply_custom_styles
     from ui.common.cards import render_kpi_card
 
+import importlib
+
 # Copied Local Modules
 try:
-    from ui_sandbox.Currentsituation_sandbox.consumption.view import render_tab1_consumption
-    from ui_sandbox.Currentsituation_sandbox.contract.view import render_tab2_base_contract
-except ImportError:
+    import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
+    import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+    import ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+    importlib.reload(_con_charts)
+    importlib.reload(_con_view)
+    importlib.reload(_c_view)
+    render_tab1_consumption = _c_view.render_tab1_consumption
+    render_tab2_base_contract = _con_view.render_tab2_base_contract
+except Exception:
     try:
-        from current_model.ui_sandbox.Currentsituation_sandbox.consumption.view import render_tab1_consumption
-        from current_model.ui_sandbox.Currentsituation_sandbox.contract.view import render_tab2_base_contract
-    except ImportError:
+        import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+        importlib.reload(_con_charts)
+        importlib.reload(_con_view)
+        importlib.reload(_c_view)
+        render_tab1_consumption = _c_view.render_tab1_consumption
+        render_tab2_base_contract = _con_view.render_tab2_base_contract
+    except Exception:
         from consumption.view import render_tab1_consumption
         from contract.view import render_tab2_base_contract
 

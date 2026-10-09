@@ -288,6 +288,18 @@ class TestStatusQuo2025Accounting(unittest.TestCase):
                                 if node.module:
                                     self.assertNotIn("ui_sandbox", node.module, f"{fpath} imports from ui_sandbox")
 
+    def test_liander_2025_table_2_1_pdf_alignment(self):
+        """Validates that Liander 2025 MS/LS rates match official PDF Table 2.1."""
+        from current_model.ui_sandbox.status_quo_2025.tariff_defaults_2025 import LIANDER_2025_GRID_TIERS
+
+        ms_ls = LIANDER_2025_GRID_TIERS["MS/LS (> 50 t/m 136 kW)"]
+        self.assertEqual(ms_ls["rate_contracted_monthly"], 3.6567)
+        self.assertEqual(ms_ls["rate_peak_monthly"], 3.4600)
+        self.assertEqual(ms_ls["vastrecht_annual"] / 12.0, 36.75)
+        self.assertEqual(ms_ls["rate_peak_kwh"], 0.2200)
+        self.assertEqual(ms_ls["rate_offpeak_kwh"], 0.2200)
+        self.assertEqual(ms_ls["reactive_tariff"], 0.0000)
+
 
 if __name__ == "__main__":
     unittest.main()

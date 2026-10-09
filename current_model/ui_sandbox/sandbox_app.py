@@ -20,33 +20,40 @@ for path in [WORKSPACE_ROOT, CURRENT_MODEL_DIR]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-# Optional and robust imports from main application and sandbox module
+# Optional and robust imports from main application and sandbox modules
 try:
     from current_model.ui.common.styles import apply_custom_styles
-    from current_model.ui_sandbox.minimal_contract_system import render_minimal_contract_system
-    from current_model.ui_sandbox.standalone_monthly_baseline_lab import render_monthly_baseline_lab
-    from current_model.ui_sandbox.status_quo_2025.status_quo_lab import render_status_quo_lab
     from current_model.ui_sandbox.Currentsituation_sandbox.app import render_current_situation_sandbox
+    from current_model.ui_sandbox.status_quo_2025.status_quo_lab import render_status_quo_lab
+    from current_model.ui_sandbox.monthly_baseline_lab.standalone_monthly_baseline_lab import render_monthly_baseline_lab
+    from current_model.ui_sandbox.three_party_contract_lab.minimal_contract_system import render_minimal_contract_system
 except ImportError:
     try:
         from ui.common.styles import apply_custom_styles
-        from ui_sandbox.minimal_contract_system import render_minimal_contract_system
-        from ui_sandbox.standalone_monthly_baseline_lab import render_monthly_baseline_lab
-        from ui_sandbox.status_quo_2025.status_quo_lab import render_status_quo_lab
         from ui_sandbox.Currentsituation_sandbox.app import render_current_situation_sandbox
+        from ui_sandbox.status_quo_2025.status_quo_lab import render_status_quo_lab
+        from ui_sandbox.monthly_baseline_lab.standalone_monthly_baseline_lab import render_monthly_baseline_lab
+        from ui_sandbox.three_party_contract_lab.minimal_contract_system import render_minimal_contract_system
     except ImportError:
         try:
-            from minimal_contract_system import render_minimal_contract_system
-            from standalone_monthly_baseline_lab import render_monthly_baseline_lab
-            from status_quo_2025.status_quo_lab import render_status_quo_lab
             from Currentsituation_sandbox.app import render_current_situation_sandbox
+            from status_quo_2025.status_quo_lab import render_status_quo_lab
+            from monthly_baseline_lab.standalone_monthly_baseline_lab import render_monthly_baseline_lab
+            from three_party_contract_lab.minimal_contract_system import render_minimal_contract_system
             apply_custom_styles = None
         except ImportError:
-            render_minimal_contract_system = None
-            render_monthly_baseline_lab = None
-            render_status_quo_lab = None
-            render_current_situation_sandbox = None
-            apply_custom_styles = None
+            try:
+                from minimal_contract_system import render_minimal_contract_system
+                from standalone_monthly_baseline_lab import render_monthly_baseline_lab
+                from status_quo_2025.status_quo_lab import render_status_quo_lab
+                from Currentsituation_sandbox.app import render_current_situation_sandbox
+                apply_custom_styles = None
+            except ImportError:
+                render_minimal_contract_system = None
+                render_monthly_baseline_lab = None
+                render_status_quo_lab = None
+                render_current_situation_sandbox = None
+                apply_custom_styles = None
 
 
 def main():

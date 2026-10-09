@@ -112,7 +112,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
         if files_to_process:
             st.session_state[f"{key_prefix}_cached_files"] = files_to_process
     elif is_demo:
-        demo_name, demo_content = generate_sample_demo_csv(days=14)
+        demo_name, demo_content = generate_sample_demo_csv(days=365)
         files_to_process = [(demo_name, demo_content)]
         st.session_state[f"{key_prefix}_cached_files"] = files_to_process
     elif f"{key_prefix}_cached_files" in st.session_state and st.session_state[f"{key_prefix}_cached_files"]:

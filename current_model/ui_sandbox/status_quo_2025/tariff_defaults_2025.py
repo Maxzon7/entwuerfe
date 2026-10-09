@@ -115,19 +115,19 @@ LIANDER_2025_GRID_TIERS: Dict[str, Dict[str, Any]] = {
         "vastrecht_annual": 441.00,             # 12 x € 36.75
         "rate_contracted_monthly": 2.2233,
         "rate_peak_monthly": 3.4600,
-        "rate_peak_kwh": 0.0220,               # kWh hoog
-        "rate_offpeak_kwh": 0.0220,            # kWh laag
+        "rate_peak_kwh": 0.2200,               # kWh hoog (Table 2.1)
+        "rate_offpeak_kwh": 0.2200,            # kWh laag (Table 2.1)
         "reactive_tariff": 0.0000,
         "typical_contracted_kw": 400.0,
     },
     "MS/LS (> 50 t/m 136 kW)": {
         "description": "Transformator MS naar LS (50 bis 136 kW)",
         "aansluitdienst_annual": 381.00,
-        "vastrecht_annual": 441.00,
+        "vastrecht_annual": 441.00,             # 12 x € 36.75
         "rate_contracted_monthly": 3.6567,
         "rate_peak_monthly": 3.4600,
-        "rate_peak_kwh": 0.0220,
-        "rate_offpeak_kwh": 0.0220,
+        "rate_peak_kwh": 0.2200,               # kWh hoog (Table 2.1)
+        "rate_offpeak_kwh": 0.2200,            # kWh laag (Table 2.1)
         "reactive_tariff": 0.0000,
         "typical_contracted_kw": 100.0,
     },

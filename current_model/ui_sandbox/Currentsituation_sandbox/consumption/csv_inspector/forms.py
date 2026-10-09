@@ -58,7 +58,7 @@ def render_csv_uploader_section(key_prefix: str = "csv_inspector") -> Tuple[Opti
                         del st.session_state[k]
                 st.rerun()
         else:
-            if st.button("Load 15-Min Demo CSV", icon=":material/play_circle:", key=f"{key_prefix}_demo_btn", use_container_width=True):
+            if st.button("Load 15-Min Demo CSV (Full Year 2025)", icon=":material/play_circle:", key=f"{key_prefix}_demo_btn", use_container_width=True):
                 keys_to_clear = [k for k in list(st.session_state.keys()) if k.startswith(key_prefix)]
                 for k in keys_to_clear:
                     del st.session_state[k]

@@ -29,6 +29,7 @@ try:
         create_monthly_payment_series_figure,
         create_cost_donut_figure,
         create_tou_schedule_diurnal_figure,
+        create_15_year_lifecycle_cost_figure,
     )
 except ImportError:
     try:
@@ -38,6 +39,7 @@ except ImportError:
             create_monthly_payment_series_figure,
             create_cost_donut_figure,
             create_tou_schedule_diurnal_figure,
+            create_15_year_lifecycle_cost_figure,
         )
     except ImportError:
         from current_model.ui.common.styles import apply_custom_styles
@@ -46,6 +48,7 @@ except ImportError:
             create_monthly_payment_series_figure,
             create_cost_donut_figure,
             create_tou_schedule_diurnal_figure,
+            create_15_year_lifecycle_cost_figure,
         )
 
 # 2025 5-Layer Accounting Modules & Official Catalogs
@@ -208,174 +211,232 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 }
                 st.caption(":material/tune: *Fully customizable manual grid operator tariffs.*")
 
-        st.markdown("---")
+        # Reload / Always Reload options for default preset rates
+        state_always_reload_key = f"{key_prefix}_dso_always_reload_{selected_dso_company}_{selected_tier}"
+        always_reload = st.session_state.get(state_always_reload_key, False)
 
-        # ==============================================================================
-        # 1. General & Active Capacity Parameters
-        # ==============================================================================
-        st.subheader("1. General & Active Capacity Parameters")
+        reload_version_key = f"{key_prefix}_dso_version_{selected_dso_company}_{selected_tier}"
+        form_version = st.session_state.get(reload_version_key, 0)
 
-        dso_contract_name_default = f"{selected_dso_company} - {selected_tier} (2025)"
-        contract_name_val = st.text_input(
-            "Contract Name / Identifier:",
-            value=dso_contract_name_default,
-            key=f"{key_prefix}_dso_name_val_{selected_dso_company}_{selected_tier}",
-            help="Custom name or tariff identifier for the regulated grid operator contract."
-        )
+        r_col1, r_col2 = st.columns([2.5, 2.5])
+        with r_col1:
+            if st.button(
+                ":material/restart_alt: Reload Preset Defaults",
+                key=f"{key_prefix}_btn_reload_preset_{selected_dso_company}_{selected_tier}",
+                use_container_width=True,
+                help="Reset all values and TOU tables for this grid tier back to the original catalog defaults."
+            ):
+                st.session_state[reload_version_key] = form_version + 1
+                # Clear stored widget states and data editor for this tier
+                for k in list(st.session_state.keys()):
+                    if f"{selected_dso_company}_{selected_tier}" in k or "dso_base_fee" in k or "dso_p_contract" in k or "dso_rate_" in k:
+                        del st.session_state[k]
+                st.rerun()
 
-        c1, c2 = st.columns(2)
-        with c1:
-            curr_options = ["EUR", "USD", "GBP", "CHF", "ARS"]
-            currency = st.selectbox(
-                "Currency:",
-                options=curr_options,
-                index=0,
-                key=f"{key_prefix}_dso_currency"
-            )
-            # Default monthly standing charges = (aansluitdienst + vastrecht) / 12
-            ann_standing_default = float(preset_data.get("aansluitdienst_annual", 1653.0) + preset_data.get("vastrecht_annual", 441.0))
-            monthly_standing_default = round(ann_standing_default / 12.0, 2)
-            base_fee = st.number_input(
-                "Base Monthly Fee (Cargo Comercialización):",
-                min_value=0.0,
-                value=monthly_standing_default,
-                step=5.0,
-                format="%.2f",
-                key=f"{key_prefix}_dso_base_fee_{selected_dso_company}_{selected_tier}",
-                help="Fixed monthly standing charges (Vastrecht + Aansluitdienst maandbedrag)"
-            )
-            contracted_kw = st.number_input(
-                "Contracted Active Capacity (kW - Potencia Contratada):",
-                min_value=10.0,
-                max_value=20000.0,
-                value=float(max(50.0, round(load_series.peak_demand_kw * 1.05, 0))),
-                step=10.0,
-                format="%.1f",
-                key=f"{key_prefix}_dso_p_contract",
-                help="Gecontracteerd transportvermogen in kW"
+        with r_col2:
+            always_reload = st.checkbox(
+                ":material/sync: Always reload catalog defaults on tier switch",
+                value=always_reload,
+                key=state_always_reload_key,
+                help="When enabled, switching tiers or companies automatically discards custom edits and reloads original catalog defaults."
             )
 
-        with c2:
-            capacity_tariff = st.number_input(
-                "Contracted Capacity Tariff (/kW/month - Uso de Red):",
-                min_value=0.0,
-                value=float(preset_data.get("rate_contracted_monthly", 2.4400)),
-                step=0.01,
-                format="%.4f",
-                key=f"{key_prefix}_dso_rate_cap_{selected_dso_company}_{selected_tier}",
-                help="Capaciteitstarief per kW gecontracteerd vermogen per maand"
-            )
-            demand_tariff = st.number_input(
-                "Measured Demand Tariff (/kW/month - Consumo de Potencia):",
-                min_value=0.0,
-                value=float(preset_data.get("rate_peak_monthly", 3.7100)),
-                step=0.01,
-                format="%.4f",
-                key=f"{key_prefix}_dso_rate_peak_{selected_dso_company}_{selected_tier}",
-                help="Piekvermogenstarief per kW maandelijks gemeten maximum vermogen"
-            )
-            max_physical_kw = st.number_input(
-                "Max Physical Limit (kW):",
-                min_value=10.0,
-                value=float(preset_data.get("max_physical_limit_kw", 1000.0)),
-                step=50.0,
-                format="%.1f",
-                key=f"{key_prefix}_dso_max_phys_{selected_dso_company}_{selected_tier}",
-                help="Fysieke aansluitcapaciteit van de transformator (kVA / kW limit)"
-            )
-            penalty_rate = st.number_input(
-                "Peak Penalty Rate (/kW - Exceso de Potencia):",
-                min_value=0.0,
-                value=float(preset_data.get("peak_penalty_rate_kw", 0.2500)),
-                step=0.05,
-                format="%.4f",
-                key=f"{key_prefix}_dso_penalty_{selected_dso_company}_{selected_tier}",
-                help="Tarief bij contractoverschrijding per kW boven gecontracteerd vermogen"
+        # Dynamic session state key for DSO TOU rates matrix
+        state_dso_tou_key = f"{key_prefix}_dso_tou_df_{selected_dso_company}_{selected_tier}_v{form_version}"
+        if state_dso_tou_key not in st.session_state or always_reload:
+            default_peak = float(preset_data.get("rate_peak_kwh", 0.0250))
+            default_offpeak = float(preset_data.get("rate_offpeak_kwh", 0.0250))
+            st.session_state[state_dso_tou_key] = pd.DataFrame([
+                {"name": "Daytime / Working Hours (kWh hoch)", "rate": default_peak, "start_time": "07:00", "end_time": "23:00"},
+                {"name": "Night & Weekend / Off-Peak (kWh niedrig)", "rate": default_offpeak, "start_time": "23:00", "end_time": "07:00"}
+            ])
+
+        with st.form(key=f"{key_prefix}_dso_contract_form_{selected_dso_company}_{selected_tier}_v{form_version}"):
+            # ==============================================================================
+            # 1. Grid Capacity & Fixed Fees
+            # ==============================================================================
+            st.subheader("1. Grid Capacity & Fixed Fees")
+
+            dso_contract_name_default = f"{selected_dso_company} - {selected_tier} (2025)"
+            contract_name_val = st.text_input(
+                "Contract Name / Identifier:",
+                value=dso_contract_name_default,
+                key=f"{key_prefix}_dso_name_val_{selected_dso_company}_{selected_tier}_v{form_version}",
+                help="Custom name or tariff identifier for the regulated grid operator contract."
             )
 
-        # ==============================================================================
-        # 2. Reactive Power Parameters
-        # ==============================================================================
-        st.subheader("2. Reactive Power Parameters")
-        q1, q2, q3 = st.columns(3)
-        with q1:
-            reactive_tariff = st.number_input(
-                "Reactive Energy Tariff (/kVARh):",
-                min_value=0.0,
-                value=float(preset_data.get("reactive_tariff", 0.0188)),
-                step=0.005,
-                format="%.4f",
-                key=f"{key_prefix}_dso_reactive_{selected_dso_company}_{selected_tier}",
-                help="Blindvermogenstarief per kVARh buiten toegestane arbeidsfactor"
-            )
-        with q2:
-            min_cos_phi = st.number_input(
-                "Min Power Factor (cos phi):",
-                min_value=0.50,
-                max_value=1.00,
-                value=float(preset_data.get("min_power_factor", 0.90)),
-                step=0.02,
-                format="%.2f",
-                key=f"{key_prefix}_dso_cosphi_{selected_dso_company}_{selected_tier}",
-                help="Minimale arbeidsfactor cos phi zonder blindvermogenstoeslag"
-            )
-        with q3:
-            reactive_allowance = st.number_input(
-                "Reactive Allowance (% of kWh):",
-                min_value=0.0,
-                max_value=100.0,
-                value=float(preset_data.get("reactive_allowance_pct", 33.0)),
-                step=1.0,
-                format="%.1f",
-                key=f"{key_prefix}_dso_q_allow_{selected_dso_company}_{selected_tier}",
-                help="Toegestane vrije hoeveelheid reactieve energie als percentage van werkelijk verbruik"
+            c1, c2 = st.columns(2)
+            with c1:
+                curr_options = ["EUR", "USD", "GBP", "CHF", "ARS"]
+                currency = st.selectbox(
+                    "Currency:",
+                    options=curr_options,
+                    index=0,
+                    key=f"{key_prefix}_dso_currency_v{form_version}"
+                )
+                # Fixed monthly transport standing charge = vastrecht / 12 (connection fee aansluitdienst omitted for now)
+                ann_standing_default = float(preset_data.get("vastrecht_annual", 441.0))
+                monthly_standing_default = round(ann_standing_default / 12.0, 2)
+                base_fee = st.number_input(
+                    "Fixed Monthly Grid Fee (€/month):",
+                    min_value=0.0,
+                    value=monthly_standing_default,
+                    step=5.0,
+                    format="%.2f",
+                    key=f"{key_prefix}_dso_base_fee_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Fixed standing charge for grid access (Festgebühr Transport / Vastrecht €/month)"
+                )
+                contracted_kw = st.number_input(
+                    "Reserved Grid Capacity (kW):",
+                    min_value=10.0,
+                    max_value=20000.0,
+                    value=float(max(50.0, round(load_series.peak_demand_kw * 1.05, 0))),
+                    step=10.0,
+                    format="%.1f",
+                    key=f"{key_prefix}_dso_p_contract_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Power reserved on the grid for your facility (kW-Vertrag / Gecontracteerd vermogen in kW)"
+                )
+
+            with c2:
+                capacity_tariff = st.number_input(
+                    "Reserved Capacity Rate (€/kW/month):",
+                    min_value=0.0,
+                    value=float(preset_data.get("rate_contracted_monthly", 2.4400)),
+                    step=0.01,
+                    format="%.4f",
+                    key=f"{key_prefix}_dso_rate_cap_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Monthly fee billed per reserved kW (kW-Vertrag Tarif / Capaciteitstarief)"
+                )
+                demand_tariff = st.number_input(
+                    "Monthly Peak Demand Rate (€/kW/month):",
+                    min_value=0.0,
+                    value=float(preset_data.get("rate_peak_monthly", 3.7100)),
+                    step=0.01,
+                    format="%.4f",
+                    key=f"{key_prefix}_dso_rate_peak_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Monthly fee billed per measured 15-minute maximum peak (kW max. pro Monat / Piekvermogen)"
+                )
+                max_physical_kw = st.number_input(
+                    "Physical Transformer Limit (kW):",
+                    min_value=10.0,
+                    value=float(preset_data.get("max_physical_limit_kw", 1000.0)),
+                    step=50.0,
+                    format="%.1f",
+                    key=f"{key_prefix}_dso_max_phys_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Maximum physical electrical limit of your transformer or main connection"
+                )
+                penalty_rate = st.number_input(
+                    "Capacity Exceedance Penalty (€/kW):",
+                    min_value=0.0,
+                    value=float(preset_data.get("peak_penalty_rate_kw", 0.2500)),
+                    step=0.05,
+                    format="%.4f",
+                    key=f"{key_prefix}_dso_penalty_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Penalty fee charged when monthly peak demand exceeds reserved grid capacity"
+                )
+
+            # ==============================================================================
+            # 2. Reactive Power & Power Factor (Blindenergie)
+            # ==============================================================================
+            st.subheader("2. Reactive Power & Power Factor (Blindenergie)")
+            q1, q2, q3 = st.columns(3)
+            with q1:
+                reactive_tariff = st.number_input(
+                    "Reactive Power Rate (€/kVARh):",
+                    min_value=0.0,
+                    value=float(preset_data.get("reactive_tariff", 0.0188)),
+                    step=0.005,
+                    format="%.4f",
+                    key=f"{key_prefix}_dso_reactive_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Tariff for consumed reactive energy (Blindenergie €/kVARh)"
+                )
+            with q2:
+                min_cos_phi = st.number_input(
+                    "Target Power Factor (cos φ):",
+                    min_value=0.50,
+                    max_value=1.00,
+                    value=float(preset_data.get("min_power_factor", 0.90)),
+                    step=0.02,
+                    format="%.2f",
+                    key=f"{key_prefix}_dso_cosphi_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Minimum required power factor (cos φ = 0.90) to avoid reactive charges"
+                )
+            with q3:
+                reactive_allowance = st.number_input(
+                    "Free Reactive Energy Allowance (% of kWh):",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(preset_data.get("reactive_allowance_pct", 33.0)),
+                    step=1.0,
+                    format="%.1f",
+                    key=f"{key_prefix}_dso_q_allow_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Permitted free reactive energy as a percentage of active consumption (33%)"
+                )
+
+            # ==============================================================================
+            # 3. Time-of-Use Electricity Rates (Working Hours vs. Off-Peak)
+            # ==============================================================================
+            st.subheader("3. Time-of-Use Electricity Rates (Working Hours vs. Off-Peak)")
+            st.caption("Define Time-of-Use rate windows. The table supports adding and deleting rows:")
+
+            edited_dso_tou = st.data_editor(
+                st.session_state[state_dso_tou_key],
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "name": st.column_config.TextColumn("Tariff Name", required=True),
+                    "rate": st.column_config.NumberColumn(
+                        f"Rate ({currency}/kWh)",
+                        format="%.4f",
+                        min_value=0.0,
+                        step=0.0001,
+                        required=True
+                    ),
+                    "start_time": st.column_config.TextColumn("Start Time (HH:MM)", required=True),
+                    "end_time": st.column_config.TextColumn("End Time (HH:MM)", required=True)
+                },
+                key=f"{key_prefix}_dso_tou_editor_{selected_dso_company}_{selected_tier}_v{form_version}"
             )
 
-        # ==============================================================================
-        # 3. Time-of-Use (TOU) Energy Rates
-        # ==============================================================================
-        st.subheader("3. Time-of-Use (TOU) Energy Rates")
-        st.caption("Define Time-of-Use rate windows for network transport services:")
-
-        t1, t2 = st.columns(2)
-        with t1:
-            trans_norm_kwh = st.number_input(
-                "High Tariff Rate HT / Normaal (€/kWh):",
-                min_value=0.0,
-                value=float(preset_data.get("rate_peak_kwh", 0.0250)),
-                step=0.001,
-                format="%.4f",
-                key=f"{key_prefix}_dso_trans_ht_{selected_dso_company}_{selected_tier}",
-                help="Transporttarief normaalvenster (werkdagen 07:00 - 23:00)"
-            )
-        with t2:
-            trans_off_kwh = st.number_input(
-                "Off-Peak Rate NT / Dal (€/kWh):",
-                min_value=0.0,
-                value=float(preset_data.get("rate_offpeak_kwh", 0.0250)),
-                step=0.001,
-                format="%.4f",
-                key=f"{key_prefix}_dso_trans_nt_{selected_dso_company}_{selected_tier}",
-                help="Transporttarief dalvenster (nachten en weekenden)"
+            weekend_off_peak = st.checkbox(
+                "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
+                value=True,
+                key=f"{key_prefix}_dso_weekend_offpeak",
+                help="Pas gedurende het gehele weekend het daltarief toe"
             )
 
-        weekend_off_peak = st.checkbox(
-            "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
-            value=True,
-            key=f"{key_prefix}_dso_weekend_offpeak",
-            help="Pas gedurende het gehele weekend het daltarief toe"
-        )
+            adjust_breach = st.checkbox(
+                ":material/shield: Adjust capacity billing to actual peak during breach months (Dutch standard rule)",
+                value=True,
+                key=f"{key_prefix}_dso_adjust_breach",
+                help="Bij overschrijding van het gecontracteerde vermogen wordt de capaciteitsvergoeding in de desbetreffende maand berekend op basis van de werkelijke piek."
+            )
 
-        adjust_breach = st.checkbox(
-            ":material/shield: Adjust capacity billing to actual peak during breach months (Dutch standard rule)",
-            value=True,
-            key=f"{key_prefix}_dso_adjust_breach",
-            help="Bij overschrijding van het gecontracteerde vermogen wordt de capaciteitsvergoeding in de desbetreffende maand berekend op basis van de werkelijke piek."
-        )
+            submitted_dso = st.form_submit_button(
+                "Save Contract Configuration",
+                icon=":material/save:",
+                type="primary",
+                use_container_width=True
+            )
 
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        if st.button("Save Contract Configuration", icon=":material/save:", type="primary", use_container_width=True, key=f"{key_prefix}_save_dso_btn"):
-            st.success(f"Grid Operator configuration saved: **{contract_name_val}**")
+        if submitted_dso:
+            if edited_dso_tou is not None and not edited_dso_tou.empty:
+                st.session_state[state_dso_tou_key] = edited_dso_tou
+            st.success(f"Grid Operator configuration saved: **{contract_name_val}**", icon=":material/check_circle:")
+
+        # Extract active peak & offpeak rates from the TOU matrix for calculation pipeline
+        active_tou_df = st.session_state[state_dso_tou_key]
+        trans_norm_kwh = float(preset_data.get("rate_peak_kwh", 0.0250))
+        trans_off_kwh = float(preset_data.get("rate_offpeak_kwh", 0.0250))
+        if active_tou_df is not None and not active_tou_df.empty:
+            rows = active_tou_df.to_dict(orient="records")
+            for r in rows:
+                r_name = str(r.get("name", "")).lower()
+                r_rate = float(r.get("rate", trans_norm_kwh))
+                if any(k in r_name for k in ["high", "normaal", "peak", "ht", "hoch", "daytime", "working"]):
+                    trans_norm_kwh = r_rate
+                elif any(k in r_name for k in ["off", "dal", "laag", "nt", "niedrig", "night", "weekend"]):
+                    trans_off_kwh = r_rate
 
     # ----------------------------------------------------------------------------------
     # Sub-Tab 2: Energy Retailer (Supplier)
@@ -646,62 +707,14 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
     st.markdown("---")
 
-    # ----------------------------------------------------------------------------------
-    # 2. Prominent Time-of-Use (TOU) Segment Visualizer & Inspection
-    # ----------------------------------------------------------------------------------
-    st.markdown("### :material/schedule: Time-of-Use (TOU) Segments & Diurnal Energy Split")
 
-    # Compute exact TOU consumption volumes
-    ht_mask = load_series.is_peak_tou
-    nt_mask = ~ht_mask
-    ht_kwh = float(np.sum(load_series.energy_kwh[ht_mask]))
-    nt_kwh = float(np.sum(load_series.energy_kwh[nt_mask]))
-    tot_kwh = ht_kwh + nt_kwh
-    ht_pct = (ht_kwh / tot_kwh * 100.0) if tot_kwh > 0 else 0.0
-    nt_pct = (nt_kwh / tot_kwh * 100.0) if tot_kwh > 0 else 0.0
-    ht_peak = float(np.max(load_series.power_kw[ht_mask])) if np.any(ht_mask) else 0.0
-    nt_peak = float(np.max(load_series.power_kw[nt_mask])) if np.any(nt_mask) else 0.0
-
-    col_tou1, col_tou2, col_tou3 = st.columns(3)
-    with col_tou1:
-        render_kpi_card(
-            title=":material/light_mode: High Tariff (HT / Normaal)",
-            value=f"{ht_kwh:,.1f} kWh",
-            subtext=f"Share: {ht_pct:.1f}% | Peak: {ht_peak:.1f} kW",
-            status="default"
-        )
-    with col_tou2:
-        render_kpi_card(
-            title=":material/dark_mode: Off-Peak (NT / Dal / Laag)",
-            value=f"{nt_kwh:,.1f} kWh",
-            subtext=f"Share: {nt_pct:.1f}% | Peak: {nt_peak:.1f} kW",
-            status="default"
-        )
-    with col_tou3:
-        render_kpi_card(
-            title=":material/event: Active TOU Window Schedule",
-            value="Mo-Fr 07:00 - 23:00",
-            subtext="Off-Peak: Nights (23:00-07:00) & Weekends (24h)",
-            status="ok"
-        )
-
-    # Interactive 24-hour diurnal profile chart with shaded TOU bands
-    tou_fig = create_tou_schedule_diurnal_figure(load_series, ht_start_hour=7, ht_end_hour=23)
-    st.plotly_chart(tou_fig, use_container_width=True)
-
-    st.markdown("---")
 
     # ----------------------------------------------------------------------------------
     # 3. Assemble Configuration & Execute 5-Layer 2025 Accounting
     # ----------------------------------------------------------------------------------
-    # Decompose monthly base fee into fixed connection and transport
-    preset_conn_ann = float(preset_data.get("aansluitdienst_annual", 0.0))
-    preset_vast_ann = float(preset_data.get("vastrecht_annual", 0.0))
-    tot_preset_ann = preset_conn_ann + preset_vast_ann
-    ratio_conn = (preset_conn_ann / tot_preset_ann) if tot_preset_ann > 0 else 0.79
-    total_base_ann = base_fee * 12.0
-    fixed_conn = total_base_ann * ratio_conn
-    fixed_trans = total_base_ann * (1.0 - ratio_conn)
+    # Connection fee is omitted for now (set to € 0.00); entire monthly fee represents fixed transport standing charge (Vastrecht)
+    fixed_conn = 0.0
+    fixed_trans = base_fee * 12.0
 
     dso_tariff = DSOTariff(
         dso_name=selected_dso_company,
@@ -858,19 +871,15 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             )
 
     # ----------------------------------------------------------------------------------
-    # 5. 14-Criteria / 4-Point Audit Expander
+    # 5. Operational Alerts & Breach Status
     # ----------------------------------------------------------------------------------
-    audit_icon = ":material/verified:" if audit_report.passed_all else ":material/error:"
-    audit_title = f"{audit_icon} Verification Protocol: {audit_report.passed_criteria_count}/{audit_report.total_criteria_count} Checks Passed"
-    with st.expander(audit_title, expanded=not audit_report.passed_all):
-        st.markdown(audit_report.to_markdown(), unsafe_allow_html=True)
-        if result.has_capacity_breach:
-            st.warning(
-                f":material/warning: Capacity Breach Detected: Recorded maximum peak in month(s) "
-                f"{result.breach_months} exceeded contracted capacity limit ({contracted_kw:.1f} kW). "
-                f"Capacity fee was billed on actual measured peak for these months under Dutch tariff rules.",
-                icon=":material/warning:"
-            )
+    if result.has_capacity_breach:
+        st.warning(
+            f":material/warning: **Capacity Breach Detected**: Recorded peak in month(s) "
+            f"{result.breach_months} exceeded reserved grid capacity ({contracted_kw:.1f} kW). "
+            f"Under Dutch grid regulation, capacity fee was adjusted to the actual measured peak for those months.",
+            icon=":material/warning:"
+        )
 
     st.markdown("---")
 
@@ -920,20 +929,124 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     st.dataframe(df_table, use_container_width=True, hide_index=True)
 
     # ----------------------------------------------------------------------------------
-    # 8. Export Toolbar (CSV & JSON)
+    # 8. 15-Year Long-Term Cost Structure & Lifecycle Forecast
     # ----------------------------------------------------------------------------------
-    col_exp1, col_exp2, col_exp3 = st.columns(3)
+    st.markdown("---")
+    st.markdown("### :material/trending_up: 15-Year Long-Term Cost Structure & Lifecycle Projection (2025 – 2039)")
+    st.caption(
+        "Comprehensive 15-year lifecycle forecast consolidating **all 4 cost pillars** (Regulated DSO Grid, "
+        "Energy Supplier Commodity, Certified Metering, and Statutory Taxes) assuming "
+        f"{active_config.energy_escalation_pct:.1f}% annual inflation and discounted at "
+        f"{active_config.discount_rate_pct:.1f}% WACC."
+    )
+
+    horizon_years = int(getattr(active_config, "evaluation_horizon_years", 15))
+    g_rate = float(getattr(active_config, "energy_escalation_pct", 3.0)) / 100.0
+    r_rate = float(getattr(active_config, "discount_rate_pct", 5.0)) / 100.0
+    start_calendar_year = 2025
+
+    base_dso = float(result.total_dso_net)
+    base_supp = float(result.total_supplier_net)
+    base_meter_taxes = float(result.total_metering_net) + float(result.total_levies_net)
+    base_kwh = float(result.total_consumption_kwh)
+
+    tco_15_rows = []
+    cum_nominal_spend = 0.0
+    for i in range(horizon_years):
+        esc_factor = (1.0 + g_rate) ** i
+        disc_factor = 1.0 / ((1.0 + r_rate) ** (i + 1))
+
+        dso_y = round(base_dso * esc_factor, 2)
+        supp_y = round(base_supp * esc_factor, 2)
+        met_y = round(base_meter_taxes * esc_factor, 2)
+        tot_y = round(dso_y + supp_y + met_y, 2)
+        cum_nominal_spend += tot_y
+        pv_y = round(tot_y * disc_factor, 2)
+        blended_y = round((tot_y / base_kwh), 4) if base_kwh > 0 else 0.0
+
+        tco_15_rows.append({
+            "Period": f"Year {i + 1}",
+            "Calendar Year": start_calendar_year + i,
+            "DSO Grid (€)": dso_y,
+            "Supplier (€)": supp_y,
+            "Metering & Taxes (€)": met_y,
+            "Annual Net Spend (€)": tot_y,
+            "Cumulative Spend (€)": round(cum_nominal_spend, 2),
+            "Discount Factor": round(disc_factor, 4),
+            "Present Value (€)": pv_y,
+            "Blended Rate (€/kWh)": blended_y,
+        })
+
+    df_tco_15 = pd.DataFrame(tco_15_rows)
+    total_15y_nominal = round(cum_nominal_spend, 2)
+    avg_annual_spend = round(total_15y_nominal / horizon_years, 2)
+    yr15_spend = tco_15_rows[-1]["Annual Net Spend (€)"] if tco_15_rows else 0.0
+
+    col_tco_kpi1, col_tco_kpi2, col_tco_kpi3, col_tco_kpi4 = st.columns(4)
+    with col_tco_kpi1:
+        render_kpi_card(
+            title=":material/payments: 15-Year Spend (Nominal)",
+            value=f"€ {total_15y_nominal:,.2f}",
+            subtext=f"Total cash outlay across {horizon_years} years (+{active_config.energy_escalation_pct:.1f}%/yr)",
+            status="default"
+        )
+    with col_tco_kpi2:
+        render_kpi_card(
+            title=":material/savings: 15-Year TCO (NPV)",
+            value=f"€ {result.tco_15_npv:,.2f}",
+            subtext=f"Discounted present value today @ {active_config.discount_rate_pct:.1f}% WACC",
+            status="default"
+        )
+    with col_tco_kpi3:
+        render_kpi_card(
+            title=":material/analytics: Average Annual Spend",
+            value=f"€ {avg_annual_spend:,.2f}",
+            subtext="Mean annual consolidated electricity budget",
+            status="default"
+        )
+    with col_tco_kpi4:
+        render_kpi_card(
+            title=":material/event: Projected Year 15 Cost",
+            value=f"€ {yr15_spend:,.2f}",
+            subtext=f"Compounded budget in {start_calendar_year + horizon_years - 1}",
+            status="default"
+        )
+
+    # Render interactive 15-Year Stacked Figure
+    fig_15y = create_15_year_lifecycle_cost_figure(result, start_year=start_calendar_year)
+    st.plotly_chart(fig_15y, use_container_width=True)
+
+    # Itemized 15-Year Cashflow Table
+    st.markdown("##### :material/table_rows: 15-Year Annual Financial Schedule")
+    st.dataframe(df_tco_15, use_container_width=True, hide_index=True)
+
+    # ----------------------------------------------------------------------------------
+    # 9. Export Toolbar (CSV & JSON)
+    # ----------------------------------------------------------------------------------
+    col_exp1, col_exp2, col_exp3, col_exp4 = st.columns(4)
     with col_exp1:
         csv_buf = io.StringIO()
         df_table.to_csv(csv_buf, index=False, sep=";")
         st.download_button(
-            label=":material/download: Export 12-Month Statement (CSV)",
+            label=":material/download: 12-Month CSV",
             data=csv_buf.getvalue(),
             file_name="status_quo_2025_statement.csv",
             mime="text/csv",
-            key=f"{key_prefix}_export_csv"
+            key=f"{key_prefix}_export_csv",
+            use_container_width=True
         )
     with col_exp2:
+        csv_15y_buf = io.StringIO()
+        df_tco_15.to_csv(csv_15y_buf, index=False, sep=";")
+        st.download_button(
+            label=":material/download: 15-Year TCO CSV",
+            data=csv_15y_buf.getvalue(),
+            file_name="status_quo_15_year_lifecycle_projection.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_export_15y_csv",
+            use_container_width=True
+        )
+    with col_exp3:
         export_payload = {
             "evaluation_year": 2025,
             "total_consumption_kwh": result.total_consumption_kwh,
@@ -941,18 +1054,20 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             "total_status_quo_gross": result.total_status_quo_gross,
             "blended_price_net_kwh": result.blended_price_net_kwh,
             "tco_15_npv": result.tco_15_npv,
-            "audit_passed_all": audit_report.passed_all,
-            "monthly_records": table_data
+            "total_15_year_nominal_spend": total_15y_nominal,
+            "monthly_records": table_data,
+            "lifecycle_15_year_schedule": tco_15_rows
         }
         json_str = json.dumps(export_payload, indent=2)
         st.download_button(
-            label=":material/download: Export Accounting Audit (JSON)",
+            label=":material/download: Audit JSON",
             data=json_str,
             file_name="status_quo_2025_audit.json",
             mime="application/json",
-            key=f"{key_prefix}_export_json"
+            key=f"{key_prefix}_export_json",
+            use_container_width=True
         )
-    with col_exp3:
+    with col_exp4:
         contract_payload = {
             "version": "2025.1",
             "dso": active_config.dso.to_dict(),
@@ -966,11 +1081,12 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             }
         }
         st.download_button(
-            label=":material/save: Export Contract Terms (JSON)",
+            label=":material/save: Contract JSON",
             data=json.dumps(contract_payload, indent=2),
             file_name="unbundled_contract_2025.json",
             mime="application/json",
-            key=f"{key_prefix}_export_contract"
+            key=f"{key_prefix}_export_contract",
+            use_container_width=True
         )
 
     return result

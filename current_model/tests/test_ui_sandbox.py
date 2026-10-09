@@ -27,12 +27,36 @@ class TestUISandboxIsolation(unittest.TestCase):
         self.assertTrue(os.path.isdir(self.sandbox_dir), "ui_sandbox directory must exist")
         entrypoint = os.path.join(self.sandbox_dir, "sandbox_app.py")
         self.assertTrue(os.path.isfile(entrypoint), "ui_sandbox/sandbox_app.py must exist")
-        baseline_lab = os.path.join(self.sandbox_dir, "standalone_monthly_baseline_lab.py")
-        self.assertTrue(os.path.isfile(baseline_lab), "ui_sandbox/standalone_monthly_baseline_lab.py must exist")
+
+        # 1. Current Situation Lab (improved financial architecture)
         currsit_dir = os.path.join(self.sandbox_dir, "Currentsituation_sandbox")
         self.assertTrue(os.path.isdir(currsit_dir), "ui_sandbox/Currentsituation_sandbox directory must exist")
         currsit_app = os.path.join(currsit_dir, "app.py")
         self.assertTrue(os.path.isfile(currsit_app), "ui_sandbox/Currentsituation_sandbox/app.py must exist")
+
+        # 2. Status Quo 2025 Lab
+        sq2025_dir = os.path.join(self.sandbox_dir, "status_quo_2025")
+        self.assertTrue(os.path.isdir(sq2025_dir), "ui_sandbox/status_quo_2025 directory must exist")
+        sq2025_lab = os.path.join(sq2025_dir, "status_quo_lab.py")
+        self.assertTrue(os.path.isfile(sq2025_lab), "ui_sandbox/status_quo_2025/status_quo_lab.py must exist")
+
+        # 3. Monthly Baseline Lab
+        monthly_dir = os.path.join(self.sandbox_dir, "monthly_baseline_lab")
+        self.assertTrue(os.path.isdir(monthly_dir), "ui_sandbox/monthly_baseline_lab directory must exist")
+        monthly_app = os.path.join(monthly_dir, "standalone_monthly_baseline_lab.py")
+        self.assertTrue(os.path.isfile(monthly_app), "monthly_baseline_lab/standalone_monthly_baseline_lab.py must exist")
+
+        # 4. Three-Party Contract Lab
+        three_party_dir = os.path.join(self.sandbox_dir, "three_party_contract_lab")
+        self.assertTrue(os.path.isdir(three_party_dir), "ui_sandbox/three_party_contract_lab directory must exist")
+        three_party_app = os.path.join(three_party_dir, "minimal_contract_system.py")
+        self.assertTrue(os.path.isfile(three_party_app), "three_party_contract_lab/minimal_contract_system.py must exist")
+
+        # Backward compatibility entrypoint shims in root
+        baseline_lab_shim = os.path.join(self.sandbox_dir, "standalone_monthly_baseline_lab.py")
+        self.assertTrue(os.path.isfile(baseline_lab_shim), "ui_sandbox/standalone_monthly_baseline_lab.py shim must exist")
+        contract_shim = os.path.join(self.sandbox_dir, "minimal_contract_system.py")
+        self.assertTrue(os.path.isfile(contract_shim), "ui_sandbox/minimal_contract_system.py shim must exist")
 
     def test_production_codebase_never_imports_ui_sandbox(self):
         """Strict architectural guard: Main app, core, models, and ui must NEVER import ui_sandbox."""

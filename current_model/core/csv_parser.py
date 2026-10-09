@@ -250,19 +250,25 @@ def detect_suggested_columns(df: pd.DataFrame) -> Tuple[List[str], List[str], st
     return time_cols, power_cols, suggested_unit
 
 
-def generate_sample_demo_csv(days: int = 7) -> Tuple[str, str]:
+def generate_sample_demo_csv(days: int = 365) -> Tuple[str, str]:
     """
     Synthesizes a multi-channel commercial load profile CSV with explicit meter names
     (HVAC, Production, EV Charging, Lighting) measured directly in kW.
+    By default synthesizes the entire reference year 2025 (365 days = 35,040 intervals @ 15 min).
     Returns (filename, csv_text_content).
     """
     periods = 96 * days
     dates = pd.date_range(start="2025-01-01 00:00", periods=periods, freq="15min")
     hours = dates.hour
+    months = dates.month
     workdays = dates.dayofweek < 5
 
-    # 1. HVAC & Ventilation (kW): Active during workday hours (06:00 to 20:00)
-    hvac_kw = np.where(workdays & (hours >= 6) & (hours <= 20), 25.0, 5.0)
+    # Seasonal modulation factors for 2025
+    # Summer cooling peak (Jun-Aug) and winter heating/ventilation peak (Jan-Feb, Nov-Dec)
+    season_factor = 1.0 + 0.25 * np.cos(2 * np.pi * (months - 7) / 12)
+
+    # 1. HVAC & Ventilation (kW): Active during workday hours (06:00 to 20:00) with seasonal swing
+    hvac_kw = np.where(workdays & (hours >= 6) & (hours <= 20), 25.0 * season_factor, 5.0 * season_factor)
     hvac_kw = np.round(np.clip(hvac_kw + np.random.normal(0, 1.5, len(hvac_kw)), 2.0, None), 1)
 
     # 2. Main Production Line (kW): High daytime operational load (07:30 to 17:00)
@@ -270,12 +276,13 @@ def generate_sample_demo_csv(days: int = 7) -> Tuple[str, str]:
     prod_kw = np.round(np.clip(prod_kw + np.random.normal(0, 3.0, len(prod_kw)), 0.0, None), 1)
 
     # 3. EV Charging Hub (kW): Morning and late afternoon charging peaks
-    ev_peak = (hours >= 8) & (hours <= 10) | (hours >= 16) & (hours <= 18)
+    ev_peak = ((hours >= 8) & (hours <= 10)) | ((hours >= 16) & (hours <= 18))
     ev_kw = np.where(workdays & ev_peak, 35.0, 0.0)
     ev_kw = np.round(np.clip(ev_kw + np.random.normal(0, 2.5, len(ev_kw)), 0.0, None), 1)
 
-    # 4. Lighting & Standby Baseload (kW): Continuous baseload
-    light_kw = np.where((hours >= 6) & (hours <= 22), 12.0, 4.0)
+    # 4. Lighting & Standby Baseload (kW): Continuous baseload, longer lighting in winter
+    winter_lighting = np.where((months <= 3) | (months >= 10), 1.2, 0.9)
+    light_kw = np.where((hours >= 6) & (hours <= 22), 12.0 * winter_lighting, 4.0)
     light_kw = np.round(np.clip(light_kw + np.random.normal(0, 0.5, len(light_kw)), 2.0, None), 1)
 
     demo_df = pd.DataFrame({
@@ -289,4 +296,4 @@ def generate_sample_demo_csv(days: int = 7) -> Tuple[str, str]:
 
     buf = StringIO()
     demo_df.to_csv(buf, index=False, sep=";")
-    return "Sample_Commercial_MultiMeter_kW.csv", buf.getvalue()
+    return "Sample_Commercial_MultiMeter_2025_FullYear.csv", buf.getvalue()

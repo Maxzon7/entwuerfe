@@ -45,7 +45,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             except Exception as e:
                 st.error(f"Error reading {f.name}: {e}")
     elif is_demo:
-        demo_name, demo_content = generate_sample_demo_csv(days=14)
+        demo_name, demo_content = generate_sample_demo_csv(days=365)
         files_to_process = [(demo_name, demo_content)]
 
     if not files_to_process:

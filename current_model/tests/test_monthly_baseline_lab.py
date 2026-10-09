@@ -29,7 +29,7 @@ for path in [WORKSPACE_ROOT, CURRENT_MODEL_DIR]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from current_model.ui_sandbox.standalone_monthly_baseline_lab import (
+from current_model.ui_sandbox.monthly_baseline_lab import (
     get_salentein_pozo600_preset,
     get_3tier_argentine_preset,
     get_netherlands_commercial_preset,
