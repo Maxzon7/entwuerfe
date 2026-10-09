@@ -444,7 +444,8 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     with actor_tabs[1]:
         st.markdown("##### Commercial Energy Supply Contract (Commodity Rates & Retail Pricing)")
 
-        col_supp_co, col_supp_prod = st.columns([1.5, 2.5])
+        # Row 1: Provider & Product Selector (Symmetrical 50% / 50%)
+        col_supp_co, col_supp_prod = st.columns(2)
         with col_supp_co:
             supplier_options = list(SUPPLIER_CATALOG_2025.keys()) + ["Custom Energy Retailer"]
             selected_supplier_name = st.selectbox(
@@ -481,123 +482,189 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 }
                 st.caption(":material/tune: *Custom energy retailer contract parameters.*")
 
-        col_smode, col_sbase = st.columns([2.5, 1.5])
-        with col_smode:
-            default_mode = prod_data.get("pricing_mode", PricingMode.FIXED)
-            mode_idx = 0 if default_mode == PricingMode.DYNAMIC else (1 if default_mode == PricingMode.FIXED else 2)
-            selected_pricing_mode_str = st.radio(
-                "Supplier Pricing Mechanism:",
-                options=[
-                    ":material/show_chart: Dynamic Spot (EPEX Spot NL 2025)",
-                    ":material/lock: Fixed All-In Rate",
-                    ":material/calendar_month: Variable Monthly Rates"
-                ],
-                index=mode_idx,
-                horizontal=True,
-                key=f"{key_prefix}_pricing_mode_radio_{selected_supplier_name}_{selected_product}"
-            )
-            if "Dynamic" in selected_pricing_mode_str:
-                active_pricing_mode = PricingMode.DYNAMIC
-            elif "Fixed" in selected_pricing_mode_str:
-                active_pricing_mode = PricingMode.FIXED
-            else:
-                active_pricing_mode = PricingMode.VARIABLE
+        st.markdown("---")
 
-        with col_sbase:
+        # Row 2: Pricing Mechanism (Full Width) & Standing Fee / Contract Structure (50% / 50%)
+        default_mode = prod_data.get("pricing_mode", PricingMode.FIXED)
+        mode_idx = 0 if default_mode == PricingMode.DYNAMIC else (1 if default_mode == PricingMode.FIXED else 2)
+        selected_pricing_mode_str = st.radio(
+            "Supplier Pricing Mechanism:",
+            options=[
+                ":material/show_chart: Dynamic Spot (EPEX Spot NL 2025)",
+                ":material/lock: Fixed All-In Rate",
+                ":material/calendar_month: Variable Monthly Rates"
+            ],
+            index=mode_idx,
+            horizontal=True,
+            key=f"{key_prefix}_pricing_mode_radio_{selected_supplier_name}_{selected_product}"
+        )
+        if "Dynamic" in selected_pricing_mode_str:
+            active_pricing_mode = PricingMode.DYNAMIC
+        elif "Fixed" in selected_pricing_mode_str:
+            active_pricing_mode = PricingMode.FIXED
+        else:
+            active_pricing_mode = PricingMode.VARIABLE
+
+        col_s_fee, col_s_option = st.columns(2)
+        with col_s_fee:
             supp_base = st.number_input(
                 "Retailer Standing Fee (€/year):",
                 min_value=0.0,
                 value=float(prod_data.get("base_fee_annual", 180.00)),
                 step=15.0,
                 key=f"{key_prefix}_supp_base_{selected_supplier_name}_{selected_product}",
-                help="Vastrecht levering per jaar excl. btw"
+                help="Fixed annual standing fee (Vastrecht levering per jaar excl. btw)."
             )
 
-        st.markdown("---")
+        with col_s_option:
+            if active_pricing_mode == PricingMode.FIXED:
+                is_dual_rate = st.checkbox(
+                    ":material/contrast: Dual Rate (Dubbeltarief: HT / NT)",
+                    value=bool(prod_data.get("is_dual_rate", False)),
+                    key=f"{key_prefix}_supp_is_dual_{selected_supplier_name}_{selected_product}",
+                    help="Enable separate rates for daytime / working hours (HT) and night / weekends (NT)."
+                )
+            elif active_pricing_mode == PricingMode.DYNAMIC:
+                is_dual_rate = False
+                st.info(
+                    ":material/show_chart: **Dynamic Spot Mode:** Hourly & 15-minute settlement "
+                    "against EPEX Spot Day-Ahead wholesale market prices."
+                )
+            else:
+                is_dual_rate = False
+                st.info(
+                    ":material/calendar_month: **Variable Mode:** 12 monthly rates applied "
+                    "chronologically across the 2025 billing cycle."
+                )
 
+        # Row 3: Symmetrical 3-Column Grid for Rate Parameters (Each column contains exactly one input)
         col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
-            green_surcharge = st.number_input(
-                "Green Power Surcharge GvO (€/kWh):",
-                min_value=0.0,
-                value=float(prod_data.get("green_surcharge_kwh", 0.0)),
-                format="%.4f",
-                key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
-                help="Garantie van Oorsprong (GvO) opslag voor 100% Nederlandse groene stroom"
-            )
 
-        with col_s2:
-            if active_pricing_mode == PricingMode.DYNAMIC:
+        if active_pricing_mode == PricingMode.DYNAMIC:
+            with col_s1:
                 supp_margin = st.number_input(
                     "Supplier Retail Markup / Opslag (€/kWh):",
                     min_value=0.0,
                     value=float(prod_data.get("supplier_margin_kwh", 0.0075)),
                     format="%.4f",
                     key=f"{key_prefix}_supp_margin_{selected_supplier_name}_{selected_product}",
-                    help="Leveranciersopslag bovenop de EPEX Spot Day-Ahead uur-/kwartierprijs"
+                    help="Leveranciersopslag above the EPEX Spot Day-Ahead wholesale price."
                 )
+            with col_s2:
                 procure_fee = st.number_input(
                     "Procurement Fee (€/kWh):",
                     min_value=0.0,
                     value=float(prod_data.get("procurement_fee_kwh", 0.0015)),
                     format="%.4f",
                     key=f"{key_prefix}_supp_procure_{selected_supplier_name}_{selected_product}",
-                    help="Vaste inkoopvergoeding per kWh"
+                    help="Fixed procurement handling fee (Inkoopvergoeding per kWh)."
                 )
-                is_dual_rate = False
-                fixed_rate_val = 0.1250
-                fixed_rate_ht = 0.1340
-                fixed_rate_nt = 0.1180
-            elif active_pricing_mode == PricingMode.FIXED:
-                is_dual_rate = st.checkbox(
-                    ":material/contrast: Dual Rate (Dubbeltarief: HT / NT)",
-                    value=bool(prod_data.get("is_dual_rate", False)),
-                    key=f"{key_prefix}_supp_is_dual_{selected_supplier_name}_{selected_product}",
-                    help="Vink aan voor afzonderlijke tarieven voor piekuren (normaaltarief) en daluren (daltarief)."
+            with col_s3:
+                green_surcharge = st.number_input(
+                    "Green Power Surcharge GvO (€/kWh):",
+                    min_value=0.0,
+                    value=float(prod_data.get("green_surcharge_kwh", 0.0)),
+                    format="%.4f",
+                    key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
+                    help="Guarantee of Origin (GvO) surcharge for certified green power."
                 )
-                if is_dual_rate:
+
+            st.info(
+                ":material/hub: **EPEX Spot Wholesale Series Active:** Wholesale spot prices linked to "
+                "Europe/Amsterdam timezone (35,040 intervals for reference year 2025)."
+            )
+            fixed_rate_val = 0.1250
+            fixed_rate_ht = 0.1340
+            fixed_rate_nt = 0.1180
+
+        elif active_pricing_mode == PricingMode.FIXED:
+            supp_margin = 0.0
+            procure_fee = 0.0
+            if is_dual_rate:
+                with col_s1:
                     fixed_rate_ht = st.number_input(
                         "High Tariff Rate HT / Normaal (€/kWh):",
                         min_value=0.0,
                         value=float(prod_data.get("rate_peak_kwh", 0.1340)),
                         format="%.4f",
                         key=f"{key_prefix}_supp_ht_{selected_supplier_name}_{selected_product}",
-                        help="Tarief actieve energie tijdens werkdagen 07:00 - 23:00"
+                        help="Active energy rate during working weekdays (07:00 – 23:00)."
                     )
-                    fixed_rate_val = fixed_rate_ht
-                else:
+                with col_s2:
+                    fixed_rate_nt = st.number_input(
+                        "Off-Peak Rate NT / Dal (€/kWh):",
+                        min_value=0.0,
+                        value=float(prod_data.get("rate_offpeak_kwh", 0.1180)),
+                        format="%.4f",
+                        key=f"{key_prefix}_supp_nt_{selected_supplier_name}_{selected_product}",
+                        help="Active energy rate during nights (23:00 – 07:00) and weekends (24h)."
+                    )
+                with col_s3:
+                    green_surcharge = st.number_input(
+                        "Green Power Surcharge GvO (€/kWh):",
+                        min_value=0.0,
+                        value=float(prod_data.get("green_surcharge_kwh", 0.0)),
+                        format="%.4f",
+                        key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
+                        help="Guarantee of Origin (GvO) surcharge for certified green power."
+                    )
+                fixed_rate_val = fixed_rate_ht
+            else:
+                with col_s1:
                     fixed_rate_val = st.number_input(
-                        "Fixed Active Energy Rate (€/kWh):",
+                        "Uniform Active Energy Rate (€/kWh):",
                         min_value=0.0,
                         value=float(prod_data.get("fixed_rate_kwh", 0.1250)),
                         format="%.4f",
                         key=f"{key_prefix}_supp_fixed_rate_{selected_supplier_name}_{selected_product}",
-                        help="Uniforme vaste leveringsprijs per actief kilowattuur"
+                        help="Single flat commodity price applied 24/7 across all kilowatt-hours."
                     )
-                    fixed_rate_ht = fixed_rate_val
-                supp_margin = 0.0
-                procure_fee = 0.0
-            else:
-                st.caption(":material/calendar_month: *Using 12-month variable rate schedule.*")
-                is_dual_rate = False
-                fixed_rate_val = 0.1250
-                fixed_rate_ht = 0.1340
-                fixed_rate_nt = 0.1180
-                supp_margin = 0.0
-                procure_fee = 0.0
+                with col_s2:
+                    green_surcharge = st.number_input(
+                        "Green Power Surcharge GvO (€/kWh):",
+                        min_value=0.0,
+                        value=float(prod_data.get("green_surcharge_kwh", 0.0)),
+                        format="%.4f",
+                        key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
+                        help="Guarantee of Origin (GvO) surcharge for certified green power."
+                    )
+                with col_s3:
+                    st.info(
+                        f":material/check_circle: **Uniform Rate:** {fixed_rate_val:.4f} €/kWh "
+                        f"(+ {green_surcharge:.4f} €/kWh GvO) flat across all hours."
+                    )
+                fixed_rate_ht = fixed_rate_val
+                fixed_rate_nt = fixed_rate_val
 
-        with col_s3:
-            if active_pricing_mode == PricingMode.FIXED and is_dual_rate:
-                fixed_rate_nt = st.number_input(
-                    "Off-Peak Rate NT / Dal (€/kWh):",
+        else:
+            # Variable Monthly Mode
+            supp_margin = 0.0
+            procure_fee = 0.0
+            with col_s1:
+                fixed_rate_val = st.number_input(
+                    "Base Index Energy Rate (€/kWh):",
                     min_value=0.0,
-                    value=float(prod_data.get("rate_offpeak_kwh", 0.1180)),
+                    value=float(prod_data.get("fixed_rate_kwh", 0.1250)),
                     format="%.4f",
-                    key=f"{key_prefix}_supp_nt_{selected_supplier_name}_{selected_product}",
-                    help="Tarief actieve energie tijdens nachten (23:00 - 07:00) en weekenden (24h)"
+                    key=f"{key_prefix}_supp_var_rate_{selected_supplier_name}_{selected_product}",
+                    help="Baseline energy rate indexed against monthly forward quotes."
                 )
-            elif active_pricing_mode == PricingMode.DYNAMIC:
-                st.caption(":material/hub: *EPEX Spot wholesale series linked to Europe/Amsterdam timezone.*")
+            with col_s2:
+                green_surcharge = st.number_input(
+                    "Green Power Surcharge GvO (€/kWh):",
+                    min_value=0.0,
+                    value=float(prod_data.get("green_surcharge_kwh", 0.0)),
+                    format="%.4f",
+                    key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
+                    help="Guarantee of Origin (GvO) surcharge for certified green power."
+                )
+            with col_s3:
+                st.info(
+                    ":material/calendar_month: **Variable Schedule:** Predefined 12-month series "
+                    "matching historical seasonal price shifts."
+                )
+            fixed_rate_ht = fixed_rate_val
+            fixed_rate_nt = fixed_rate_val
 
     # ----------------------------------------------------------------------------------
     # Sub-Tab 3: Metering Company & Taxes

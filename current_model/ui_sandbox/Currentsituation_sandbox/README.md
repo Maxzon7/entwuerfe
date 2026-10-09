@@ -73,7 +73,16 @@ current_model/ui_sandbox/Currentsituation_sandbox/
   * **Sub-Tab 2: Energy Retailer (Energielieferant / Supplier)**:
     - Commercial suppliers: **Vattenfall Zakelijk**, **Eneco Zakelijk**, **Essent Zakelijk**, **Shell Energy**, **TotalEnergies**, **Greenchoice**, **Tibber / Dynamisch**, **Custom**.
     - Multi-tier product selector: *Fixed 1-Year (Dubbeltarief HT/NT)*, *Fixed 1-Year (Enkeltarief)*, *Fixed 3-Year (Prijszekerheid)*, *Dynamic Spot (EPEX Spot NL 2025)*, *Variable Monthly (12-mo schedule)*, *100% Dutch Green Power (GvO)*.
-    - Full support for **Dual Commodity TOU Rates**: Separate High Tariff ($E_{\text{HT}}$) and Low Tariff ($E_{\text{NT}}$) commodity prices, procurement fee (*Inkoopvergoeding*), and green power surcharge.
+    - **Automatic Pricing Mechanism Sync**: Selecting a product from the catalog automatically sets the radio mode and dual-rate toggle (e.g. *Vast 1 Jaar Dubbeltarief* immediately activates *Fixed All-In Rate* with dual HT/NT rate inputs; *Dynamisch EPEX Spot* immediately activates *Dynamic Spot*).
+    - **Symmetrical 3-Row Grid Architecture**:
+      * *Row 1 (50% / 50%)*: Retailer company and contract product dropdowns.
+      * *Row 2*: Full-width horizontal pricing mechanism selector, followed by a balanced 50% / 50% row with *Retailer Standing Fee (€/year)* and *Dual Rate Toggle / Mode Info Badge*.
+      * *Row 3 (Symmetrical 3 Columns, 1 input per column)*:
+        - **Dynamic Spot**: `[ Supplier Retail Markup / Opslag ]` | `[ Procurement Fee ]` | `[ Green Surcharge GvO ]` with full-width EPEX Spot dataset status banner.
+        - **Fixed All-In (Dual Rate)**: `[ High Tariff (HT) Rate ]` | `[ Off-Peak (NT) Rate ]` | `[ Green Surcharge GvO ]`.
+        - **Fixed All-In (Single Rate)**: `[ Uniform Active Energy Rate ]` | `[ Green Surcharge GvO ]` | `[ Uniform Rate Status Badge ]`.
+        - **Variable Monthly**: `[ Base Index Energy Rate ]` | `[ Green Surcharge GvO ]` | `[ 12-Month Schedule Info ]`.
+    - Full support for **Dual Commodity TOU Rates**: Separate High Tariff ($E_{\text{HT}}$) and Low Tariff ($E_{\text{NT}}$) commodity prices, procurement fee (*Inkoopvergoeding*), and green power surcharge (*GvO*).
   * **Sub-Tab 3: Certified Metering Company (Meetbedrijf) & Statutory Taxes**:
     - Providers: **Fudura B.V.**, **Joulz Meetbedrijf**, **Kenter B.V.**, **Custom**.
     - Multi-tier service packages: *Standard Grootverbruik Telemetry (MS/RLM)*, *Grootverbruik + Measurement Transformers (CT/VT)*, *Submetering (Kleinverbruik / Tussenmeting)*, *High Voltage Telemetry (HS/TS > 2 MW)*.
