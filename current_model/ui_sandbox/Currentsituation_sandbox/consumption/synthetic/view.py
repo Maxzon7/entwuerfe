@@ -135,8 +135,31 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     if state_holidays_key not in st.session_state:
         st.session_state[state_holidays_key] = pd.DataFrame(columns=["date", "holiday_name"])
 
-    # 1. Preset & File Transfer Toolbar (.drac / Templates)
-    with st.expander("Profile Presets & File Transfer (.drac)", icon=":material/folder_open:", expanded=True):
+    # 1. Quick Presets Toolbar
+    st.markdown("##### :material/bolt: Quick Preset Profiles")
+    q_col1, q_col2, q_col3, q_col4 = st.columns(4)
+    with q_col1:
+        if st.button(":material/factory: Industrial 2-Shift", key=f"{key_prefix}_quick_ind", use_container_width=True, help="Load 2-shift manufacturing profile"):
+            st.session_state[state_consumers_key] = get_industry_preset_consumers()
+            st.rerun()
+    with q_col2:
+        if st.button(":material/apartment: Commercial Office", key=f"{key_prefix}_quick_off", use_container_width=True, help="Load standard daytime commercial office profile"):
+            if "Commercial Office Building" in PRESET_TEMPLATES:
+                st.session_state[state_consumers_key] = PRESET_TEMPLATES["Commercial Office Building"]()
+            st.rerun()
+    with q_col3:
+        if st.button(":material/ev_station: Logistics & EV Hub", key=f"{key_prefix}_quick_ev", use_container_width=True, help="Load logistics center with fast-charging EV hub"):
+            if "Mobility & EV Hub" in PRESET_TEMPLATES:
+                st.session_state[state_consumers_key] = PRESET_TEMPLATES["Mobility & EV Hub"]()
+            st.rerun()
+    with q_col4:
+        if st.button(":material/restart_alt: Reset Baseline", key=f"{key_prefix}_quick_reset", use_container_width=True, help="Restores the standard 4-consumer baseline"):
+            st.session_state[state_consumers_key] = get_industry_preset_consumers()
+            st.session_state[state_holidays_key] = pd.DataFrame(columns=["date", "holiday_name"])
+            st.rerun()
+
+    # Presets & File Transfer Toolbar (.drac / Templates)
+    with st.expander("Import / Export Profiles & Advanced Presets (.drac)", icon=":material/folder_open:", expanded=False):
         f_col1, f_col2 = st.columns([1, 1])
 
         # LEFT: Upload & Predefined Templates

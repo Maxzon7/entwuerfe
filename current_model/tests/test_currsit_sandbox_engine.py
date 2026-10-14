@@ -306,3 +306,42 @@ def test_voltage_transition_advisor_threshold():
     eval_small = evaluate_voltage_transition_advisor(load_small, contracted_kw=100.0)
     assert eval_small["is_beneficial"] is False
     assert eval_small["net_annual_benefit"] < 0.0
+
+
+def test_convert_to_financial_cost_breakdown_and_property_aliases():
+    """
+    Verifies that convert_to_financial_cost_breakdown works for both annual and single-month modes,
+    and that all backward-compatible property accessors (commercial, metering_net, trafo_net, taxes_net,
+    supplier_total_net, breach_months) function without AttributeError.
+    """
+    from current_model.ui_sandbox.Currentsituation_sandbox.engine import (
+        convert_to_financial_cost_breakdown,
+    )
+
+    load = synthesize_profile_a_360mwh()
+    config = StatusQuoConfig2025()
+    result = calculate_status_quo_master(load=load, config=config)
+
+    # 1. Full-Year Breakdown
+    annual_breakdown = convert_to_financial_cost_breakdown(result, target_month=None)
+    assert annual_breakdown is not None
+    assert annual_breakdown.duration_days == 365.0
+    assert len(annual_breakdown.monthly_series) == 12
+    assert annual_breakdown.total_net_period > 0.0
+
+    # 2. Single-Month Filtered Breakdown (e.g., January)
+    jan_breakdown = convert_to_financial_cost_breakdown(result, target_month="January")
+    assert jan_breakdown is not None
+    assert jan_breakdown.duration_days == 31.0
+    assert jan_breakdown.total_net_period > 0.0
+
+    # 3. Test backward-compatible property accessors on StatusQuoMonthlyResult
+    first_month = result.monthly_records[0]
+    assert first_month.commercial is first_month.supplier
+    assert first_month.metering_net == first_month.metering_fee
+    assert first_month.trafo_net == first_month.trafo.trafo_rental_fee
+    assert first_month.taxes_net == first_month.tax.net_energy_tax
+    assert first_month.commercial.supplier_total_net == first_month.supplier.subtotal_supplier_net
+
+    # 4. Test breach_months property on StatusQuoAnnualResult
+    assert result.breach_months == result.breached_months

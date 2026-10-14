@@ -41,21 +41,32 @@ except ImportError:
     pass
 
 
+# In-memory spot price cache to avoid repeating expensive timezone localization & re-indexing
+_SPOT_PRICE_CACHE: Dict[Tuple[str, float, int], np.ndarray] = {}
+
+
 def align_spot_prices_amsterdam_2025(
     load: LoadSeries2025,
     supplier_tariff: SupplierTariff
 ) -> np.ndarray:
     """
     Aligns 35,040 EPEX Spot wholesale electricity prices for the reference year 2025.
+    Uses in-memory caching to eliminate redundant timezone conversions and re-indexing.
     """
     default_rate = float(supplier_tariff.spot_default_fallback_rate)
     profile_id = supplier_tariff.market_price_profile_id or "epex_nl_2025"
+    cache_key = (profile_id, default_rate, len(load.power_kw))
+
+    if cache_key in _SPOT_PRICE_CACHE:
+        return _SPOT_PRICE_CACHE[cache_key].copy()
 
     try:
         spot_df = load_market_price_series(profile_id=profile_id)
         price_col = "price_eur_kwh"
         if price_col not in spot_df.columns:
-            return np.full(len(load.power_kw), default_rate, dtype=float)
+            res = np.full(len(load.power_kw), default_rate, dtype=float)
+            _SPOT_PRICE_CACHE[cache_key] = res
+            return res.copy()
 
         ts_naive = load.timestamps
         ts_local = ts_naive.tz_localize("Europe/Amsterdam", ambiguous="NaT", nonexistent="shift_forward")
@@ -63,10 +74,14 @@ def align_spot_prices_amsterdam_2025(
 
         aligned_series = spot_df[price_col].reindex(ts_utc, method="ffill").bfill()
         spot_prices = aligned_series.fillna(default_rate).to_numpy(dtype=float)
-        return np.where(np.isnan(spot_prices), default_rate, spot_prices)
+        res = np.where(np.isnan(spot_prices), default_rate, spot_prices)
+        _SPOT_PRICE_CACHE[cache_key] = res
+        return res.copy()
 
     except Exception:
-        return np.full(len(load.power_kw), default_rate, dtype=float)
+        res = np.full(len(load.power_kw), default_rate, dtype=float)
+        _SPOT_PRICE_CACHE[cache_key] = res
+        return res.copy()
 
 
 def get_tranche_block_for_month(month: int, blocks: List[TrancheBlock]) -> TrancheBlock:

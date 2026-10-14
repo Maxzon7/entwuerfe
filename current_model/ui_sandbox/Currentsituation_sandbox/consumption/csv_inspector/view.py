@@ -199,78 +199,96 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             initial_max_date = datetime.date.today()
 
 
-        with st.form(key=f"{key_prefix}_form_{file_name}"):
-            st.subheader("2. Column Mapping & Unit Assignment")
-            map_col1, map_col2, map_col3 = st.columns([4, 4, 3])
-
-            with map_col1:
-                selected_time_cols = st.multiselect(
-                    ":material/calendar_today: Timestamp Column(s):",
-                    options=cols,
-                    default=[c for c in suggested_time if c in cols],
-                    key=f"{key_prefix}_time_{file_name}"
+        is_already_calculated = (
+            calc_cache_key in st.session_state
+            and isinstance(st.session_state[calc_cache_key], dict)
+            and "df_clean" in st.session_state[calc_cache_key]
+        )
+        if is_already_calculated:
+            cached_data = st.session_state[calc_cache_key]
+            df_c = cached_data.get("df_clean")
+            if df_c is not None and not df_c.empty:
+                st.success(
+                    f":material/check_circle: **Active Ingested Dataset:** `{file_name}` | "
+                    f"**Intervals:** {len(df_c):,} | "
+                    f"**Recorded Range:** {df_c['timestamp'].min().strftime('%d %b %Y')} – {df_c['timestamp'].max().strftime('%d %b %Y')} | "
+                    f"**Peak Demand:** {df_c['Total_Demand_kW'].max():,.1f} kW",
+                    icon=":material/check_circle:"
                 )
 
-            with map_col2:
-                selected_power_cols = st.multiselect(
-                    ":material/bolt: Power / Meter Column(s):",
-                    options=cols,
-                    default=[c for c in suggested_power if c in cols],
-                    key=f"{key_prefix}_pwr_{file_name}"
-                )
+        with st.expander(":material/tune: Column Mapping & Ingestion Parameters", expanded=not is_already_calculated):
+            with st.form(key=f"{key_prefix}_form_{file_name}"):
+                st.subheader("2. Column Mapping & Unit Assignment")
+                map_col1, map_col2, map_col3 = st.columns([4, 4, 3])
 
-            with map_col3:
-                unit_options = [
-                    "kWh (15-min interval) → kW",
-                    "kW (Active Power - Direct)",
-                    "W (Watt) → kW",
-                    "kWh (Hourly interval) → kW"
-                ]
-                unit_idx = unit_options.index(suggested_unit) if suggested_unit in unit_options else 0
-                selected_unit = st.selectbox(
-                    ":material/tune: Unit Conversion:",
-                    options=unit_options,
-                    index=unit_idx,
-                    key=f"{key_prefix}_unit_{file_name}"
-                )
+                with map_col1:
+                    selected_time_cols = st.multiselect(
+                        ":material/calendar_today: Timestamp Column(s):",
+                        options=cols,
+                        default=[c for c in suggested_time if c in cols],
+                        key=f"{key_prefix}_time_{file_name}"
+                    )
 
-            date_opt_col1, date_opt_col2 = st.columns([5, 6])
-            with date_opt_col1:
-                dayfirst_choice = st.toggle(
-                    ":material/sync: **Day-First Date Format (DD.MM)**",
-                    value=default_dayfirst,
-                    key=f"{key_prefix}_dayfirst_{file_name}"
-                )
+                with map_col2:
+                    selected_power_cols = st.multiselect(
+                        ":material/bolt: Power / Meter Column(s):",
+                        options=cols,
+                        default=[c for c in suggested_power if c in cols],
+                        key=f"{key_prefix}_pwr_{file_name}"
+                    )
 
-            with date_opt_col2:
-                if sample_raw_str:
-                    try:
-                        parsed_sample = pd.to_datetime(sample_raw_str, dayfirst=dayfirst_choice, errors="coerce")
-                        if pd.notnull(parsed_sample):
-                            st.caption(f":material/event: Preview: `{sample_raw_str}` -> **{parsed_sample.strftime('%d %b %Y %H:%M')}**")
-                    except Exception:
-                        pass
+                with map_col3:
+                    unit_options = [
+                        "kWh (15-min interval) → kW",
+                        "kW (Active Power - Direct)",
+                        "W (Watt) → kW",
+                        "kWh (Hourly interval) → kW"
+                    ]
+                    unit_idx = unit_options.index(suggested_unit) if suggested_unit in unit_options else 0
+                    selected_unit = st.selectbox(
+                        ":material/tune: Unit Conversion:",
+                        options=unit_options,
+                        index=unit_idx,
+                        key=f"{key_prefix}_unit_{file_name}"
+                    )
 
-            st.subheader("3. Active Date Range Filter (Day-Accurate)")
-            st.caption("By default, the complete uploaded recording is analyzed. You can optionally restrict the evaluation window to a specific single year or custom date interval.")
-            
-            f_col1, f_col2 = st.columns(2)
-            with f_col1:
-                start_date = st.date_input(
-                    ":material/calendar_today: Start Date (inclusive):",
-                    value=initial_min_date,
-                    format="DD.MM.YYYY",
-                    key=f"{key_prefix}_start_date_{file_name}"
-                )
-            with f_col2:
-                end_date = st.date_input(
-                    ":material/calendar_today: End Date (inclusive):",
-                    value=initial_max_date,
-                    format="DD.MM.YYYY",
-                    key=f"{key_prefix}_end_date_{file_name}"
-                )
+                date_opt_col1, date_opt_col2 = st.columns([5, 6])
+                with date_opt_col1:
+                    dayfirst_choice = st.toggle(
+                        ":material/sync: **Day-First Date Format (DD.MM)**",
+                        value=default_dayfirst,
+                        key=f"{key_prefix}_dayfirst_{file_name}"
+                    )
 
-            submit_calc = st.form_submit_button("Calculate Load Profile & Metrics", icon=":material/calculate:", type="primary", use_container_width=True)
+                with date_opt_col2:
+                    if sample_raw_str:
+                        try:
+                            parsed_sample = pd.to_datetime(sample_raw_str, dayfirst=dayfirst_choice, errors="coerce")
+                            if pd.notnull(parsed_sample):
+                                st.caption(f":material/event: Preview: `{sample_raw_str}` -> **{parsed_sample.strftime('%d %b %Y %H:%M')}**")
+                        except Exception:
+                            pass
+
+                st.subheader("3. Active Date Range Filter (Day-Accurate)")
+                st.caption("By default, the complete uploaded recording is analyzed. You can optionally restrict the evaluation window to a specific single year or custom date interval.")
+                
+                f_col1, f_col2 = st.columns(2)
+                with f_col1:
+                    start_date = st.date_input(
+                        ":material/calendar_today: Start Date (inclusive):",
+                        value=initial_min_date,
+                        format="DD.MM.YYYY",
+                        key=f"{key_prefix}_start_date_{file_name}"
+                    )
+                with f_col2:
+                    end_date = st.date_input(
+                        ":material/calendar_today: End Date (inclusive):",
+                        value=initial_max_date,
+                        format="DD.MM.YYYY",
+                        key=f"{key_prefix}_end_date_{file_name}"
+                    )
+
+                submit_calc = st.form_submit_button("Calculate Load Profile & Metrics", icon=":material/calculate:", type="primary", use_container_width=True)
 
         if submit_calc or calc_cache_key not in st.session_state:
             if not selected_time_cols or not selected_power_cols:

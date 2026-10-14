@@ -43,7 +43,7 @@ def create_csv_inspector_figure(
         for idx, col_name in enumerate(selected_power_cols):
             if col_name in df_clean.columns:
                 fig.add_trace(
-                    go.Scatter(
+                    go.Scattergl(
                         x=df_clean["timestamp"],
                         y=df_clean[col_name],
                         mode="lines",
@@ -54,9 +54,9 @@ def create_csv_inspector_figure(
                     )
                 )
 
-    # 2. Main Total Demand Trace (Solid White Line)
+    # 2. Main Total Demand Trace (Solid White Line) - Hardware-Accelerated WebGL
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=df_clean["timestamp"],
             y=df_clean[total_col],
             mode="lines",
@@ -227,9 +227,9 @@ def create_365d_baseline_figure(
         )
         return fig
 
-    # 1. 15-Minute Load Curve Trace
+    # 1. 15-Minute Load Curve Trace - Hardware-Accelerated WebGL
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=df_365["timestamp"] if "timestamp" in df_365.columns else list(range(len(df_365))),
             y=df_365[total_col],
             mode="lines",

@@ -44,6 +44,11 @@ except (ImportError, ValueError):
     )
 
 
+# In-memory caches for strategic advisory to eliminate redundant recalculation
+_PROCUREMENT_ROUTES_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_VOLTAGE_TRANSITION_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+
+
 def compare_procurement_routes(
     load: LoadSeries2025,
     base_config: StatusQuoConfig2025
@@ -53,7 +58,21 @@ def compare_procurement_routes(
       1. Fixed Price (Vaste Prijs)
       2. Tranche / Click Contract (Klik-contract)
       3. Dynamic Spot (EPEX Spot NL)
+    Uses caching to avoid repeated triple master recalculation on unrelated UI interactions.
     """
+    cache_key = (
+        round(float(load.total_energy_kwh), 2),
+        round(float(load.peak_demand_kw), 2),
+        base_config.dso.contracted_capacity_kw,
+        base_config.dso.tier_name,
+        base_config.supplier.supplier_margin_kwh,
+        getattr(base_config.supplier, "balancing_fee_kwh", 0.0),
+        base_config.supplier.green_certificate_surcharge_kwh,
+        base_config.supplier.base_fee_annual,
+    )
+    if cache_key in _PROCUREMENT_ROUTES_CACHE:
+        return _PROCUREMENT_ROUTES_CACHE[cache_key]
+
     routes: Dict[str, Dict[str, Any]] = {}
 
     # Common shared supplier markup, balancing, and GvO
@@ -116,6 +135,7 @@ def compare_procurement_routes(
         },
     }
 
+    _PROCUREMENT_ROUTES_CACHE[cache_key] = routes
     return routes
 
 
@@ -131,13 +151,17 @@ def evaluate_voltage_transition_advisor(
     peak_demand = float(load.peak_demand_kw)
     p_contract = contracted_kw or max(50.0, round(peak_demand * 1.05, 0))
 
+    cache_key = (round(float(peak_demand), 2), round(float(p_contract), 2))
+    if cache_key in _VOLTAGE_TRANSITION_CACHE:
+        return _VOLTAGE_TRANSITION_CACHE[cache_key]
+
     # GTV rates under Liander
     gtv_ac4b_annual = 43.881    # €/kW/year for AC4b
     gtv_ac5a_annual = 26.680    # €/kW/year for AC5a
 
+    annual_gtv_savings = (p_contract * gtv_ac4b_annual) - (p_contract * gtv_ac5a_annual)
     annual_gtv_ac4b = p_contract * gtv_ac4b_annual
     annual_gtv_ac5a = p_contract * gtv_ac5a_annual
-    annual_gtv_savings = annual_gtv_ac4b - annual_gtv_ac5a
 
     # PAV rates under Liander
     pav_ac4b_annual = 283.68    # 12 x €23.64
@@ -153,7 +177,7 @@ def evaluate_voltage_transition_advisor(
 
     is_beneficial = (net_annual_benefit > 0.0)
 
-    return {
+    res = {
         "contracted_kw": p_contract,
         "peak_demand_kw": peak_demand,
         "annual_gtv_savings": round(annual_gtv_savings, 2),
@@ -170,6 +194,8 @@ def evaluate_voltage_transition_advisor(
             f"({break_even_kw:.1f} kW)."
         ),
     }
+    _VOLTAGE_TRANSITION_CACHE[cache_key] = res
+    return res
 
 
 def evaluate_bess_flexibility_upside(

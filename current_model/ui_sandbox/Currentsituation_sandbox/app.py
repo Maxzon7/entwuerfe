@@ -30,69 +30,79 @@ import pandas as pd
 import importlib
 
 # ========================================================================================
-# Permanent Module Hot-Reloading for Development Sandbox:
-# DO NOT REMOVE: Guarantees that any modifications made to theme, charts, procurement,
-# contract, or consumption views are immediately reloaded from disk on Streamlit rerun.
+# Developer Module Hot-Reloading:
+# Can be triggered on-demand via the sidebar button or dev query parameter.
+# Normal widget interactions run without reloading to preserve object class identity
+# and eliminate redundant re-parsing of the 35,040 interval series.
 # ========================================================================================
 
-# 1. Reload engine submodules if already cached in sys.modules
-for mod_name in list(sys.modules.keys()):
-    if "Currentsituation_sandbox.engine" in mod_name:
+def reload_sandbox_modules() -> None:
+    """Explicitly reloads all sandbox modules from disk when requested by developer."""
+    for mod_name in list(sys.modules.keys()):
+        if "Currentsituation_sandbox.engine" in mod_name:
+            try:
+                importlib.reload(sys.modules[mod_name])
+            except Exception:
+                pass
+    try:
+        import ui_sandbox.Currentsituation_sandbox.ui_theme as _ui_theme
+        import ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+        import ui_sandbox.Currentsituation_sandbox.contract.procurement_view as _strat_view
+        import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+        import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
+        importlib.reload(_ui_theme)
+        importlib.reload(_con_charts)
+        importlib.reload(_strat_view)
+        importlib.reload(_con_view)
+        importlib.reload(_c_view)
+    except Exception:
         try:
-            importlib.reload(sys.modules[mod_name])
+            import current_model.ui_sandbox.Currentsituation_sandbox.ui_theme as _ui_theme
+            import current_model.ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+            import current_model.ui_sandbox.Currentsituation_sandbox.contract.procurement_view as _strat_view
+            import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+            import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
+            importlib.reload(_ui_theme)
+            importlib.reload(_con_charts)
+            importlib.reload(_strat_view)
+            importlib.reload(_con_view)
+            importlib.reload(_c_view)
         except Exception:
             pass
 
-# 2. Explicitly import and reload UI theme, charts, strategy view, contract view, and consumption view
+
+# Check if dev reload was requested via query param or session flag
+_query_params = getattr(st, "query_params", {})
+if _query_params.get("dev_reload") in ["1", "true", "True"] or st.session_state.get("_trigger_dev_reload", False):
+    reload_sandbox_modules()
+    st.session_state["_trigger_dev_reload"] = False
+
+# Standard High-Performance Imports (Stable Class Identities)
 try:
-    import ui_sandbox.Currentsituation_sandbox.ui_theme as _ui_theme
-    import ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
-    import ui_sandbox.Currentsituation_sandbox.contract.procurement_view as _strat_view
-    import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
-    import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
-    importlib.reload(_ui_theme)
-    importlib.reload(_con_charts)
-    importlib.reload(_strat_view)
-    importlib.reload(_con_view)
-    importlib.reload(_c_view)
-    apply_currsit_theme = _ui_theme.apply_currsit_theme
-    configure_plotly_currsit_theme = _ui_theme.configure_plotly_currsit_theme
-    render_hero_banner = _ui_theme.render_hero_banner
-    render_tab1_consumption = _c_view.render_tab1_consumption
-    render_tab2_base_contract = _con_view.render_tab2_base_contract
-except Exception:
+    from ui_sandbox.Currentsituation_sandbox.ui_theme import (
+        apply_currsit_theme,
+        configure_plotly_currsit_theme,
+        render_hero_banner,
+    )
+    from ui_sandbox.Currentsituation_sandbox.consumption.view import render_tab1_consumption
+    from ui_sandbox.Currentsituation_sandbox.contract.view import render_tab2_base_contract
+except ImportError:
     try:
-        import current_model.ui_sandbox.Currentsituation_sandbox.ui_theme as _ui_theme
-        import current_model.ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
-        import current_model.ui_sandbox.Currentsituation_sandbox.contract.procurement_view as _strat_view
-        import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
-        import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
-        importlib.reload(_ui_theme)
-        importlib.reload(_con_charts)
-        importlib.reload(_strat_view)
-        importlib.reload(_con_view)
-        importlib.reload(_c_view)
-        apply_currsit_theme = _ui_theme.apply_currsit_theme
-        configure_plotly_currsit_theme = _ui_theme.configure_plotly_currsit_theme
-        render_hero_banner = _ui_theme.render_hero_banner
-        render_tab1_consumption = _c_view.render_tab1_consumption
-        render_tab2_base_contract = _con_view.render_tab2_base_contract
-    except Exception:
-        import ui_theme as _ui_theme
-        import contract.charts as _con_charts
-        import contract.procurement_view as _strat_view
-        import contract.view as _con_view
-        import consumption.view as _c_view
-        importlib.reload(_ui_theme)
-        importlib.reload(_con_charts)
-        importlib.reload(_strat_view)
-        importlib.reload(_con_view)
-        importlib.reload(_c_view)
-        apply_currsit_theme = _ui_theme.apply_currsit_theme
-        configure_plotly_currsit_theme = _ui_theme.configure_plotly_currsit_theme
-        render_hero_banner = _ui_theme.render_hero_banner
-        render_tab1_consumption = _c_view.render_tab1_consumption
-        render_tab2_base_contract = _con_view.render_tab2_base_contract
+        from current_model.ui_sandbox.Currentsituation_sandbox.ui_theme import (
+            apply_currsit_theme,
+            configure_plotly_currsit_theme,
+            render_hero_banner,
+        )
+        from current_model.ui_sandbox.Currentsituation_sandbox.consumption.view import render_tab1_consumption
+        from current_model.ui_sandbox.Currentsituation_sandbox.contract.view import render_tab2_base_contract
+    except ImportError:
+        from ui_theme import (
+            apply_currsit_theme,
+            configure_plotly_currsit_theme,
+            render_hero_banner,
+        )
+        from consumption.view import render_tab1_consumption
+        from contract.view import render_tab2_base_contract
 
 
 def render_current_situation_sandbox(key_prefix: str = "currsit") -> None:
@@ -128,6 +138,14 @@ def render_current_situation_sandbox(key_prefix: str = "currsit") -> None:
             for k in list(st.session_state.keys()):
                 if k.startswith(key_prefix) or "active_csv" in k or "calc_data" in k:
                     st.session_state.pop(k, None)
+            st.rerun()
+
+    # Developer Sidebar Trigger
+    with st.sidebar:
+        st.markdown("### :material/developer_mode: Sandbox Controls")
+        if st.button(":material/refresh: Reload Modules from Disk", use_container_width=True, key=f"{key_prefix}_reload_btn", help="Force reloads all sandbox code from disk"):
+            reload_sandbox_modules()
+            st.success("Sandbox modules reloaded from disk!")
             st.rerun()
 
     st.markdown("---")

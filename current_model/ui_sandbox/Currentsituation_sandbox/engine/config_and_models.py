@@ -423,6 +423,11 @@ class DSOMonthlyResult:
     subtotal_dso_net: float                      # Total DSO net for this month
     penalty_fee: float = 0.0                     # Overload penalty fee if peak_penalty_rate_kw > 0
 
+    @property
+    def reactive_power_fee(self) -> float:
+        """Reactive power fee (cos phi < 0.85), default 0.0."""
+        return 0.0
+
 
 @dataclass
 class CommercialMonthlyResult:
@@ -437,6 +442,11 @@ class CommercialMonthlyResult:
     subtotal_supplier_net: float                 # supplier_energy_cost + supplier_base_fee
     hedged_kwh: float = 0.0                      # Hedged volume under tranche contract
     spot_kwh: float = 0.0                        # Residual volume settled at EPEX Spot
+
+    @property
+    def supplier_total_net(self) -> float:
+        """Alias for subtotal_supplier_net."""
+        return self.subtotal_supplier_net
 
 
 @dataclass
@@ -473,6 +483,26 @@ class StatusQuoMonthlyResult:
     vat_amount: float
     total_gross: float
     effective_rate_net_kwh: float
+
+    @property
+    def commercial(self) -> CommercialMonthlyResult:
+        """Backward-compatible alias for supplier commercial result."""
+        return self.supplier
+
+    @property
+    def metering_net(self) -> float:
+        """Alias for monthly metering net fee."""
+        return self.metering_fee
+
+    @property
+    def trafo_net(self) -> float:
+        """Alias for transformer rental net fee."""
+        return self.trafo.trafo_rental_fee
+
+    @property
+    def taxes_net(self) -> float:
+        """Alias for net energy tax."""
+        return self.tax.net_energy_tax
 
 
 @dataclass
@@ -512,3 +542,8 @@ class StatusQuoAnnualResult:
     # Audit points tracking
     has_capacity_breach: bool = False
     breached_months: List[int] = field(default_factory=list)
+
+    @property
+    def breach_months(self) -> List[int]:
+        """Alias for breached_months."""
+        return self.breached_months

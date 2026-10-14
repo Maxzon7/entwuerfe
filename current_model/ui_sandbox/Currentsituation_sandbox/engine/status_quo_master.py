@@ -52,10 +52,24 @@ except (ImportError, ValueError):
     from trafo_accounting import calculate_trafo_rental_accounting
     from tax_accounting import calculate_tax_accounting
 
+# Compatibility imports for standard charts
 try:
-    from current_model.models.financial import FinancialCostBreakdown
+    from current_model.models.financial import (
+        FinancialCostBreakdown,
+        MonthlyPaymentRecord,
+        CostLineItem,
+    )
 except ImportError:
-    FinancialCostBreakdown = None
+    try:
+        from models.financial import (
+            FinancialCostBreakdown,
+            MonthlyPaymentRecord,
+            CostLineItem,
+        )
+    except ImportError:
+        FinancialCostBreakdown = None
+        MonthlyPaymentRecord = None
+        CostLineItem = None
 
 
 def calculate_status_quo_master(
@@ -229,10 +243,10 @@ def convert_to_financial_cost_breakdown(
             r = target_rec
             gross = r.total_gross if r.total_gross > 0 else 1.0
             supp_base_mnd = round(float(result.config.supplier.base_fee_annual) / 12.0, 2)
-            supp_energy_mnd = max(0.0, r.commercial.supplier_total_net - supp_base_mnd)
+            supp_energy_mnd = max(0.0, r.supplier.subtotal_supplier_net - supp_base_mnd)
             base_fee_mnd = round(
                 r.dso.fixed_connection_fee + r.dso.fixed_transport_fee +
-                r.metering_net + r.trafo_net + supp_base_mnd, 2
+                r.metering_fee + r.trafo.trafo_rental_fee + supp_base_mnd, 2
             )
 
             line_items = [
@@ -281,10 +295,10 @@ def convert_to_financial_cost_breakdown(
                     description=f"Energiebelasting & VAT ({result.vat_rate_pct}%)",
                     basis_quantity=r.consumption.total_kwh,
                     unit="kWh",
-                    unit_rate=round(r.taxes_net / r.consumption.total_kwh, 4) if r.consumption.total_kwh > 0 else 0.0,
-                    cost_period=round(r.taxes_net + r.vat_amount, 2),
-                    cost_monthly=round(r.taxes_net + r.vat_amount, 2),
-                    share_pct=round(((r.taxes_net + r.vat_amount) / gross * 100.0), 1)
+                    unit_rate=round(r.tax.net_energy_tax / r.consumption.total_kwh, 4) if r.consumption.total_kwh > 0 else 0.0,
+                    cost_period=round(r.tax.net_energy_tax + r.vat_amount, 2),
+                    cost_monthly=round(r.tax.net_energy_tax + r.vat_amount, 2),
+                    share_pct=round(((r.tax.net_energy_tax + r.vat_amount) / gross * 100.0), 1)
                 ),
             ]
             if r.dso.volumetric_transport_fee > 0:
@@ -314,7 +328,7 @@ def convert_to_financial_cost_breakdown(
                 network_cost_period=r.dso.volumetric_transport_fee,
                 base_fee_period=base_fee_mnd,
                 total_net_period=r.total_net,
-                total_taxes_period=r.taxes_net + r.vat_amount,
+                total_taxes_period=r.tax.net_energy_tax + r.vat_amount,
                 total_gross_period=r.total_gross,
                 effective_kwh_price=r.effective_rate_net_kwh
             )
@@ -323,10 +337,10 @@ def convert_to_financial_cost_breakdown(
     monthly_series: List[MonthlyPaymentRecord] = []
     for r in result.monthly_records:
         supp_base_mnd = round(float(result.config.supplier.base_fee_annual) / 12.0, 2)
-        supp_energy_mnd = max(0.0, r.commercial.supplier_total_net - supp_base_mnd)
+        supp_energy_mnd = max(0.0, r.supplier.subtotal_supplier_net - supp_base_mnd)
         base_fee_mnd = round(
             r.dso.fixed_connection_fee + r.dso.fixed_transport_fee +
-            r.metering_net + r.trafo_net + supp_base_mnd, 2
+            r.metering_fee + r.trafo.trafo_rental_fee + supp_base_mnd, 2
         )
         rec = MonthlyPaymentRecord(
             period_label=f"{r.month_name[:3]} 2025",
@@ -337,9 +351,9 @@ def convert_to_financial_cost_breakdown(
             capacity_cost_net=r.dso.contracted_capacity_fee,
             penalty_cost_net=r.dso.peak_demand_fee,
             base_fee_net=base_fee_mnd,
-            reactive_cost_net=r.dso.reactive_power_fee,
+            reactive_cost_net=getattr(r.dso, "reactive_power_fee", 0.0),
             total_net=r.total_net,
-            taxes_and_levies=round(r.taxes_net + r.vat_amount, 2),
+            taxes_and_levies=round(r.tax.net_energy_tax + r.vat_amount, 2),
             total_gross=r.total_gross,
             effective_rate_kwh=r.total_gross / r.consumption.total_kwh if r.consumption.total_kwh > 0 else 0.0,
             network_cost_net=r.dso.volumetric_transport_fee
