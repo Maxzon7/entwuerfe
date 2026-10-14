@@ -51,67 +51,78 @@ except ImportError:
             create_15_year_lifecycle_cost_figure,
         )
 
-# 2025 5-Layer Accounting Modules & Official Catalogs
+# 2025 Grootverbruik 4-Pillar Engine Modules & Catalogs
 try:
-    from ui_sandbox.status_quo_2025.config_and_models import (
+    from ui_sandbox.Currentsituation_sandbox.engine import (
         TariffStage,
         PricingMode,
+        SupplierCategory,
+        TrancheBlock,
         DSOTariff,
         SupplierTariff,
         MeteringTariff,
+        TrafoRentalTariff,
         LevyConfig,
         StatusQuoConfig2025,
         LoadSeries2025,
-    )
-    from ui_sandbox.status_quo_2025.tariff_defaults_2025 import (
         DSO_CATALOGS_2025,
         SUPPLIER_CATALOG_2025,
         METERING_CATALOG_2025,
+        TRAFO_CATALOG_2025,
         get_dso_tariff_from_catalog,
-        get_stage_1_default_config_2025,
-        get_default_supplier_tariff_2025,
-        get_default_metering_tariff_2025,
-        get_default_levy_config_2025,
-    )
-    from ui_sandbox.status_quo_2025.consumption_pipeline import (
+        get_supplier_tariff_from_catalog,
+        get_trafo_tariff_from_catalog,
+        get_metering_tariff_from_catalog,
+        get_default_levy_config,
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
-    )
-    from ui_sandbox.status_quo_2025.status_quo_master import (
-        calculate_status_quo_master_2025,
+        calculate_status_quo_master,
         convert_to_financial_cost_breakdown,
+        perform_full_status_quo_audit,
     )
-    from ui_sandbox.status_quo_2025.audit import perform_full_status_quo_audit
+    from ui_sandbox.Currentsituation_sandbox.ui_theme import (
+        render_live_invoice_card,
+        render_metric_card,
+    )
+    from ui_sandbox.Currentsituation_sandbox.contract.procurement_view import (
+        render_procurement_strategy_view,
+    )
 except ImportError:
-    from current_model.ui_sandbox.status_quo_2025.config_and_models import (
+    from current_model.ui_sandbox.Currentsituation_sandbox.engine import (
         TariffStage,
         PricingMode,
+        SupplierCategory,
+        TrancheBlock,
         DSOTariff,
         SupplierTariff,
         MeteringTariff,
+        TrafoRentalTariff,
         LevyConfig,
         StatusQuoConfig2025,
         LoadSeries2025,
-    )
-    from current_model.ui_sandbox.status_quo_2025.tariff_defaults_2025 import (
         DSO_CATALOGS_2025,
         SUPPLIER_CATALOG_2025,
         METERING_CATALOG_2025,
+        TRAFO_CATALOG_2025,
         get_dso_tariff_from_catalog,
-        get_stage_1_default_config_2025,
-        get_default_supplier_tariff_2025,
-        get_default_metering_tariff_2025,
-        get_default_levy_config_2025,
-    )
-    from current_model.ui_sandbox.status_quo_2025.consumption_pipeline import (
+        get_supplier_tariff_from_catalog,
+        get_trafo_tariff_from_catalog,
+        get_metering_tariff_from_catalog,
+        get_default_levy_config,
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
-    )
-    from current_model.ui_sandbox.status_quo_2025.status_quo_master import (
-        calculate_status_quo_master_2025,
+        calculate_status_quo_master,
         convert_to_financial_cost_breakdown,
+        perform_full_status_quo_audit,
     )
-    from current_model.ui_sandbox.status_quo_2025.audit import perform_full_status_quo_audit
+    from current_model.ui_sandbox.Currentsituation_sandbox.ui_theme import (
+        render_live_invoice_card,
+        render_metric_card,
+    )
+    from current_model.ui_sandbox.Currentsituation_sandbox.contract.procurement_view import (
+        render_procurement_strategy_view,
+    )
+
 
 
 def _find_or_create_load_series_2025() -> Tuple[LoadSeries2025, str]:
@@ -156,12 +167,14 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     # ----------------------------------------------------------------------------------
     # 1. Three Dedicated Actor Sub-Tabs (DSO, Supplier, Metering & Taxes)
     # ----------------------------------------------------------------------------------
-    st.markdown("### :material/account_tree: 3-Party Unbundled Market Actors & Tariffs")
+    st.markdown("### :material/account_tree: 4-Pillar Unbundled Market Actors & Sourcing Strategy")
 
     actor_tabs = st.tabs([
-        ":material/grid_view: 1. Regulated Grid Operator (Netzbetreiber / DSO)",
-        ":material/bolt: 2. Energy Retailer (Energielieferant / Supplier)",
-        ":material/speed: 3. Metering & Taxes (Meetbedrijf & Belastingen)"
+        ":material/grid_view: 1. Regulated Grid (DSO)",
+        ":material/bolt: 2. Commercial Supplier",
+        ":material/speed: 3. Metering & Trafo Rental",
+        ":material/account_balance: 4. Statutory Taxes & Lifecycle",
+        ":material/insights: 5. Procurement Strategy & Advisory"
     ])
 
     # ----------------------------------------------------------------------------------
@@ -251,6 +264,9 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 {"name": "Night & Weekend / Off-Peak (kWh niedrig)", "rate": default_offpeak, "start_time": "23:00", "end_time": "07:00"}
             ])
 
+        # Pre-initialize penalty_rate to ensure availability across all execution paths
+        penalty_rate = float(preset_data.get("peak_penalty_rate_kw", 0.0))
+
         with st.form(key=f"{key_prefix}_dso_contract_form_{selected_dso_company}_{selected_tier}_v{form_version}"):
             # ==============================================================================
             # 1. Grid Capacity & Fixed Fees
@@ -274,65 +290,85 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                     index=0,
                     key=f"{key_prefix}_dso_currency_v{form_version}"
                 )
-                # Fixed monthly transport standing charge = vastrecht / 12 (connection fee aansluitdienst omitted for now)
-                ann_standing_default = float(preset_data.get("vastrecht_annual", 441.0))
-                monthly_standing_default = round(ann_standing_default / 12.0, 2)
-                base_fee = st.number_input(
-                    "Fixed Monthly Grid Fee (€/month):",
+                # Connection Fee PAV (Periodieke aansluitvergoeding)
+                pav_monthly_default = float(preset_data.get("fixed_connection_monthly", 57.73))
+                fixed_conn_mnd = st.number_input(
+                    "Connection Fee PAV (€/month):",
                     min_value=0.0,
-                    value=monthly_standing_default,
+                    value=pav_monthly_default,
                     step=5.0,
                     format="%.2f",
+                    key=f"{key_prefix}_dso_pav_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Periodieke aansluitvergoeding (PAV) per maand based on connection capacity (e.g. AC4b = €57.73/mo, AC5a = €160.57/mo)"
+                )
+                # Fixed Monthly Transport Admin Fee (Vastrecht transport)
+                ann_standing_default = float(preset_data.get("vastrecht_annual", 52.54))
+                monthly_standing_default = round(ann_standing_default / 12.0, 2)
+                base_fee = st.number_input(
+                    "Fixed Transport Admin Fee Vastrecht (€/month):",
+                    min_value=0.0,
+                    value=monthly_standing_default,
+                    step=1.0,
+                    format="%.2f",
                     key=f"{key_prefix}_dso_base_fee_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Fixed standing charge for grid access (Festgebühr Transport / Vastrecht €/month)"
+                    help="Fixed standing charge for grid administration (Vastrecht transport €/month, official Liander €4.38/mo)"
                 )
                 contracted_kw = st.number_input(
-                    "Reserved Grid Capacity (kW):",
+                    "Contracted Grid Capacity GTV (kW):",
                     min_value=10.0,
                     max_value=20000.0,
                     value=float(max(50.0, round(load_series.peak_demand_kw * 1.05, 0))),
                     step=10.0,
                     format="%.1f",
                     key=f"{key_prefix}_dso_p_contract_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Power reserved on the grid for your facility (kW-Vertrag / Gecontracteerd vermogen in kW)"
+                    help="Gecontracteerd Transportvermogen (GTV) reserved on the grid for your facility"
                 )
 
             with c2:
                 capacity_tariff = st.number_input(
-                    "Reserved Capacity Rate (€/kW/month):",
+                    "Contracted Capacity Rate GTV (€/kW/month):",
                     min_value=0.0,
-                    value=float(preset_data.get("rate_contracted_monthly", 2.4400)),
+                    value=float(preset_data.get("rate_contracted_monthly", 3.6567)),
                     step=0.01,
                     format="%.4f",
                     key=f"{key_prefix}_dso_rate_cap_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Monthly fee billed per reserved kW (kW-Vertrag Tarif / Capaciteitstarief)"
+                    help="Monthly fee billed per reserved kW (Capaciteitstarief GTV in €/kW/mo)"
                 )
                 demand_tariff = st.number_input(
                     "Monthly Peak Demand Rate (€/kW/month):",
                     min_value=0.0,
-                    value=float(preset_data.get("rate_peak_monthly", 3.7100)),
+                    value=float(preset_data.get("rate_peak_monthly", 3.4600)),
                     step=0.01,
                     format="%.4f",
                     key=f"{key_prefix}_dso_rate_peak_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Monthly fee billed per measured 15-minute maximum peak (kW max. pro Monat / Piekvermogen)"
+                    help="Monthly fee billed per measured 15-minute maximum peak (Maandpiek in €/kW/mo)"
+                )
+                cable_surcharge = st.number_input(
+                    "Cable Surcharge Meerlengte (€/year):",
+                    min_value=0.0,
+                    value=float(preset_data.get("cable_surcharge_annual", 0.0)),
+                    step=50.0,
+                    format="%.2f",
+                    key=f"{key_prefix}_dso_cable_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Meerlengte connection cable surcharge if connection cable > 25 meters"
                 )
                 max_physical_kw = st.number_input(
-                    "Physical Transformer Limit (kW):",
+                    "Physical Connection / Trafo Limit (kW):",
                     min_value=10.0,
                     value=float(preset_data.get("max_physical_limit_kw", 1000.0)),
                     step=50.0,
                     format="%.1f",
                     key=f"{key_prefix}_dso_max_phys_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Maximum physical electrical limit of your transformer or main connection"
+                    help="Maximum physical electrical capacity limit of your transformer or main connection"
                 )
                 penalty_rate = st.number_input(
-                    "Capacity Exceedance Penalty (€/kW):",
+                    "Peak Overload Penalty Rate (€/kW):",
                     min_value=0.0,
-                    value=float(preset_data.get("peak_penalty_rate_kw", 0.2500)),
+                    value=float(preset_data.get("peak_penalty_rate_kw", 0.0)),
                     step=0.05,
                     format="%.4f",
-                    key=f"{key_prefix}_dso_penalty_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Penalty fee charged when monthly peak demand exceeds reserved grid capacity"
+                    key=f"{key_prefix}_dso_penalty_rate_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Penalty fee per kW for exceeding contracted capacity (standard in international tariffs, €0.00 for Dutch standard ratchet)."
                 )
 
             # ==============================================================================
@@ -406,14 +442,14 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             )
 
             adjust_breach = st.checkbox(
-                ":material/shield: Adjust capacity billing to actual peak during breach months (Dutch standard rule)",
+                ":material/lock_clock: 12-Month Ratchet Clause: Peak exceedances lock contracted capacity for remaining 12 months (Dutch ACM rules)",
                 value=True,
                 key=f"{key_prefix}_dso_adjust_breach",
-                help="Bij overschrijding van het gecontracteerde vermogen wordt de capaciteitsvergoeding in de desbetreffende maand berekend op basis van de werkelijke piek."
+                help="Bij overschrijding van het gecontracteerde vermogen (GTV) wordt de contractcapaciteit voor de resterende 12 maanden vergrendeld op het nieuwe piekniveau."
             )
 
             submitted_dso = st.form_submit_button(
-                "Save Contract Configuration",
+                "Save Grid Operator Tariff",
                 icon=":material/save:",
                 type="primary",
                 use_container_width=True
@@ -484,14 +520,19 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
         st.markdown("---")
 
-        # Row 2: Pricing Mechanism (Full Width) & Standing Fee / Contract Structure (50% / 50%)
+        # Row 2: Pricing Mechanism Selection
         default_mode = prod_data.get("pricing_mode", PricingMode.FIXED)
-        mode_idx = 0 if default_mode == PricingMode.DYNAMIC else (1 if default_mode == PricingMode.FIXED else 2)
+        mode_idx = 0 if default_mode == PricingMode.DYNAMIC else (
+            1 if default_mode == PricingMode.FIXED else (
+                2 if default_mode in (PricingMode.TRANCHE, getattr(PricingMode, "TRANCHE_CLICK", PricingMode.TRANCHE)) else 3
+            )
+        )
         selected_pricing_mode_str = st.radio(
             "Supplier Pricing Mechanism:",
             options=[
                 ":material/show_chart: Dynamic Spot (EPEX Spot NL 2025)",
                 ":material/lock: Fixed All-In Rate",
+                ":material/view_timeline: Tranche / Click (Block Hedging + Spot)",
                 ":material/calendar_month: Variable Monthly Rates"
             ],
             index=mode_idx,
@@ -502,275 +543,377 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             active_pricing_mode = PricingMode.DYNAMIC
         elif "Fixed" in selected_pricing_mode_str:
             active_pricing_mode = PricingMode.FIXED
+        elif "Tranche" in selected_pricing_mode_str:
+            active_pricing_mode = PricingMode.TRANCHE
         else:
             active_pricing_mode = PricingMode.VARIABLE
 
-        col_s_fee, col_s_option = st.columns(2)
-        with col_s_fee:
-            supp_base = st.number_input(
-                "Retailer Standing Fee (€/year):",
-                min_value=0.0,
-                value=float(prod_data.get("base_fee_annual", 180.00)),
-                step=15.0,
-                key=f"{key_prefix}_supp_base_{selected_supplier_name}_{selected_product}",
-                help="Fixed annual standing fee (Vastrecht levering per jaar excl. btw)."
-            )
-
-        with col_s_option:
-            if active_pricing_mode == PricingMode.FIXED:
-                is_dual_rate = st.checkbox(
-                    ":material/contrast: Dual Rate (Dubbeltarief: HT / NT)",
-                    value=bool(prod_data.get("is_dual_rate", False)),
-                    key=f"{key_prefix}_supp_is_dual_{selected_supplier_name}_{selected_product}",
-                    help="Enable separate rates for daytime / working hours (HT) and night / weekends (NT)."
-                )
-            elif active_pricing_mode == PricingMode.DYNAMIC:
-                is_dual_rate = False
-                st.info(
-                    ":material/show_chart: **Dynamic Spot Mode:** Hourly & 15-minute settlement "
-                    "against EPEX Spot Day-Ahead wholesale market prices."
-                )
-            else:
-                is_dual_rate = False
-                st.info(
-                    ":material/calendar_month: **Variable Mode:** 12 monthly rates applied "
-                    "chronologically across the 2025 billing cycle."
+        with st.form(key=f"{key_prefix}_supplier_form_{selected_supplier_name}_{selected_product}"):
+            col_s_fee, col_s_option = st.columns(2)
+            with col_s_fee:
+                supp_base = st.number_input(
+                    "Retailer Standing Fee Vastrecht levering (€/year):",
+                    min_value=0.0,
+                    value=float(prod_data.get("base_fee_annual", 180.00)),
+                    step=15.0,
+                    key=f"{key_prefix}_supp_base_{selected_supplier_name}_{selected_product}",
+                    help="Fixed annual supplier administrative fee (Vastrecht levering per jaar excl. btw)."
                 )
 
-        # Row 3: Symmetrical 3-Column Grid for Rate Parameters (Each column contains exactly one input)
-        col_s1, col_s2, col_s3 = st.columns(3)
+            with col_s_option:
+                if active_pricing_mode == PricingMode.FIXED:
+                    is_dual_rate = st.checkbox(
+                        ":material/contrast: Dual Rate (Dubbeltarief: HT / NT)",
+                        value=bool(prod_data.get("is_dual_rate", False)),
+                        key=f"{key_prefix}_supp_is_dual_{selected_supplier_name}_{selected_product}",
+                        help="Enable separate rates for daytime / working hours (HT) and night / weekends (NT)."
+                    )
+                elif active_pricing_mode in (PricingMode.TRANCHE, getattr(PricingMode, "TRANCHE_CLICK", PricingMode.TRANCHE)):
+                    is_dual_rate = False
+                    st.info(
+                        ":material/view_timeline: **Tranche / Click Hedging:** Forward blocks locked "
+                        "per quarter; remaining consumption settles against hourly EPEX Spot prices."
+                    )
+                elif active_pricing_mode == PricingMode.DYNAMIC:
+                    is_dual_rate = False
+                    st.info(
+                        ":material/show_chart: **Dynamic Spot Mode:** Hourly & 15-minute settlement "
+                        "against EPEX Spot Day-Ahead wholesale market prices."
+                    )
+                else:
+                    is_dual_rate = False
+                    st.info(
+                        ":material/calendar_month: **Variable Mode:** 12 monthly rates applied "
+                        "chronologically across the billing cycle."
+                    )
 
-        if active_pricing_mode == PricingMode.DYNAMIC:
-            with col_s1:
+            # 5-Component Rate Parameters Grid
+            st.markdown("###### 5-Component Wholesale & Retail Supplier Rates")
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+            with col_s2:
                 supp_margin = st.number_input(
-                    "Supplier Retail Markup / Opslag (€/kWh):",
+                    "Retail Markup / Opslag (€/kWh):",
                     min_value=0.0,
                     value=float(prod_data.get("supplier_margin_kwh", 0.0075)),
                     format="%.4f",
                     key=f"{key_prefix}_supp_margin_{selected_supplier_name}_{selected_product}",
-                    help="Leveranciersopslag above the EPEX Spot Day-Ahead wholesale price."
-                )
-            with col_s2:
-                procure_fee = st.number_input(
-                    "Procurement Fee (€/kWh):",
-                    min_value=0.0,
-                    value=float(prod_data.get("procurement_fee_kwh", 0.0015)),
-                    format="%.4f",
-                    key=f"{key_prefix}_supp_procure_{selected_supplier_name}_{selected_product}",
-                    help="Fixed procurement handling fee (Inkoopvergoeding per kWh)."
+                    help="Leveranciersopslag per kWh (Dutch utility margin)."
                 )
             with col_s3:
+                procure_fee = st.number_input(
+                    "Imbalance Fee Onbalanskosten (€/kWh):",
+                    min_value=0.0,
+                    value=float(prod_data.get("balancing_fee_kwh", 0.0035)),
+                    format="%.4f",
+                    key=f"{key_prefix}_supp_procure_{selected_supplier_name}_{selected_product}",
+                    help="Onbalanskosten passed through to customer (typically €0.003 to €0.008/kWh)."
+                )
+            with col_s4:
                 green_surcharge = st.number_input(
                     "Green Power Surcharge GvO (€/kWh):",
                     min_value=0.0,
-                    value=float(prod_data.get("green_surcharge_kwh", 0.0)),
+                    value=float(prod_data.get("green_certificate_surcharge_kwh", 0.0025)),
                     format="%.4f",
                     key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
-                    help="Guarantee of Origin (GvO) surcharge for certified green power."
+                    help="Garanties van Oorsprong (GvO) for 100% Dutch green energy."
                 )
 
-            st.info(
-                ":material/hub: **EPEX Spot Wholesale Series Active:** Wholesale spot prices linked to "
-                "Europe/Amsterdam timezone (35,040 intervals for reference year 2025)."
-            )
-            fixed_rate_val = 0.1250
-            fixed_rate_ht = 0.1340
-            fixed_rate_nt = 0.1180
-
-        elif active_pricing_mode == PricingMode.FIXED:
-            supp_margin = 0.0
-            procure_fee = 0.0
-            if is_dual_rate:
+            # Mode-specific Commodity Rate
+            tranche_blocks_configured = []
+            if active_pricing_mode in (PricingMode.TRANCHE, getattr(PricingMode, "TRANCHE_CLICK", PricingMode.TRANCHE)):
                 with col_s1:
-                    fixed_rate_ht = st.number_input(
-                        "High Tariff Rate HT / Normaal (€/kWh):",
+                    tranche_base_price = st.number_input(
+                        "Weighted Hedged Price (€/MWh):",
                         min_value=0.0,
-                        value=float(prod_data.get("rate_peak_kwh", 0.1340)),
-                        format="%.4f",
-                        key=f"{key_prefix}_supp_ht_{selected_supplier_name}_{selected_product}",
-                        help="Active energy rate during working weekdays (07:00 – 23:00)."
+                        value=95.0,
+                        step=2.5,
+                        format="%.2f",
+                        key=f"{key_prefix}_tranche_p_mwh",
+                        help="Volume-weighted hedge price across locked forward blocks."
                     )
-                with col_s2:
-                    fixed_rate_nt = st.number_input(
-                        "Off-Peak Rate NT / Dal (€/kWh):",
-                        min_value=0.0,
-                        value=float(prod_data.get("rate_offpeak_kwh", 0.1180)),
-                        format="%.4f",
-                        key=f"{key_prefix}_supp_nt_{selected_supplier_name}_{selected_product}",
-                        help="Active energy rate during nights (23:00 – 07:00) and weekends (24h)."
-                    )
-                with col_s3:
-                    green_surcharge = st.number_input(
-                        "Green Power Surcharge GvO (€/kWh):",
-                        min_value=0.0,
-                        value=float(prod_data.get("green_surcharge_kwh", 0.0)),
-                        format="%.4f",
-                        key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
-                        help="Guarantee of Origin (GvO) surcharge for certified green power."
-                    )
-                fixed_rate_val = fixed_rate_ht
+                st.markdown("###### Tranche / Click Block Hedge Configuration")
+                t_cols = st.columns(4)
+                hedge_shares = [0.40, 0.40, 0.35, 0.45]
+                for q_idx in range(4):
+                    with t_cols[q_idx]:
+                        q_share = st.slider(
+                            f"Q{q_idx + 1} Hedge (%):",
+                            min_value=0,
+                            max_value=100,
+                            value=int(hedge_shares[q_idx] * 100),
+                            step=5,
+                            key=f"{key_prefix}_tranche_q{q_idx+1}_pct"
+                        )
+                        tranche_blocks_configured.append(
+                            TrancheBlock(
+                                label=f"Q{q_idx+1}",
+                                months=[q_idx * 3 + 1, q_idx * 3 + 2, q_idx * 3 + 3],
+                                hedged_share_pct=float(q_share),
+                                click_price_kwh=tranche_base_price / 1000.0,
+                                tranche_id=f"Q{q_idx+1}_Base",
+                                quarter_label=f"Q{q_idx+1}",
+                                hedged_capacity_mw=round((load_series.peak_demand_kw * (q_share / 100.0)) / 1000.0, 3),
+                                hedged_price_eur_mwh=tranche_base_price,
+                                is_locked=True
+                            )
+                        )
+                avg_hedge_pct = sum((b.hedged_capacity_mw or 0.0) for b in tranche_blocks_configured) * 1000.0 / max(1.0, load_series.peak_demand_kw) * 100.0
+                st.caption(f":material/check_circle: *Overall Forward Hedge: ~{avg_hedge_pct:.0f}% locked; remaining ~{100 - avg_hedge_pct:.0f}% exposed to EPEX Spot.*")
+                fixed_rate_val = tranche_base_price / 1000.0
+                fixed_rate_ht = fixed_rate_val
+                fixed_rate_nt = fixed_rate_val
+
+            elif active_pricing_mode == PricingMode.DYNAMIC:
+                with col_s1:
+                    st.info(":material/show_chart: Wholesale: EPEX Spot 15-min index")
+                fixed_rate_val = 0.0950
+                fixed_rate_ht = 0.1050
+                fixed_rate_nt = 0.0850
+
+            elif active_pricing_mode == PricingMode.FIXED:
+                if is_dual_rate:
+                    with col_s1:
+                        fixed_rate_ht = st.number_input(
+                            "High Tariff HT / Normaal (€/kWh):",
+                            min_value=0.0,
+                            value=float(prod_data.get("rate_peak_kwh", 0.1180)),
+                            format="%.4f",
+                            key=f"{key_prefix}_supp_ht_{selected_supplier_name}_{selected_product}",
+                            help="Normaaltarief during working weekdays (07:00 – 23:00)."
+                        )
+                        fixed_rate_nt = st.number_input(
+                            "Off-Peak NT / Dal (€/kWh):",
+                            min_value=0.0,
+                            value=float(prod_data.get("rate_offpeak_kwh", 0.0980)),
+                            format="%.4f",
+                            key=f"{key_prefix}_supp_nt_{selected_supplier_name}_{selected_product}",
+                            help="Daltarief during nights (23:00 – 07:00) and weekends (24h)."
+                        )
+                    fixed_rate_val = fixed_rate_ht
+                else:
+                    with col_s1:
+                        fixed_rate_val = st.number_input(
+                            "Uniform Energy Rate (€/kWh):",
+                            min_value=0.0,
+                            value=float(prod_data.get("fixed_rate_kwh", 0.1100)),
+                            format="%.4f",
+                            key=f"{key_prefix}_supp_fixed_rate_{selected_supplier_name}_{selected_product}",
+                            help="Enkeltarief applied 24/7 across all active kilowatt-hours."
+                        )
+                    fixed_rate_ht = fixed_rate_val
+                    fixed_rate_nt = fixed_rate_val
             else:
                 with col_s1:
                     fixed_rate_val = st.number_input(
-                        "Uniform Active Energy Rate (€/kWh):",
+                        "Base Index Energy Rate (€/kWh):",
                         min_value=0.0,
-                        value=float(prod_data.get("fixed_rate_kwh", 0.1250)),
+                        value=float(prod_data.get("fixed_rate_kwh", 0.1150)),
                         format="%.4f",
-                        key=f"{key_prefix}_supp_fixed_rate_{selected_supplier_name}_{selected_product}",
-                        help="Single flat commodity price applied 24/7 across all kilowatt-hours."
-                    )
-                with col_s2:
-                    green_surcharge = st.number_input(
-                        "Green Power Surcharge GvO (€/kWh):",
-                        min_value=0.0,
-                        value=float(prod_data.get("green_surcharge_kwh", 0.0)),
-                        format="%.4f",
-                        key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
-                        help="Guarantee of Origin (GvO) surcharge for certified green power."
-                    )
-                with col_s3:
-                    st.info(
-                        f":material/check_circle: **Uniform Rate:** {fixed_rate_val:.4f} €/kWh "
-                        f"(+ {green_surcharge:.4f} €/kWh GvO) flat across all hours."
+                        key=f"{key_prefix}_supp_var_rate_{selected_supplier_name}_{selected_product}",
+                        help="Baseline monthly forward energy rate."
                     )
                 fixed_rate_ht = fixed_rate_val
                 fixed_rate_nt = fixed_rate_val
 
-        else:
-            # Variable Monthly Mode
-            supp_margin = 0.0
-            procure_fee = 0.0
-            with col_s1:
-                fixed_rate_val = st.number_input(
-                    "Base Index Energy Rate (€/kWh):",
-                    min_value=0.0,
-                    value=float(prod_data.get("fixed_rate_kwh", 0.1250)),
-                    format="%.4f",
-                    key=f"{key_prefix}_supp_var_rate_{selected_supplier_name}_{selected_product}",
-                    help="Baseline energy rate indexed against monthly forward quotes."
-                )
-            with col_s2:
-                green_surcharge = st.number_input(
-                    "Green Power Surcharge GvO (€/kWh):",
-                    min_value=0.0,
-                    value=float(prod_data.get("green_surcharge_kwh", 0.0)),
-                    format="%.4f",
-                    key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
-                    help="Guarantee of Origin (GvO) surcharge for certified green power."
-                )
-            with col_s3:
-                st.info(
-                    ":material/calendar_month: **Variable Schedule:** Predefined 12-month series "
-                    "matching historical seasonal price shifts."
-                )
-            fixed_rate_ht = fixed_rate_val
-            fixed_rate_nt = fixed_rate_val
+            submitted_supp = st.form_submit_button(
+                "Save Supplier Tariff",
+                icon=":material/save:",
+                type="primary",
+                use_container_width=True
+            )
+            if submitted_supp:
+                st.success(f"Supplier configuration saved: **{selected_supplier_name}** ({active_pricing_mode.value.upper()})", icon=":material/check_circle:")
 
     # ----------------------------------------------------------------------------------
-    # Sub-Tab 3: Metering Company & Taxes
+    # Sub-Tab 3: Metering Company & Transformer Station Rental
     # ----------------------------------------------------------------------------------
     with actor_tabs[2]:
-        st.markdown("##### Certified Metering, Statutory Energy Levies & Lifecycle Economics")
+        st.markdown("##### Pillar 3 & 4: Certified Metering (EMV) & Transformer Station Rental")
 
-        col_m_co, col_m_pkg = st.columns([1.5, 2.5])
-        with col_m_co:
-            meter_options = list(METERING_CATALOG_2025.keys()) + ["Custom Meetbedrijf"]
-            selected_meter_name = st.selectbox(
-                "Metering Company (Erkend Meetbedrijf):",
-                options=meter_options,
-                index=0,
-                key=f"{key_prefix}_meter_name_select"
-            )
-
-        with col_m_pkg:
-            if selected_meter_name in METERING_CATALOG_2025:
-                pkg_dict = METERING_CATALOG_2025[selected_meter_name]
-                pkg_options = list(pkg_dict.keys())
-                selected_pkg = st.selectbox(
-                    "Service Package & Meter Type:",
-                    options=pkg_options,
+        with st.form(key=f"{key_prefix}_meter_trafo_form"):
+            st.subheader("1. Certified Metering Company (Erkend Meetverantwoordelijke - EMV)")
+            col_m_co, col_m_pkg = st.columns([1.5, 2.5])
+            with col_m_co:
+                meter_options = list(METERING_CATALOG_2025.keys()) + ["Custom Meetbedrijf"]
+                selected_meter_name = st.selectbox(
+                    "Metering Company (Meetbedrijf):",
+                    options=meter_options,
                     index=0,
-                    key=f"{key_prefix}_meter_pkg_{selected_meter_name}"
+                    key=f"{key_prefix}_meter_name_select"
                 )
-                pkg_data = pkg_dict[selected_pkg]
-                st.caption(f":material/info: *{pkg_data.get('description', '')}*")
-            else:
-                selected_pkg = "Custom Metering Package"
-                pkg_data = {"annual_flat_fee": 900.00, "description": "Custom metering contract"}
-                st.caption(":material/tune: *Custom metering and telemetry fees.*")
 
-        st.markdown("---")
+            with col_m_pkg:
+                if selected_meter_name in METERING_CATALOG_2025:
+                    pkg_dict = METERING_CATALOG_2025[selected_meter_name]
+                    pkg_options = list(pkg_dict.keys())
+                    selected_pkg = st.selectbox(
+                        "Service Package & Voltage Tier:",
+                        options=pkg_options,
+                        index=0,
+                        key=f"{key_prefix}_meter_pkg_{selected_meter_name}"
+                    )
+                    pkg_data = pkg_dict[selected_pkg]
+                    st.caption(f":material/info: *{pkg_data.get('description', '')}*")
+                else:
+                    selected_pkg = "Custom Metering Package"
+                    pkg_data = {"annual_flat_fee": 840.00, "voltage_level": "MS", "description": "Custom telemetry contract"}
+                    st.caption(":material/tune: *Custom telemetry and meter service contract.*")
 
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            meter_annual = st.number_input(
-                "Annual Telemetry & Meter Flat Fee (€/year):",
-                min_value=0.0,
-                value=float(pkg_data.get("annual_flat_fee", 900.00)),
-                step=50.0,
-                key=f"{key_prefix}_meter_annual_{selected_meter_name}_{selected_pkg}",
-                help="Kwartierdata telemetrie en meterhuur per jaar excl. btw"
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                meter_annual = st.number_input(
+                    "Annual Telemetry & Meter Fee (€/year):",
+                    min_value=0.0,
+                    value=float(pkg_data.get("annual_flat_fee", 840.00)),
+                    step=50.0,
+                    key=f"{key_prefix}_meter_annual",
+                    help="15-minuten intervaltelemetrie en NEDU data clearing per jaar excl. btw"
+                )
+            with col_m2:
+                st.info(
+                    f":material/speed: **Monthly Metering Equivalent:** € {meter_annual / 12.0:,.2f} / month | "
+                    f"**Voltage Tier:** {pkg_data.get('voltage_level', 'MS')}",
+                    icon=":material/speed:"
+                )
+
+            st.markdown("---")
+            st.subheader("2. Dedicated Transformer Substation Rental (Trafo-Station)")
+            st.caption("For Medium Voltage connections (AC5a, AC5b, AC5, AC6), taking delivery at 10 kV / 20 kV requires a dedicated transformer station.")
+
+            col_t_co, col_t_type = st.columns(2)
+            with col_t_co:
+                trafo_provider = st.selectbox(
+                    "Transformer Provider (Materiaalleverancier):",
+                    options=["Fudura B.V.", "Kenter B.V.", "Joulz Energy Solutions", "Alfen B.V.", "None / DSO Owned Trafo"],
+                    index=0,
+                    key=f"{key_prefix}_trafo_provider"
+                )
+
+            is_trafo_rented = (trafo_provider != "None / DSO Owned Trafo")
+            default_trafo_fee = 4248.0 if is_trafo_rented else 0.0
+
+            with col_t_type:
+                trafo_capacity = st.selectbox(
+                    "Transformer Station Capacity:",
+                    options=[
+                        "400 - 630 kVA Compactstation (€ 4,248 / yr = € 354 / mo)",
+                        "1,000 kVA Substation (€ 6,200 / yr)",
+                        "1,600 - 2,000 kVA Industrial (€ 9,200 / yr)",
+                        "5,000 kVA (5 MVA) High Capacity (€ 18,500 / yr)",
+                        "No Rental (Low Voltage AC4b or Customer Owned)"
+                    ],
+                    index=0 if is_trafo_rented else 4,
+                    key=f"{key_prefix}_trafo_cap_select"
+                )
+
+            if "630" in trafo_capacity:
+                default_trafo_fee = 4248.0
+            elif "1,000" in trafo_capacity:
+                default_trafo_fee = 6200.0
+            elif "2,000" in trafo_capacity:
+                default_trafo_fee = 9200.0
+            elif "5,000" in trafo_capacity:
+                default_trafo_fee = 18500.0
+            elif "No Rental" in trafo_capacity:
+                default_trafo_fee = 0.0
+                is_trafo_rented = False
+
+            col_tf1, col_tf2 = st.columns(2)
+            with col_tf1:
+                trafo_annual_fee = st.number_input(
+                    "Annual Transformer Rental & Maintenance (€/year):",
+                    min_value=0.0,
+                    value=float(default_trafo_fee),
+                    step=100.0,
+                    key=f"{key_prefix}_trafo_annual_fee",
+                    help="Jaarlijkse huur- en onderhoudskosten voor transformatorstation excl. btw"
+                )
+            with col_tf2:
+                nen_3840_included = st.checkbox(
+                    ":material/verified_user: Statutory NEN 3840 & IV-er Responsibility Included",
+                    value=True,
+                    key=f"{key_prefix}_trafo_nen3840",
+                    help="Inclusief wettelijk verplichte Installatieverantwoordelijke (IV-er) en 24/7 storingsdienst."
+                )
+
+            submitted_m_t = st.form_submit_button(
+                "Save Metering & Transformer Configuration",
+                icon=":material/save:",
+                type="primary",
+                use_container_width=True
             )
-        with col_m2:
-            st.info(
-                f":material/speed: **Monthly Metering Equivalent:** € {meter_annual / 12.0:,.2f} / month | "
-                f"**Service:** {selected_pkg}",
-                icon=":material/speed:"
+            if submitted_m_t:
+                st.success("Metering and Transformer Substation parameters saved.", icon=":material/check_circle:")
+
+    # ----------------------------------------------------------------------------------
+    # Sub-Tab 4: Statutory Taxes & Lifecycle Economics
+    # ----------------------------------------------------------------------------------
+    with actor_tabs[3]:
+        st.markdown("##### Statutory Energy Taxes (Energiebelasting) & 15-Year TCO Economics")
+
+        with st.form(key=f"{key_prefix}_tax_tco_form"):
+            st.subheader("1. Degressive Dutch Energiebelasting (5 Brackets)")
+
+            col_tx_yr, col_tx_verb = st.columns(2)
+            with col_tx_yr:
+                selected_tax_year = st.radio(
+                    "Statutory Tax Schedule:",
+                    options=[2025, 2026],
+                    index=0,
+                    horizontal=True,
+                    key=f"{key_prefix}_tax_year_radio"
+                )
+            with col_tx_verb:
+                has_verblijfsfunctie = st.checkbox(
+                    ":material/home_work: Connection has Residential/Work Function (Verblijfsfunctie)",
+                    value=True,
+                    key=f"{key_prefix}_tax_verblijfsfunctie",
+                    help="Entitles the connection to the statutory Vermindering Energiebelasting rebate (€524.95 in 2025, €519.80 in 2026)."
+                )
+
+            # Display Degressive Bracket Rates
+            credit_val = 524.95 if selected_tax_year == 2025 else 519.80
+            st.markdown(f"**Tax Year {selected_tax_year} Official Rates:**")
+            st.markdown(
+                f"- **Bracket 1 & 2 (0 – 10,000 kWh):** €{'0.1088' if selected_tax_year == 2025 else '0.1060'} / kWh\n"
+                f"- **Bracket 3 (10,000 – 50,000 kWh):** €{'0.0674' if selected_tax_year == 2025 else '0.0656'} / kWh\n"
+                f"- **Bracket 4 (50,000 – 10,000,000 kWh):** €{'0.0390' if selected_tax_year == 2025 else '0.0380'} / kWh\n"
+                f"- **Bracket 5 (> 10,000,000 kWh):** €0.0005 / kWh\n"
+                f"- **Vermindering Rebate:** €{credit_val:.2f} / year ({'Active' if has_verblijfsfunctie else 'Deactivated'}) | **VAT:** 21.0%"
             )
 
-        st.markdown("##### Statutory Energy Levies & VAT (Belastingen)")
-        col_tax1, col_tax2, col_tax3 = st.columns(3)
-        with col_tax1:
-            levy_rate = st.number_input(
-                "Statutory Energy Levies (€/kWh):",
-                min_value=0.0,
-                value=0.0125,
-                format="%.4f",
-                key=f"{key_prefix}_levy_rate",
-                help="Energiebelasting en wettelijke heffingen (indicatieve basisschijf)"
-            )
-        with col_tax2:
-            tax_reduction = st.number_input(
-                "Tax Reduction Credit Vermindering (€/year):",
-                min_value=0.0,
-                value=0.0,
-                step=50.0,
-                key=f"{key_prefix}_tax_reduction",
-                help="Vermindering energiebelasting (Heffingskorting € 631,39 voor aansluitingen met verblijfsfunctie, € 0 voor zuiver zakelijk)"
-            )
-        with col_tax3:
-            vat_rate = st.number_input(
-                "Value Added Tax (VAT %):",
-                min_value=0.0,
-                max_value=100.0,
-                value=21.0,
-                step=1.0,
-                key=f"{key_prefix}_vat_rate",
-                help="Btw-tarief (21% in Nederland)"
-            )
+            st.markdown("---")
+            st.subheader("2. 15-Year Lifecycle TCO Economics (Wirtschaftlichkeit)")
+            col_tco1, col_tco2 = st.columns(2)
+            with col_tco1:
+                discount_rate = st.number_input(
+                    "WACC / Discount Rate r (%):",
+                    min_value=0.0,
+                    max_value=25.0,
+                    value=5.0,
+                    step=0.5,
+                    key=f"{key_prefix}_tco_r",
+                    help="Discontovoet voor 15-jarige Total Cost of Ownership (NPV)"
+                )
+            with col_tco2:
+                escalation_rate = st.number_input(
+                    "Annual Electricity Price Escalation g (%):",
+                    min_value=0.0,
+                    max_value=25.0,
+                    value=3.0,
+                    step=0.5,
+                    key=f"{key_prefix}_tco_g",
+                    help="Jaarlijkse indexatie / stijging van de elektriciteitsprijs"
+                )
 
-        st.markdown("##### 15-Year Lifecycle TCO Economics (Wirtschaftlichkeit)")
-        col_tco1, col_tco2 = st.columns(2)
-        with col_tco1:
-            discount_rate = st.number_input(
-                "WACC / Discount Rate r (%):",
-                min_value=0.0,
-                max_value=25.0,
-                value=5.0,
-                step=0.5,
-                key=f"{key_prefix}_tco_r",
-                help="Discontovoet voor 15-jarige Total Cost of Ownership (NPV)"
+            submitted_tax_tco = st.form_submit_button(
+                "Save Tax & Lifecycle Parameters",
+                icon=":material/save:",
+                type="primary",
+                use_container_width=True
             )
-        with col_tco2:
-            escalation_rate = st.number_input(
-                "Annual Electricity Price Escalation g (%):",
-                min_value=0.0,
-                max_value=25.0,
-                value=3.0,
-                step=0.5,
-                key=f"{key_prefix}_tco_g",
-                help="Jaarlijkse indexatie / stijging van de elektriciteitsprijs"
-            )
+            if submitted_tax_tco:
+                st.success("Tax schedule and 15-year lifecycle parameters saved.", icon=":material/check_circle:")
 
     st.markdown("---")
 
@@ -779,17 +922,17 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     # ----------------------------------------------------------------------------------
     # 3. Assemble Configuration & Execute 5-Layer 2025 Accounting
     # ----------------------------------------------------------------------------------
-    # Connection fee is omitted for now (set to € 0.00); entire monthly fee represents fixed transport standing charge (Vastrecht)
-    fixed_conn = 0.0
-    fixed_trans = base_fee * 12.0
+    # Connection Fee PAV (annual) and Fixed Transport Admin Fee Vastrecht (annual)
+    fixed_conn = round(fixed_conn_mnd * 12.0, 2)
+    fixed_trans = round(base_fee * 12.0, 2)
 
     dso_tariff = DSOTariff(
         dso_name=selected_dso_company,
         grid_tier=selected_tier,
-        connection_category="standard",
+        connection_category=selected_tier,
         fixed_connection_annual=fixed_conn,
         fixed_transport_annual=fixed_trans,
-        cable_surcharge_annual=0.0,
+        cable_surcharge_annual=round(cable_surcharge, 2),
         contracted_capacity_kw=contracted_kw,
         rate_contracted_capacity=capacity_tariff,
         rate_peak_demand=demand_tariff,
@@ -804,6 +947,7 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     )
     supplier_tariff = SupplierTariff(
         supplier_name=selected_supplier_name,
+        supplier_category=str(prod_data.get("category", SupplierCategory.MAJOR_UTILITY.value)),
         pricing_mode=active_pricing_mode,
         tariff_product_name=selected_product,
         base_fee_annual=supp_base,
@@ -811,37 +955,58 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
         is_dual_rate=is_dual_rate,
         fixed_rate_peak_kwh=fixed_rate_ht,
         fixed_rate_offpeak_kwh=fixed_rate_nt,
-        procurement_fee_kwh=procure_fee,
+        procurement_fee_kwh=0.0,
+        supplier_margin_kwh=supp_margin,
+        balancing_fee_kwh=procure_fee,
         green_certificate_surcharge_kwh=green_surcharge,
+        tranche_blocks=tranche_blocks_configured,
         monthly_variable_rates=prod_data.get("monthly_variable_rates", [0.125] * 12),
         market_price_profile_id="epex_nl_2025",
-        supplier_margin_kwh=supp_margin,
-        spot_default_fallback_rate=0.1200,
+        spot_default_fallback_rate=0.0950,
     )
     metering_tariff = MeteringTariff(
         meter_company_name=selected_meter_name,
         service_package_name=selected_pkg,
         annual_flat_fee=meter_annual,
+        voltage_level=pkg_data.get("voltage_level", "MS"),
         description=pkg_data.get("description", ""),
     )
-    levy_config = LevyConfig(
-        statutory_levy_rate_kwh=levy_rate,
-        annual_tax_reduction=tax_reduction,
-        vat_rate_pct=vat_rate,
+    trafo_tariff = TrafoRentalTariff(
+        provider_name=trafo_provider,
+        station_type=trafo_capacity,
+        is_rented=is_trafo_rented,
+        monthly_rental_fee=round(trafo_annual_fee / 12.0, 2),
+    )
+    levy_config = get_default_levy_config(
+        tax_year=selected_tax_year,
+        has_verblijfsfunctie=has_verblijfsfunctie,
     )
     active_config = StatusQuoConfig2025(
         stage=TariffStage.STAGE_1_DEFAULT,
         dso=dso_tariff,
         supplier=supplier_tariff,
         metering=metering_tariff,
+        trafo=trafo_tariff,
         levies=levy_config,
         discount_rate_pct=discount_rate,
         energy_escalation_pct=escalation_rate,
         evaluation_horizon_years=15,
     )
 
-    result = calculate_status_quo_master_2025(load=load_series, config=active_config)
+    result = calculate_status_quo_master(load=load_series, config=active_config)
     audit_report = perform_full_status_quo_audit(load=load_series, result=result)
+
+    # ----------------------------------------------------------------------------------
+    # Sub-Tab 5: Executive Advisory & Strategy (Rendered inside the tab bar)
+    # ----------------------------------------------------------------------------------
+    with actor_tabs[4]:
+        render_procurement_strategy_view(
+            load=load_series,
+            active_config=active_config,
+            load_series=load_series,
+            active_result=result,
+            key_prefix=f"{key_prefix}_strategy"
+        )
 
     # ----------------------------------------------------------------------------------
     # 4. Period Filter Inspector & Executive Financial KPI Cards
@@ -894,11 +1059,12 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 status=breach_status
             )
         with col_kpi4:
-            supp_cost = target_rec.commercial.supplier_energy_cost + target_rec.commercial.supplier_base_fee
+            supp_cost = target_rec.commercial.supplier_total_net
+            meter_trafo_cost = target_rec.metering_net + target_rec.trafo_net
             render_kpi_card(
                 title=f":material/account_tree: {selected_period} Actor Split",
                 value=f"DSO: € {target_rec.dso.subtotal_dso_net:,.0f}",
-                subtext=f"Supp: € {supp_cost:,.0f} | Meter: € {target_rec.commercial.metering_fee:,.0f}",
+                subtext=f"Supp: € {supp_cost:,.0f} | Met/Trafo: € {meter_trafo_cost:,.0f}",
                 status="default"
             )
     else:
@@ -941,11 +1107,57 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     # 5. Operational Alerts & Breach Status
     # ----------------------------------------------------------------------------------
     if result.has_capacity_breach:
-        st.warning(
-            f":material/warning: **Capacity Breach Detected**: Recorded peak in month(s) "
-            f"{result.breach_months} exceeded reserved grid capacity ({contracted_kw:.1f} kW). "
-            f"Under Dutch grid regulation, capacity fee was adjusted to the actual measured peak for those months.",
-            icon=":material/warning:"
+        max_excess = max(0.0, result.annual_peak_demand_kw - contracted_kw)
+        excess_pct = (max_excess / max(1.0, contracted_kw)) * 100.0
+        breach_list_str = ", ".join(str(m) for m in result.breach_months)
+        st.markdown(
+            f"""
+            <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid #EF4444; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="font-size: 1.05rem; font-weight: 700; color: #F87171;">
+                        :material/warning: Contracted Grid Capacity Exceeded (GTV Overload Alert)
+                    </span>
+                    <span class="badge badge-rose" style="font-size: 0.8rem; font-weight: 600;">
+                        +{max_excess:.1f} kW (+{excess_pct:.1f}%)
+                    </span>
+                </div>
+                <div style="font-size: 0.88rem; color: #CBD5E1; line-height: 1.5; margin-bottom: 12px;">
+                    <strong>Peak Measurement:</strong> The facility recorded a peak of 
+                    <strong style="color: #F87171;">{result.annual_peak_demand_kw:,.1f} kW</strong>, exceeding the reserved GTV limit of 
+                    <strong>{contracted_kw:,.1f} kW</strong> in <strong>{len(result.breach_months)} month(s)</strong> (Month {breach_list_str}).
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px;">
+                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; border-radius: 8px; padding: 12px 14px;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: #F59E0B; margin-bottom: 4px;">
+                            :material/lock_clock: Case 1: Standard Grid (12-Month Ratchet Trap)
+                        </div>
+                        <div style="font-size: 0.8rem; color: #94A3B8; line-height: 1.4;">
+                            Under Dutch ACM regulatory rules, regional DSOs (Liander, Enexis, Stedin) treat single peak exceedances as a tacit capacity upgrade. 
+                            The monthly capacity fee is locked at this new peak level for <strong>at least 12 consecutive months</strong>, locking in substantial standing OPEX increases.
+                        </div>
+                    </div>
+                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; border-radius: 8px; padding: 12px 14px;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: #EF4444; margin-bottom: 4px;">
+                            :material/gavel: Case 2: Congested Grid Zone (Netcongestie Risk)
+                        </div>
+                        <div style="font-size: 0.8rem; color: #94A3B8; line-height: 1.4;">
+                            In designated Dutch grid congestion areas (North Brabant, Gelderland, Utrecht, etc.), capacity increases are legally and physically blocked. 
+                            Exceeding GTV is classified as a <strong>contract breach</strong>, carrying regulatory fines and the immediate threat of <strong>forced curtailment or complete grid disconnection</strong>.
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(239, 68, 68, 0.2); font-size: 0.82rem; color: #00D2B4;">
+                    :material/bolt: <strong>Strategic BESS Advisory:</strong> Implementing Battery Energy Storage (BESS) Peak Shaving buffers these 15-minute spikes, guarantees stay below GTV, protects against 12-month ratchet penalties, and circumvents congestion disputes.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        st.success(
+            f":material/check_circle: **Contracted Capacity Compliant**: Maximum measured annual peak of "
+            f"**{result.annual_peak_demand_kw:,.1f} kW** is within reserved GTV limit of **{contracted_kw:.1f} kW**.",
+            icon=":material/check_circle:"
         )
 
     st.markdown("---")
@@ -973,6 +1185,12 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     # ----------------------------------------------------------------------------------
     # 7. 12-Month Itemized Statement Table
     # ----------------------------------------------------------------------------------
+    # Live 4-Pillar Unbundled Invoice Card
+    render_live_invoice_card(
+        result=result,
+        period_title="Annual Consolidated Grootverbruik Statement" if not is_single_month else f"Monthly Invoice Statement: {selected_period}"
+    )
+
     st.markdown("### :material/table_view: 12-Month Accounting Statement Table")
 
     table_data = []
@@ -982,9 +1200,10 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             "Consumption (kWh)": round(r.consumption.total_kwh, 1),
             "Peak kW (P_max)": round(r.consumption.peak_demand_kw, 1),
             "DSO Net (€)": round(r.dso.subtotal_dso_net, 2),
-            "Supplier Net (€)": round(r.commercial.supplier_energy_cost + r.commercial.supplier_base_fee, 2),
-            "Metering Net (€)": round(r.commercial.metering_fee, 2),
-            "Levies Net (€)": round(r.commercial.statutory_levies, 2),
+            "Supplier Net (€)": round(r.commercial.supplier_total_net, 2),
+            "Metering Net (€)": round(r.metering_net, 2),
+            "Trafo Net (€)": round(r.trafo_net, 2),
+            "Taxes Net (€)": round(r.taxes_net, 2),
             "Total Net (€)": round(r.total_net, 2),
             "VAT 21% (€)": round(r.vat_amount, 2),
             "Total Gross (€)": round(r.total_gross, 2),
@@ -1014,7 +1233,7 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
     base_dso = float(result.total_dso_net)
     base_supp = float(result.total_supplier_net)
-    base_meter_taxes = float(result.total_metering_net) + float(result.total_levies_net)
+    base_meter_trafo_taxes = float(result.total_metering_net) + float(result.total_trafo_net) + float(result.total_taxes_net)
     base_kwh = float(result.total_consumption_kwh)
 
     tco_15_rows = []
@@ -1025,7 +1244,7 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
         dso_y = round(base_dso * esc_factor, 2)
         supp_y = round(base_supp * esc_factor, 2)
-        met_y = round(base_meter_taxes * esc_factor, 2)
+        met_y = round(base_meter_trafo_taxes * esc_factor, 2)
         tot_y = round(dso_y + supp_y + met_y, 2)
         cum_nominal_spend += tot_y
         pv_y = round(tot_y * disc_factor, 2)
@@ -1036,7 +1255,7 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             "Calendar Year": start_calendar_year + i,
             "DSO Grid (€)": dso_y,
             "Supplier (€)": supp_y,
-            "Metering & Taxes (€)": met_y,
+            "Metering, Trafo & Taxes (€)": met_y,
             "Annual Net Spend (€)": tot_y,
             "Cumulative Spend (€)": round(cum_nominal_spend, 2),
             "Discount Factor": round(disc_factor, 4),
@@ -1140,6 +1359,7 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             "dso": active_config.dso.to_dict(),
             "supplier": active_config.supplier.to_dict(),
             "metering": active_config.metering.to_dict(),
+            "trafo": active_config.trafo.to_dict(),
             "levies": active_config.levies.to_dict(),
             "tco": {
                 "discount_rate_pct": active_config.discount_rate_pct,

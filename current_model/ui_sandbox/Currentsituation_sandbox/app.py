@@ -4,12 +4,12 @@ Current Situation (Status Quo) Sandbox App
 ui_sandbox/Currentsituation_sandbox/app.py
 ========================================================================================
 
-Standalone Streamlit application encapsulating the baseline Status Quo workflow directly 
-copied from the main program:
-  1. Consumption Profile Modeling & Real CSV Ingestion (with full interactive Plotly load curves,
+Standalone Streamlit application encapsulating the Dutch Commercial Electricity
+Grootverbruik workbench:
+  1. Consumption Profile Modeling & 15-Minute Interval Ingestion (Interactive Plotly load curves,
      365-day baseline, monthly breakdown, overload analysis, and KPI cards).
-  2. Electricity Contract & Status Quo Billing Assessment (with tariff parameter form,
-     unbundled calculation, monthly payment series, and cost donut chart).
+  2. 4-Pillar Unbundled Contract Billing & Executive Strategy (Regulated DSO, Energy Retailer,
+     Certified Metering EMV, Transformer Station Rental, and Degressive Energiebelasting).
 """
 
 import os
@@ -20,54 +20,92 @@ current_dir = os.path.abspath(os.path.dirname(__file__))
 ui_sandbox_dir = os.path.abspath(os.path.join(current_dir, ".."))
 current_model_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
 workspace_dir = os.path.abspath(os.path.join(current_model_dir, ".."))
-for p in [current_dir, ui_sandbox_dir, current_model_dir, workspace_dir]:
+for p in [workspace_dir, current_model_dir, current_dir, ui_sandbox_dir]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
 import streamlit as st
 import pandas as pd
 
-# Styling & Common Components
-try:
-    from current_model.ui.common.styles import apply_custom_styles
-    from current_model.ui.common.cards import render_kpi_card
-except ImportError:
-    from ui.common.styles import apply_custom_styles
-    from ui.common.cards import render_kpi_card
-
 import importlib
 
-# Copied Local Modules
+# ========================================================================================
+# Permanent Module Hot-Reloading for Development Sandbox:
+# DO NOT REMOVE: Guarantees that any modifications made to theme, charts, procurement,
+# contract, or consumption views are immediately reloaded from disk on Streamlit rerun.
+# ========================================================================================
+
+# 1. Reload engine submodules if already cached in sys.modules
+for mod_name in list(sys.modules.keys()):
+    if "Currentsituation_sandbox.engine" in mod_name:
+        try:
+            importlib.reload(sys.modules[mod_name])
+        except Exception:
+            pass
+
+# 2. Explicitly import and reload UI theme, charts, strategy view, contract view, and consumption view
 try:
-    import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
-    import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+    import ui_sandbox.Currentsituation_sandbox.ui_theme as _ui_theme
     import ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+    import ui_sandbox.Currentsituation_sandbox.contract.procurement_view as _strat_view
+    import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+    import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
+    importlib.reload(_ui_theme)
     importlib.reload(_con_charts)
+    importlib.reload(_strat_view)
     importlib.reload(_con_view)
     importlib.reload(_c_view)
+    apply_currsit_theme = _ui_theme.apply_currsit_theme
+    configure_plotly_currsit_theme = _ui_theme.configure_plotly_currsit_theme
+    render_hero_banner = _ui_theme.render_hero_banner
     render_tab1_consumption = _c_view.render_tab1_consumption
     render_tab2_base_contract = _con_view.render_tab2_base_contract
 except Exception:
     try:
-        import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
-        import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+        import current_model.ui_sandbox.Currentsituation_sandbox.ui_theme as _ui_theme
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.procurement_view as _strat_view
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
+        import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
+        importlib.reload(_ui_theme)
         importlib.reload(_con_charts)
+        importlib.reload(_strat_view)
         importlib.reload(_con_view)
         importlib.reload(_c_view)
+        apply_currsit_theme = _ui_theme.apply_currsit_theme
+        configure_plotly_currsit_theme = _ui_theme.configure_plotly_currsit_theme
+        render_hero_banner = _ui_theme.render_hero_banner
         render_tab1_consumption = _c_view.render_tab1_consumption
         render_tab2_base_contract = _con_view.render_tab2_base_contract
     except Exception:
-        from consumption.view import render_tab1_consumption
-        from contract.view import render_tab2_base_contract
+        import ui_theme as _ui_theme
+        import contract.charts as _con_charts
+        import contract.procurement_view as _strat_view
+        import contract.view as _con_view
+        import consumption.view as _c_view
+        importlib.reload(_ui_theme)
+        importlib.reload(_con_charts)
+        importlib.reload(_strat_view)
+        importlib.reload(_con_view)
+        importlib.reload(_c_view)
+        apply_currsit_theme = _ui_theme.apply_currsit_theme
+        configure_plotly_currsit_theme = _ui_theme.configure_plotly_currsit_theme
+        render_hero_banner = _ui_theme.render_hero_banner
+        render_tab1_consumption = _c_view.render_tab1_consumption
+        render_tab2_base_contract = _con_view.render_tab2_base_contract
 
 
 def render_current_situation_sandbox(key_prefix: str = "currsit") -> None:
     """Renders the complete Current Situation (Status Quo) workbench."""
-    st.markdown("## :material/analytics: Current Situation (Status Quo) Sandbox")
-    st.caption(
-        "Self-contained baseline laboratory replicating the main application's consumption inspector, "
-        "full 15-minute interactive load visualizer, and commercial electricity contract billing engine."
+    render_hero_banner(
+        title="Commercial Electricity Procurement & Status Quo Sandbox",
+        subtitle=(
+            "Dutch Grootverbruik (> 3x80A) regulatory baseline: 4-pillar unbundled market structure "
+            "(Regulated DSO, Energy Retailer, Certified EMV Metering, Transformer Substation Rental), "
+            "degressive Energiebelasting, and executive sourcing advisory."
+        ),
+        badge_text="DUTCH GROOTVERBRUIK > 3x80A",
+        icon=":material/analytics:"
     )
 
     # Status Overview Banner
@@ -113,13 +151,13 @@ def render_current_situation_sandbox(key_prefix: str = "currsit") -> None:
 def main() -> None:
     """Standalone page entrypoint."""
     st.set_page_config(
-        page_title="Current Situation Sandbox | Energy Simulator",
+        page_title="Dutch Commercial Electricity Sandbox | Status Quo",
         page_icon=":material/analytics:",
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    if apply_custom_styles:
-        apply_custom_styles()
+    apply_currsit_theme()
+    configure_plotly_currsit_theme()
     render_current_situation_sandbox()
 
 
