@@ -1,3 +1,5 @@
+# to run: python -m streamlit run "ui_sandbox/Currentsituation_sandbox/app.py"
+
 """
 ========================================================================================
 Current Situation (Status Quo) Sandbox App

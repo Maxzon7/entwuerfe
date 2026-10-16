@@ -515,6 +515,14 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
         st.markdown("---")
 
+        # Fallback defaults ensuring no UnboundLocalError under any condition
+        fixed_rate_val = float(prod_data.get("fixed_rate_kwh", 0.1250))
+        fixed_rate_ht = float(prod_data.get("rate_peak_kwh", 0.1340))
+        fixed_rate_nt = float(prod_data.get("rate_offpeak_kwh", 0.1180))
+        supp_margin = 0.0
+        procure_fee = 0.0
+        is_dual_rate = False
+
         col_s1, col_s2, col_s3 = st.columns(3)
         with col_s1:
             green_surcharge = st.number_input(
@@ -575,6 +583,7 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                         help="Uniforme vaste leveringsprijs per actief kilowattuur"
                     )
                     fixed_rate_ht = fixed_rate_val
+                    fixed_rate_nt = fixed_rate_val
                 supp_margin = 0.0
                 procure_fee = 0.0
             else:
@@ -587,15 +596,20 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 procure_fee = 0.0
 
         with col_s3:
-            if active_pricing_mode == PricingMode.FIXED and is_dual_rate:
-                fixed_rate_nt = st.number_input(
-                    "Off-Peak Rate NT / Dal (€/kWh):",
-                    min_value=0.0,
-                    value=float(prod_data.get("rate_offpeak_kwh", 0.1180)),
-                    format="%.4f",
-                    key=f"{key_prefix}_supp_nt_{selected_supplier_name}_{selected_product}",
-                    help="Tarief actieve energie tijdens nachten (23:00 - 07:00) en weekenden (24h)"
-                )
+            if active_pricing_mode == PricingMode.FIXED:
+                if is_dual_rate:
+                    fixed_rate_nt = st.number_input(
+                        "Off-Peak Rate NT / Dal (€/kWh):",
+                        min_value=0.0,
+                        value=float(prod_data.get("rate_offpeak_kwh", 0.1180)),
+                        format="%.4f",
+                        key=f"{key_prefix}_supp_nt_{selected_supplier_name}_{selected_product}",
+                        help="Tarief actieve energie tijdens nachten (23:00 - 07:00) en weekenden (24h)"
+                    )
+                else:
+                    st.info(
+                        f":material/check_circle: **Uniform Rate:** {fixed_rate_val:.4f} €/kWh flat across all hours."
+                    )
             elif active_pricing_mode == PricingMode.DYNAMIC:
                 st.caption(":material/hub: *EPEX Spot wholesale series linked to Europe/Amsterdam timezone.*")
 
