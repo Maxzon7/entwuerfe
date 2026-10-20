@@ -25,24 +25,42 @@ TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 CURRENT_MODEL_DIR = os.path.abspath(os.path.join(TEST_DIR, ".."))
 WORKSPACE_ROOT = os.path.abspath(os.path.join(CURRENT_MODEL_DIR, ".."))
 
-for path in [WORKSPACE_ROOT, CURRENT_MODEL_DIR]:
+NOT_IN_USE_DIR = os.path.abspath(os.path.join(CURRENT_MODEL_DIR, "not in Use"))
+
+for path in [WORKSPACE_ROOT, CURRENT_MODEL_DIR, NOT_IN_USE_DIR]:
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from current_model.ui_sandbox.monthly_baseline_lab import (
-    get_salentein_pozo600_preset,
-    get_3tier_argentine_preset,
-    get_netherlands_commercial_preset,
-    compute_monthly_billing,
-    build_enexis_2025_tariff_dataframe,
-    build_liander_2025_tariff_dataframe,
-    ENEXIS_2025_GRID_TIERS,
-    ENEXIS_2025_CONNECTION_CAPACITIES,
-    LIANDER_2025_GRID_TIERS,
-    LIANDER_2025_CONNECTION_CAPACITIES,
-    TOUTierConfig,
-    AnnualBillingSummary
-)
+try:
+    from monthly_baseline_lab import (
+        get_salentein_pozo600_preset,
+        get_3tier_argentine_preset,
+        get_netherlands_commercial_preset,
+        compute_monthly_billing,
+        build_enexis_2025_tariff_dataframe,
+        build_liander_2025_tariff_dataframe,
+        ENEXIS_2025_GRID_TIERS,
+        ENEXIS_2025_CONNECTION_CAPACITIES,
+        LIANDER_2025_GRID_TIERS,
+        LIANDER_2025_CONNECTION_CAPACITIES,
+        TOUTierConfig,
+        AnnualBillingSummary
+    )
+except ImportError:
+    from current_model.ui_sandbox.monthly_baseline_lab import (
+        get_salentein_pozo600_preset,
+        get_3tier_argentine_preset,
+        get_netherlands_commercial_preset,
+        compute_monthly_billing,
+        build_enexis_2025_tariff_dataframe,
+        build_liander_2025_tariff_dataframe,
+        ENEXIS_2025_GRID_TIERS,
+        ENEXIS_2025_CONNECTION_CAPACITIES,
+        LIANDER_2025_GRID_TIERS,
+        LIANDER_2025_CONNECTION_CAPACITIES,
+        TOUTierConfig,
+        AnnualBillingSummary
+    )
 
 
 class TestMonthlyBaselineLab(unittest.TestCase):

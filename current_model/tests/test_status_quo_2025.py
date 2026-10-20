@@ -15,7 +15,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from current_model.ui_sandbox.status_quo_2025 import (
+from current_model.ui_sandbox.Currentsituation_sandbox.engine import (
     TariffStage,
     PricingMode,
     LoadSeries2025,
@@ -35,12 +35,12 @@ from current_model.ui_sandbox.status_quo_2025 import (
     calculate_status_quo_master_2025,
     perform_full_status_quo_audit,
 )
-from current_model.ui_sandbox.status_quo_2025.consumption_pipeline import (
+from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
     create_reference_2025_timestamps,
     classify_liander_tou_window,
     extract_monthly_consumption_records,
 )
-from current_model.ui_sandbox.status_quo_2025.status_quo_master import compute_tco_15_npv
+from current_model.ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import compute_tco_15_npv
 
 
 class TestStatusQuo2025Accounting(unittest.TestCase):
@@ -217,7 +217,7 @@ class TestStatusQuo2025Accounting(unittest.TestCase):
 
     def test_supplier_dual_tou_commodity_accounting(self):
         """Verifies dual TOU commodity split: E_HT * rate_ht + E_NT * rate_nt."""
-        from current_model.ui_sandbox.status_quo_2025.tariff_defaults_2025 import (
+        from current_model.ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
             get_supplier_tariff_from_catalog,
             get_metering_tariff_from_catalog,
         )
@@ -251,7 +251,7 @@ class TestStatusQuo2025Accounting(unittest.TestCase):
 
     def test_single_month_breakdown_adapter(self):
         """Verifies single-month period filter adapter in convert_to_financial_cost_breakdown."""
-        from current_model.ui_sandbox.status_quo_2025.status_quo_master import convert_to_financial_cost_breakdown
+        from current_model.ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import convert_to_financial_cost_breakdown
         load = synthesize_benchmark_load_profile_2025(nominal_peak_kw=150.0)
         config = get_stage_1_default_config_2025()
         result = calculate_status_quo_master_2025(load=load, config=config)
@@ -290,7 +290,7 @@ class TestStatusQuo2025Accounting(unittest.TestCase):
 
     def test_liander_2025_table_2_1_pdf_alignment(self):
         """Validates that Liander 2025 MS/LS rates match official PDF Table 2.1."""
-        from current_model.ui_sandbox.status_quo_2025.tariff_defaults_2025 import LIANDER_2025_GRID_TIERS
+        from current_model.ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import LIANDER_2025_GRID_TIERS
 
         ms_ls = LIANDER_2025_GRID_TIERS["MS/LS (> 50 t/m 136 kW)"]
         self.assertEqual(ms_ls["rate_contracted_monthly"], 3.6567)

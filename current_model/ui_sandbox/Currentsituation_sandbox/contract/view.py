@@ -53,7 +53,7 @@ except ImportError:
 
 # 2025 5-Layer Accounting Modules & Official Catalogs
 try:
-    from ui_sandbox.status_quo_2025.config_and_models import (
+    from ui_sandbox.Currentsituation_sandbox.engine.config_and_models import (
         TariffStage,
         PricingMode,
         DSOTariff,
@@ -63,7 +63,7 @@ try:
         StatusQuoConfig2025,
         LoadSeries2025,
     )
-    from ui_sandbox.status_quo_2025.tariff_defaults_2025 import (
+    from ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
         DSO_CATALOGS_2025,
         SUPPLIER_CATALOG_2025,
         METERING_CATALOG_2025,
@@ -73,45 +73,107 @@ try:
         get_default_metering_tariff_2025,
         get_default_levy_config_2025,
     )
-    from ui_sandbox.status_quo_2025.consumption_pipeline import (
+    from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
     )
-    from ui_sandbox.status_quo_2025.status_quo_master import (
+    from ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
         calculate_status_quo_master_2025,
         convert_to_financial_cost_breakdown,
     )
-    from ui_sandbox.status_quo_2025.audit import perform_full_status_quo_audit
+    from ui_sandbox.Currentsituation_sandbox.engine.audit import perform_full_status_quo_audit
 except ImportError:
-    from current_model.ui_sandbox.status_quo_2025.config_and_models import (
-        TariffStage,
-        PricingMode,
-        DSOTariff,
-        SupplierTariff,
-        MeteringTariff,
-        LevyConfig,
-        StatusQuoConfig2025,
-        LoadSeries2025,
-    )
-    from current_model.ui_sandbox.status_quo_2025.tariff_defaults_2025 import (
-        DSO_CATALOGS_2025,
-        SUPPLIER_CATALOG_2025,
-        METERING_CATALOG_2025,
-        get_dso_tariff_from_catalog,
-        get_stage_1_default_config_2025,
-        get_default_supplier_tariff_2025,
-        get_default_metering_tariff_2025,
-        get_default_levy_config_2025,
-    )
-    from current_model.ui_sandbox.status_quo_2025.consumption_pipeline import (
-        normalize_load_profile_2025,
-        synthesize_benchmark_load_profile_2025,
-    )
-    from current_model.ui_sandbox.status_quo_2025.status_quo_master import (
-        calculate_status_quo_master_2025,
-        convert_to_financial_cost_breakdown,
-    )
-    from current_model.ui_sandbox.status_quo_2025.audit import perform_full_status_quo_audit
+    try:
+        from engine.config_and_models import (
+            TariffStage,
+            PricingMode,
+            DSOTariff,
+            SupplierTariff,
+            MeteringTariff,
+            LevyConfig,
+            StatusQuoConfig2025,
+            LoadSeries2025,
+        )
+        from engine.tariff_defaults_2025 import (
+            DSO_CATALOGS_2025,
+            SUPPLIER_CATALOG_2025,
+            METERING_CATALOG_2025,
+            get_dso_tariff_from_catalog,
+            get_stage_1_default_config_2025,
+            get_default_supplier_tariff_2025,
+            get_default_metering_tariff_2025,
+            get_default_levy_config_2025,
+        )
+        from engine.consumption_pipeline import (
+            normalize_load_profile_2025,
+            synthesize_benchmark_load_profile_2025,
+        )
+        from engine.status_quo_master import (
+            calculate_status_quo_master_2025,
+            convert_to_financial_cost_breakdown,
+        )
+        from engine.audit import perform_full_status_quo_audit
+    except ImportError:
+        try:
+            from current_model.ui_sandbox.Currentsituation_sandbox.engine.config_and_models import (
+                TariffStage,
+                PricingMode,
+                DSOTariff,
+                SupplierTariff,
+                MeteringTariff,
+                LevyConfig,
+                StatusQuoConfig2025,
+                LoadSeries2025,
+            )
+            from current_model.ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
+                DSO_CATALOGS_2025,
+                SUPPLIER_CATALOG_2025,
+                METERING_CATALOG_2025,
+                get_dso_tariff_from_catalog,
+                get_stage_1_default_config_2025,
+                get_default_supplier_tariff_2025,
+                get_default_metering_tariff_2025,
+                get_default_levy_config_2025,
+            )
+            from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
+                normalize_load_profile_2025,
+                synthesize_benchmark_load_profile_2025,
+            )
+            from current_model.ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
+                calculate_status_quo_master_2025,
+                convert_to_financial_cost_breakdown,
+            )
+            from current_model.ui_sandbox.Currentsituation_sandbox.engine.audit import perform_full_status_quo_audit
+        except ImportError:
+            from ui_sandbox.status_quo_2025.config_and_models import (
+                TariffStage,
+                PricingMode,
+                DSOTariff,
+                SupplierTariff,
+                MeteringTariff,
+                LevyConfig,
+                StatusQuoConfig2025,
+                LoadSeries2025,
+            )
+            from ui_sandbox.status_quo_2025.tariff_defaults_2025 import (
+                DSO_CATALOGS_2025,
+                SUPPLIER_CATALOG_2025,
+                METERING_CATALOG_2025,
+                get_dso_tariff_from_catalog,
+                get_stage_1_default_config_2025,
+                get_default_supplier_tariff_2025,
+                get_default_metering_tariff_2025,
+                get_default_levy_config_2025,
+            )
+            from ui_sandbox.status_quo_2025.consumption_pipeline import (
+                normalize_load_profile_2025,
+                synthesize_benchmark_load_profile_2025,
+            )
+            from ui_sandbox.status_quo_2025.status_quo_master import (
+                calculate_status_quo_master_2025,
+                convert_to_financial_cost_breakdown,
+            )
+            from ui_sandbox.status_quo_2025.audit import perform_full_status_quo_audit
 
 
 def _find_or_create_load_series_2025() -> Tuple[LoadSeries2025, str]:

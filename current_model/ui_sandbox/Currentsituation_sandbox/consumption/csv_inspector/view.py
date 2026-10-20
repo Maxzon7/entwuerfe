@@ -329,9 +329,15 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 # Automatically normalize for 2025 Status Quo Accounting Pipeline
                 try:
                     try:
-                        from ui_sandbox.status_quo_2025.consumption_pipeline import normalize_load_profile_2025
+                        from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import normalize_load_profile_2025
                     except ImportError:
-                        from current_model.ui_sandbox.status_quo_2025.consumption_pipeline import normalize_load_profile_2025
+                        try:
+                            from engine.consumption_pipeline import normalize_load_profile_2025
+                        except ImportError:
+                            try:
+                                from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import normalize_load_profile_2025
+                            except ImportError:
+                                from ui_sandbox.status_quo_2025.consumption_pipeline import normalize_load_profile_2025
                     p_col = "Total_Demand_kW" if "Total_Demand_kW" in df_clean.columns else (selected_power_cols[0] if selected_power_cols else df_clean.columns[1])
                     t_col = "timestamp" if "timestamp" in df_clean.columns else None
                     load_2025, _ = normalize_load_profile_2025(raw_df=df_clean, power_col=p_col, time_col=t_col)
