@@ -1,7 +1,7 @@
-# BESS Peak Shaving & 15-Year Life-Cycle TCO Sandbox
+# BESS Peak Shaving & Sizing Laboratory (Physics-First Architecture)
 
-A dedicated, isolated Streamlit engineering and financial laboratory located at `ui_sandbox/BESS_sandbox/`.
-It allows testing, sizing, and validating Battery Energy Storage System (BESS) peak shaving feasibility and multi-year economics without interacting with the main production workflow or navigating through multi-scenario setups.
+A dedicated, isolated Streamlit engineering decision laboratory located at `ui_sandbox/BESS_sandbox/`.
+It allows testing, sizing, and validating Battery Energy Storage System (BESS) peak shaving feasibility and multi-peak cluster physics without interacting with the main production workflow or navigating through multi-scenario setups.
 
 ---
 
@@ -13,89 +13,137 @@ Run the sandbox directly in isolated mode:
 python -m streamlit run "ui_sandbox/BESS_sandbox/app.py"
 ```
 
-Or run via Streamlit:
-
-```bash
-streamlit run ui_sandbox/BESS_sandbox/app.py
-```
-
 ---
 
-## 2. Architecture & Modules
+## 2. Architecture & File Structure
 
-```
+```text
 ui_sandbox/BESS_sandbox/
-├── __init__.py               # Package exports: render_bess_sandbox, engines, presets
-├── app.py                    # Main standalone Streamlit entrypoint & scenario coordinator
+├── __init__.py               # Package exports: render_bess_sandbox, tab views, engines, presets, charts
+├── app.py                    # Main standalone Streamlit coordinator (2 physics tabs + benchmark switcher)
 ├── baseline_presets.py       # Pre-configured Dutch industrial & commercial benchmark profiles
-├── sandbox_bess_engine.py    # Physical gross sizing, dynamic degradation, & 15-year TCO engine
-├── view_technical.py         # Tab 1: Peak shaving feasibility, diagnostics, & 15-min dispatch
-├── view_financial.py         # Tab 2: Avoided grid upgrade CAPEX vs. BESS 15Y TCO & NPV
-├── view_optimizer.py         # Tab 3: Parametric capacity sweep & sensitivity tornado
+├── sandbox_bess_engine.py    # Physics sizing engine: multi-peak clusters, simultaneous bottlenecks & Pareto tradeoff
+├── sandbox_charts.py         # Sandbox-local Plotly figures (synchronized 2-in-1 dispatch/SoC & Pareto hockey stick)
+├── view_problem.py           # Tab 1: Current Situation & In-Tab CSV Quick Ingestion (The Problem)
+├── view_technical.py         # Tab 2: BESS Sizing & Excel Validation (The Solution - 4 structured blocks)
+├── view_financial.py         # Preserved for Step 2: Financial Comparison & 15Y TCO (Avoided grid upgrade vs. BESS)
+├── view_optimizer.py         # Optional / Parametric capacity sweep & sensitivity library
 └── README.md                 # Complete sandbox documentation
 ```
 
 ---
 
-## 3. Core Features & Capabilities
+## 3. Core Physics Workflow & The 2-Tab Architecture
 
-### Tab 1: Peak Shaving & Physical Dispatch (`view_technical.py`)
-- **Grid Diagnostic Analyzer:** Computes peak facility demand, peak overload above contracted grid limit (kW), cumulative overload duration (hours & % of year), and worst continuous deficit event energy (kWh).
-- **Automated Gross Nameplate Sizing:** Automatically calculates the true battery nameplate size accounting for:
-  $$\text{Usable DoD Window} = \text{SoC}_{\max} - \text{SoC}_{\min}$$
-  $$\text{Discharge Efficiency} = \sqrt{\text{RTE}}$$
-  $$\text{Gross Capacity (kWh)} = \frac{\text{Worst Event Energy (kWh)}}{\text{Usable DoD} \times \sqrt{\text{RTE}}} \times (1 + \text{Safety Margin})$$
-- **100% Feasibility Badge:** Explicit green/red verdict verifying whether all peak spikes are completely eliminated or if residual overloads remain.
-- **Plotly Visualizations:**
-  - 15-Minute interactive power dispatch timeseries with 14-day default zoom and range slider.
-  - 7-Day representative Monday–Sunday weekly cycling profile.
-  - Load Duration Curve comparing original facility load vs. post-BESS profile.
-  - 24-Hour $\times$ 7-Day State of Charge (SoC) Heatmap.
+The sandbox focuses strictly on **electrical and battery physics**: proving whether a BESS configuration can eliminate all grid overloads above the contracted limit before evaluating financial metrics.
 
-### Tab 2: Financial Viability & 15-Year TCO (`view_financial.py`)
-- **Direct Baseline Comparison:** Compares investing in physical grid reinforcement (avoided transformer station upgrade CAPEX + avoided monthly transformer rental fees) against deploying BESS.
-- **Unbundled Tariff Reductions:** Evaluates monthly peak demand charge savings ($\Delta \text{kW-max} \times \text{Tariff}$) and contracted capacity savings ($\Delta \text{GTV} \times \text{Tariff}$).
-- **Dynamic 15-Year Battery Degradation:** Multi-year capacity retention model factoring in:
-  - Calendar aging (1.0%/yr)
-  - Cycling throughput wear (0.04% per 100 Equivalent Full Cycles)
-  - Ambient temperature stress penalties ($+0.05\%$ per °C above 25°C)
-  - Year-10 cell stack overhaul (restoring capacity to 95%)
-- **Itemized Annual Operational Cost Comparison Table:** Baseline Upgrade vs. With-BESS vs. Delta.
-- **Financial Visualizations:**
-  - 15-Year Cumulative Life-Cycle Expenditure Trajectory.
-  - Cumulative Cash Flow & Amortization Break-Even Payback Curve.
-  - Stacked Annual Cost Breakdown Bar Chart.
-  - Turn-Key CAPEX Sizing Donut.
+```mermaid
+graph TD
+    A["Load Profile (15-min CSV or Benchmark)"] --> B["Tab 1: Problem Analysis"]
+    B --> C["Pure Physical Exceedance (kWh, Peak kW, Hours)"]
+    C --> D["Multi-Peak Cluster Sizing Algorithm"]
+    D --> E["100% Zero-Deficit Reference Anchor"]
+    E --> F["Tab 2: Solution & Validation"]
+    F --> G["Middle Sub-Tabs: Manual Form (0.5C Lock) vs. Pareto Tradeoff"]
+    G --> H["Simultaneous 4-Criterion Bottleneck Checklist"]
+    H --> I["5 Excel Validation KPIs"]
+    I --> J["Synchronized 2-in-1 Plotly Subplot (Dispatch + SoC)"]
+```
 
-### Tab 3: Sizing Optimizer & Sensitivity Analysis (`view_optimizer.py`)
-- **Parametric Sizing Sweep:** Simulates 6 strategic capacity multiples ($0.5\times$ to $2.0\times$ recommended size) to identify:
-  - **Minimum Feasible Sizing:** Lowest turnkey investment that achieves 100% peak shaving.
-  - **Optimal Economic Sizing:** Sizing that maximizes 15-year Net Present Value (NPV).
-- **One-Click Application:** Instant form population with the optimal parameters.
-- **Multi-Variable Sensitivity Tornado:** Tests investment sensitivity across $\pm 10\%$ and $\pm 20\%$ variations in BESS CAPEX, Avoided Grid Upgrade CAPEX, and Demand Tariffs.
+---
+
+### Tab 1: Current Situation & Load Ingestion (The Problem) (`view_problem.py`)
+
+- **In-Tab CSV Quick Ingestor:**
+  - File uploader supporting `.csv` and `.txt` files directly inside Tab 1.
+  - Automatic column inspection and sniff-based mapping for timestamp and active power (`P_Load_kW`, `Total_Demand_kW`, `kW`, `W`, `MW` with auto-conversion).
+  - Integration with `core.csv_parser.process_load_profile_data` for frequency validation and leap-year sanitization.
+  - Session state persistence (`bess_sb_custom_csv_df`) surviving tab switches.
+- **Contracted Grid Limit Controls:**
+  - Quick limit callback buttons (`147 kW (Liander AC4b)`, `150 kW (Enexis MS-D)`, `430 kW (Industrial Medium)`) utilizing pre-render `on_click` callbacks to avoid widget instantiation race conditions.
+  - Numeric input for arbitrary custom grid limits with instant delta calculations.
+- **4 Purified Problem KPI Cards (Pure Physics - No Battery Assumptions):**
+  1. `Peak Facility Demand`: Highest observed 15-minute load (kW) and delta above grid limit.
+  2. `Peak Overload Above Limit`: Maximum instantaneous overload requiring peak shaving (kW).
+  3. `Total Overload Duration`: Total annual hours above the limit and percentage of the year.
+  4. `Total Exceedance Energy (kWh)`: Pure physical integral $\int \max(0, P_{\text{load}} - P_{\text{limit}}) dt$ (kWh/yr) and share of total facility consumption.
+- **Grid Violation Preview Chart:**
+  - Full-year interactive load profile highlighting red exceedance areas above the limit with custom range selector buttons (1D, 7D, 1M, Full Year).
+
+---
+
+### Tab 2: BESS Sizing & Excel Validation (The Solution) (`view_technical.py`)
+
+Tab 2 is organized into **4 structured blocks**:
+
+#### Block 1: 100% Zero-Deficit Reference Box
+- Displays the exact minimum battery sizing required to eliminate 100% of grid overloads (reproducing the Excel multi-peak cluster sizing methodology).
+- Metrics:
+  - `Min. Required Gross Capacity`: $E_{\text{gross}} = \frac{E_{\text{usable}}}{\text{DoD}}$ (kWh).
+  - `Min. Required Usable Buffer`: Multi-peak consecutive deficit accumulation (kWh).
+  - `Min. Required Discharge Power`: Peak overload $P_{\text{peak}} - P_{\text{limit}}$ (kW).
+  - `Min. Inverter Recharge Power`: Minimum charging power required between consecutive peak events (kW).
+  - `Recommended Modular Units`: Sized based on unit capacity.
+- Action: `:material/auto_fix: Apply Exact Minimum Sizing (0.0 kWh Deficit)` button to instantly populate the interactive configuration form.
+
+#### Block 2: Middle Interactive Sub-Tabs
+- **Sub-Tab A: Manual Sizing Form & 0.5C Sizing Lock:**
+  - Enclosed in an `st.form` to prevent UI thrashing and excessive recalculations during rapid slider/input changes.
+  - **0.5C Sizing Lock (2h Duration Coupling):** When toggled, automatically calculates continuous inverter discharge and charge power as $\text{Gross Capacity} \times 0.5$, ensuring industrial standard battery C-rates.
+  - Unit count and unit capacity controls.
+  - Operational boundaries: $\text{SoC}_{\min} (\%)$, $\text{SoC}_{\max} (\%)$, and Round-Trip Efficiency ($\%$).
+- **Sub-Tab B: Interactive Pareto Tradeoff Curve:**
+  - Displays the coverage hockey-stick curve of required battery capacity (kWh) and inverter power (kW) across target exceedance energy coverages ($50\%$ to $100\%$).
+  - Identifies the economic knee-of-the-curve where $80\text{--}90\%$ of peak overload energy can be shaved with a fraction of the capacity required for rare multi-day clusters.
+  - Highlights current user sizing against the Pareto optimal frontier.
+
+#### Block 3: Feasibility Diagnosis & Simultaneous Bottleneck Audit
+- **Simultaneous 4-Criterion Bottleneck Checklist:**
+  Evaluates all 4 physical constraints simultaneously in isolation (no short-circuiting or early exit on failure):
+  1. `:material/battery_charging_full:` **Grid Recharge Headroom:** Evaluates whether total annual headroom below the grid limit can recharge the annual exceedance energy (including round-trip efficiency losses).
+  2. `:material/bolt:` **Inverter Discharge Power:** Evaluates whether rated discharge power meets or exceeds the highest 15-minute overload.
+  3. `:material/battery_horiz_075:` **Storage Capacity (Multi-Peak Clusters):** Evaluates whether gross capacity covers the worst multi-day consecutive deficit cluster under ideal recharge.
+  4. `:material/sync:` **Recharge Inverter Power:** Evaluates whether charging power can replenish the buffer in the short lulls between consecutive peaks.
+  - Each item displays status badges (`:material/check_circle: PASSED`, `:material/cancel: BOTTLENECK`, `:material/warning: WARNING`), configured value, required value, and engineering margin.
+- **The 5-Metric Excel Validation Block:**
+  1. `Battery Capacity`: Gross nameplate kWh and effective usable buffer.
+  2. `Battery Power`: Continuous discharge kW and charge kW.
+  3. `Max Grid Import`: Observed grid import kW vs contracted limit.
+  4. `Observed SoC Range`: Min % – Max % and minimum kWh reached.
+  5. `Remaining Deficit (Excel 'Generator')`: Total unserved deficit (kWh/yr) and residual peak deficit (kW).
+
+#### Block 4: Synchronized 2-in-1 Plotly Subplot (`create_synced_dispatch_soc_figure`)
+- Single unified figure combining the 15-minute power dispatch (top panel, 62% height) with the battery State of Charge envelope (bottom panel, 38% height).
+- **Shared X-Axes (`shared_xaxes=True`):** Panning or zooming on one panel automatically synchronizes the other.
+- **Single Range Slider & Selectors:** One range slider at the bottom drives both panels synchronously.
+- **Peak Focus Auto-Zoom:** Automatically centers on the annual peak overload week on initial load.
+- Top panel displays: Facility Load (grey), Grid Import (blue), BESS Discharge (green fill), BESS Charge (cyan fill below baseline), and Remaining Unmet Deficit (bold red area).
+- Bottom panel displays: State of Charge % (purple trace with dashed $\text{SoC}_{\min}$ / $\text{SoC}_{\max}$ limits) and stored energy in kWh on secondary y-axis.
 
 ---
 
 ## 4. Benchmark Presets
 
-1. **Case 1: Liander Industrial Peak Shaving (AC4b vs. AC5a Upgrade)**
+1. **Case 1: Liander Industrial Peak Shaving (AC4b Connection)**
    - Facility Load: 350 kW peak manufacturing profile with intermittent high-demand machinery cycles.
-   - Grid Limit: Maintained on low-voltage AC4b contracted connection (147 kW limit).
-   - Baseline Alternative: Upgrading to medium-voltage AC5a (350 kW) requiring €85,000 station CAPEX and €450/month transformer rental.
-   - BESS Solution: 260 kW / 500 kWh LFP modular system.
+   - Grid Limit: Contracted connection capped at 147 kW.
+   - Zero-Deficit BESS Sizing: ~203 kW / ~485 kWh LFP system.
 
 2. **Case 2: Enexis Commercial Facility (MS-D Tariff)**
    - Facility Load: 250 kW peak commercial logistics building.
    - Grid Limit: Contracted capacity capped at 150 kW.
-   - Avoided Upgrade: €45,000 transformer expansion.
-   - BESS Solution: 150 kW / 250 kWh LFP modular system.
+   - Zero-Deficit BESS Sizing: ~100 kW / ~240 kWh LFP system.
 
-3. **Custom / Uploaded Profile Adapter**
-   - Automatically ingests 15-minute load CSV data uploaded by the user or shared from `ui_sandbox/Currentsituation_sandbox/` via `st.session_state["active_csv_df"]`.
+3. **Custom CSV Ingestion:**
+   - Ingests arbitrary 15-minute load CSV data uploaded by the user with automatic column sniffing and unit conversion.
 
 ---
 
-## 5. Architectural Isolation Rules
+## 5. Architectural Isolation & Quality Standards
 
-- **Strict One-Way Dependency:** `ui_sandbox/BESS_sandbox/` may import from `core/`, `models/`, `ui/`, and other sandbox packages.
+- **Strict One-Way Dependency:** `ui_sandbox/BESS_sandbox/` may import from `core/`, `models/`, and `ui/`.
 - **Production Guard:** Core production modules (`core/`, `models/`, `ui/`, and root `app.py`) **MUST NEVER** import from `ui_sandbox/`.
+- **Zero Cartoon Emojis:** Strictly uses Streamlit's native Google Material Symbols (`:material/<icon_name>:`).
+- **English UI Text:** All UI text, charts, labels, and docstrings are strictly in English.
+- **Regression Suite:** Covered by unit tests in `tests/test_ui_sandbox.py` covering exceedance calculations, simultaneous bottleneck audits, Pareto curves, and synced charts.
+

@@ -65,15 +65,18 @@ current_model/ui_sandbox/
 │       ├── status_quo_master.py
 │       └── audit.py
 │
-└── BESS_sandbox/                               # [Active Sandbox 2] BESS Peak Shaving & 15Y TCO
-    ├── __init__.py                             # Subpackage exports (render_bess_sandbox, main)
-    ├── app.py                                  # Standalone Streamlit application entrypoint
+└── BESS_sandbox/                               # [Active Sandbox 2] BESS Peak Shaving & Sizing Laboratory
+    ├── __init__.py                             # Subpackage exports (render_bess_sandbox, main, engines, charts)
+    ├── app.py                                  # Standalone Streamlit application entrypoint (2 physics tabs)
     ├── baseline_presets.py                     # Dutch industrial & commercial benchmark profiles
-    ├── sandbox_bess_engine.py                  # Gross sizing recommendations & 15Y TCO engine
-    ├── view_technical.py                       # Tab 1: Peak shaving feasibility & 15-min dispatch
-    ├── view_financial.py                       # Tab 2: Avoided grid upgrade CAPEX vs. BESS 15Y TCO
-    ├── view_optimizer.py                       # Tab 3: Parametric capacity sweep & sensitivity
-    └── README.md                               # Detailed BESS sandbox documentation & formulas
+    ├── sandbox_bess_engine.py                  # Multi-peak clusters, simultaneous bottlenecks & Pareto tradeoff
+    ├── sandbox_charts.py                       # Plotly synchronized 2-in-1 dispatch/SoC & Pareto hockey stick
+    ├── view_problem.py                         # Tab 1: Current situation & in-tab CSV quick ingestion
+    ├── view_technical.py                       # Tab 2: 100% zero-deficit reference, manual 0.5C form, Pareto curve, 4 bottlenecks & synced chart
+    ├── view_financial.py                       # Preserved for Step 2: Avoided grid upgrade CAPEX vs. BESS 15Y TCO
+    ├── view_optimizer.py                       # Optional / Parametric capacity sweep & sensitivity
+    └── README.md                               # Detailed BESS physics-first laboratory documentation
+
 ```
 
 ---

@@ -10,8 +10,15 @@ Verifies that:
 
 import unittest
 import os
+import sys
 import glob
 import ast
+
+# Ensure project root is in sys.path
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 
 
 class TestUISandboxIsolation(unittest.TestCase):
@@ -41,7 +48,7 @@ class TestUISandboxIsolation(unittest.TestCase):
         self.assertTrue(os.path.isdir(bess_dir), "ui_sandbox/BESS_sandbox directory must exist")
         for expected_file in [
             "__init__.py", "app.py", "baseline_presets.py", "sandbox_bess_engine.py",
-            "view_technical.py", "view_financial.py", "view_optimizer.py", "README.md"
+            "view_problem.py", "view_technical.py", "view_financial.py", "view_optimizer.py", "README.md"
         ]:
             f_path = os.path.join(bess_dir, expected_file)
             self.assertTrue(os.path.isfile(f_path), f"ui_sandbox/BESS_sandbox/{expected_file} must exist")
@@ -79,6 +86,255 @@ class TestUISandboxIsolation(unittest.TestCase):
             f"Illegal imports from ui_sandbox detected in production code: {illegal_imports}"
         )
 
+    def test_bess_sandbox_dual_sizing_and_dispatch(self):
+        """Verifies BESS sandbox dual sizing, generator assist simulation, and economics."""
+        from ui_sandbox.BESS_sandbox import (
+            get_case1_liander_industrial_preset,
+            compute_dual_bess_sizing,
+            simulate_sandbox_bess_dispatch,
+            evaluate_sandbox_bess_economics
+        )
+
+        preset = get_case1_liander_industrial_preset()
+        self.assertIsNotNone(preset)
+        self.assertGreater(preset.grid_limit_kw, 0.0)
+
+        # 1. Dual Sizing
+        dual_rec = compute_dual_bess_sizing(
+            load_series=preset.load_df["Total_Demand_kW"],
+            grid_limit_kw=preset.grid_limit_kw,
+            target_percentile=90.0,
+            round_trip_efficiency_pct=preset.bess_config.round_trip_efficiency_pct,
+            soc_min_pct=preset.bess_config.soc_min_pct,
+            soc_max_pct=preset.bess_config.soc_max_pct,
+            unit_capacity_kwh=preset.bess_config.unit_capacity_kwh,
+            step_hours=0.25
+        )
+        self.assertGreater(dual_rec.option_a_gross_kwh, 0.0)
+        self.assertGreater(dual_rec.option_b_gross_kwh, 0.0)
+        self.assertGreaterEqual(dual_rec.option_a_gross_kwh, dual_rec.option_b_gross_kwh)
+        self.assertGreater(dual_rec.inverter_power_kw, 0.0)
+
+        # 2. Dispatch with Option B (BESS + Generator)
+        cfg_b = preset.bess_config
+        cfg_b.capacity_kwh = dual_rec.option_b_gross_kwh
+        cfg_b.unit_count = dual_rec.option_b_unit_count
+        cfg_b.max_discharge_power_kw = dual_rec.inverter_power_kw
+        cfg_b.max_charge_power_kw = dual_rec.inverter_power_kw
+
+        sim_res = simulate_sandbox_bess_dispatch(
+            bess_config=cfg_b,
+            load_df=preset.load_df,
+            grid_limit_kw=preset.grid_limit_kw,
+            step_hours=0.25,
+            power_col="Total_Demand_kW",
+            enable_generator_assist=True,
+            generator_rated_kw=dual_rec.required_generator_kw
+        )
+        self.assertIn("P_Generator_kW", sim_res.df_timeseries.columns)
+        # Verify 100% feasibility under hybrid option
+        res_overload = sim_res.diagnostics_after.get("overload_peak_kw", 0.0)
+        self.assertLessEqual(res_overload, 0.05, "Hybrid BESS + Generator should eliminate all overloads")
+
+        # 3. Financial evaluation with generator
+        fin_res = evaluate_sandbox_bess_economics(
+            bess_config=cfg_b,
+            sim_result=sim_res,
+            contract_baseline=preset.contract_baseline,
+            contract_bess=preset.contract_bess,
+            avoided_grid_upgrade_capex=preset.avoided_grid_upgrade_capex,
+            avoided_monthly_transformer_rent=preset.avoided_monthly_transformer_rent,
+            generator_capex=dual_rec.required_generator_kw * 120.0,
+            generator_monthly_rent=0.0,
+            diesel_price_per_liter=1.65,
+            fuel_liters_per_kwh=0.28
+        )
+        self.assertIsNotNone(fin_res)
+        self.assertGreater(fin_res.annual_gross_savings, 0.0)
+        self.assertGreater(fin_res.annual_opex_year1, 0.0)
+
+    def test_bess_sandbox_view_problem_diagnostics(self):
+        """Verifies that view_problem imports engine cleanly and calculate_excel_bess_sizing_and_diagnostics runs."""
+        from ui_sandbox.BESS_sandbox import view_problem, get_case1_liander_industrial_preset
+        preset = get_case1_liander_industrial_preset()
+
+        self.assertTrue(hasattr(view_problem, "engine"), "view_problem module must have engine imported")
+        self.assertIsNotNone(view_problem.engine, "engine in view_problem must not be None")
+
+        power_col = "Total_Demand_kW" if "Total_Demand_kW" in preset.load_df.columns else "P_Load_kW"
+        excel_sizing = view_problem.engine.calculate_excel_bess_sizing_and_diagnostics(
+            preset.load_df[power_col], preset.grid_limit_kw, step_hours=0.25
+        )
+        self.assertIsNotNone(excel_sizing)
+        self.assertGreater(excel_sizing.worst_cluster_net_deficit_kwh, 0.0)
+
+    def test_bess_sandbox_presets_and_quick_limit_callbacks(self):
+        """Verifies presets have distinct grid limits and view_problem uses on_click callbacks for limits."""
+        from ui_sandbox.BESS_sandbox import baseline_presets as presets
+        import inspect
+        from ui_sandbox.BESS_sandbox import view_problem
+
+        case1 = presets.get_case1_liander_industrial_preset()
+        case2 = presets.get_case2_enexis_commercial_preset()
+
+        self.assertEqual(case1.grid_limit_kw, 147.0)
+        self.assertEqual(case2.grid_limit_kw, 150.0)
+
+        # Check that view_problem code uses on_click rather than setting session_state directly in if button
+        src = inspect.getsource(view_problem.render_problem_baseline_tab)
+        self.assertIn("on_click=_set_quick_grid_limit", src)
+        self.assertNotIn("if q_cols[0].button", src)
+
+    def test_bess_sandbox_exceedance_energy_summary(self):
+        """Verifies calculation of total unmitigated exceedance kWh, peak excess kW, and count of overload hours."""
+        from ui_sandbox.BESS_sandbox import (
+            get_case1_liander_industrial_preset,
+            compute_exceedance_energy_summary
+        )
+        preset = get_case1_liander_industrial_preset()
+        power_col = "Total_Demand_kW" if "Total_Demand_kW" in preset.load_df.columns else "P_Load_kW"
+        summary = compute_exceedance_energy_summary(
+            preset.load_df[power_col],
+            preset.grid_limit_kw,
+            step_hours=0.25
+        )
+        self.assertGreater(summary["total_exceedance_kwh"], 0.0)
+        self.assertGreater(summary["max_overload_kw"], 0.0)
+        self.assertGreater(summary["overload_hours"], 0.0)
+        self.assertGreater(summary["overload_intervals"], 0)
+        # Peak excess + grid_limit should equal max demand
+        max_demand = float(preset.load_df[power_col].max())
+        self.assertAlmostEqual(summary["max_overload_kw"] + preset.grid_limit_kw, max_demand, places=2)
+
+    def test_bess_sandbox_simultaneous_bottlenecks(self):
+        """Verifies all 4 criteria are evaluated simultaneously without early if/elif exit."""
+        from ui_sandbox.BESS_sandbox import (
+            get_case1_liander_industrial_preset,
+            evaluate_comprehensive_bottlenecks,
+            calculate_excel_bess_sizing_and_diagnostics,
+            simulate_sandbox_bess_dispatch
+        )
+        from models.bess import BESSConfig
+
+        preset = get_case1_liander_industrial_preset()
+        power_col = "Total_Demand_kW" if "Total_Demand_kW" in preset.load_df.columns else "P_Load_kW"
+
+        excel_sizing = calculate_excel_bess_sizing_and_diagnostics(
+            preset.load_df[power_col], preset.grid_limit_kw, step_hours=0.25
+        )
+
+        # Deliberately undersized test configuration to trigger multiple bottlenecks simultaneously
+        undersized_cfg = BESSConfig(
+            capacity_kwh=excel_sizing.min_required_gross_kwh * 0.3,
+            max_discharge_power_kw=excel_sizing.min_required_discharge_kw * 0.5,
+            max_charge_power_kw=excel_sizing.min_required_charge_kw * 0.5,
+            round_trip_efficiency_pct=preset.bess_config.round_trip_efficiency_pct,
+            soc_min_pct=preset.bess_config.soc_min_pct,
+            soc_max_pct=preset.bess_config.soc_max_pct,
+            initial_soc_pct=preset.bess_config.initial_soc_pct,
+            unit_capacity_kwh=preset.bess_config.unit_capacity_kwh
+        )
+
+
+        sim_res = simulate_sandbox_bess_dispatch(
+            bess_config=undersized_cfg,
+            load_df=preset.load_df,
+            grid_limit_kw=preset.grid_limit_kw,
+            step_hours=0.25,
+            power_col=power_col
+        )
+
+        audit = evaluate_comprehensive_bottlenecks(
+            load_series=preset.load_df[power_col],
+            grid_limit_kw=preset.grid_limit_kw,
+            bess_config=undersized_cfg,
+            step_hours=0.25,
+            sim_result=sim_res
+        )
+
+        # Must evaluate all 4 checks, not exit on first failure
+        self.assertEqual(len(audit.checks), 4)
+        check_keys = [c.key for c in audit.checks]
+        self.assertIn("discharge_power", check_keys)
+        self.assertIn("storage_capacity", check_keys)
+        self.assertIn("recharge_power", check_keys)
+        self.assertIn("grid_headroom", check_keys)
+
+        # Under 30% sizing, it must not be fully feasible
+        self.assertFalse(audit.all_passed)
+        self.assertGreater(audit.failed_count, 0)
+
+
+    def test_bess_sandbox_pareto_curve(self):
+        """Verifies Pareto tradeoff calculation returns valid curve points ending in 100% at reference sizing."""
+        from ui_sandbox.BESS_sandbox import (
+            get_case1_liander_industrial_preset,
+            compute_pareto_coverage_curve
+        )
+        preset = get_case1_liander_industrial_preset()
+        power_col = "Total_Demand_kW" if "Total_Demand_kW" in preset.load_df.columns else "P_Load_kW"
+
+        pareto_res = compute_pareto_coverage_curve(
+            load_series=preset.load_df[power_col],
+            grid_limit_kw=preset.grid_limit_kw,
+            round_trip_efficiency_pct=preset.bess_config.round_trip_efficiency_pct,
+            soc_min_pct=preset.bess_config.soc_min_pct,
+            soc_max_pct=preset.bess_config.soc_max_pct,
+            step_hours=0.25
+        )
+
+        self.assertGreaterEqual(len(pareto_res.coverage_pct), 3)
+        self.assertIn(100.0, pareto_res.coverage_pct)
+        idx_100 = pareto_res.coverage_pct.index(100.0)
+        self.assertAlmostEqual(pareto_res.residual_deficit_kwh[idx_100], 0.0, places=1)
+        self.assertGreater(pareto_res.required_gross_kwh[idx_100], 0.0)
+
+    def test_bess_sandbox_synced_charts(self):
+        """Verifies Plotly 2-in-1 synced chart generation with shared x-axes and annotations."""
+        from ui_sandbox.BESS_sandbox import (
+            get_case1_liander_industrial_preset,
+            simulate_sandbox_bess_dispatch,
+            create_synced_dispatch_soc_figure,
+            create_pareto_tradeoff_figure,
+            compute_pareto_coverage_curve
+        )
+        preset = get_case1_liander_industrial_preset()
+        power_col = "Total_Demand_kW" if "Total_Demand_kW" in preset.load_df.columns else "P_Load_kW"
+
+        sim_res = simulate_sandbox_bess_dispatch(
+            bess_config=preset.bess_config,
+            load_df=preset.load_df,
+            grid_limit_kw=preset.grid_limit_kw,
+            step_hours=0.25,
+            power_col=power_col
+        )
+
+        fig_synced = create_synced_dispatch_soc_figure(
+            df=sim_res.df_timeseries,
+            grid_limit_kw=preset.grid_limit_kw,
+            soc_min_pct=preset.bess_config.soc_min_pct,
+            soc_max_pct=preset.bess_config.soc_max_pct,
+            capacity_kwh=preset.bess_config.capacity_kwh
+        )
+        self.assertIsNotNone(fig_synced)
+        # Shared x-axes check: layout should contain xaxis or xaxis2
+        self.assertTrue(hasattr(fig_synced.layout, "xaxis2") or hasattr(fig_synced.layout, "xaxis"))
+
+        # Test Pareto chart
+        pareto_res = compute_pareto_coverage_curve(
+            load_series=preset.load_df[power_col],
+            grid_limit_kw=preset.grid_limit_kw,
+            round_trip_efficiency_pct=preset.bess_config.round_trip_efficiency_pct,
+            soc_min_pct=preset.bess_config.soc_min_pct,
+            soc_max_pct=preset.bess_config.soc_max_pct,
+            step_hours=0.25
+        )
+        fig_pareto = create_pareto_tradeoff_figure(pareto_res)
+        self.assertIsNotNone(fig_pareto)
+
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

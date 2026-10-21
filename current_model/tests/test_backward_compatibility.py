@@ -6,6 +6,17 @@ Unit Tests: Backward Compatibility & Migrations (tests/test_backward_compatibili
 
 import unittest
 import datetime
+import os
+import sys
+
+# Ensure project and parent root in sys.path
+TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(TEST_DIR, ".."))
+PARENT_ROOT = os.path.abspath(os.path.join(PROJECT_ROOT, ".."))
+for p in [PROJECT_ROOT, PARENT_ROOT]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from current_model.models.load_component import TimeWindow, SimpleConsumer
 from current_model.models.contract import Contract
 

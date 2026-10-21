@@ -1,19 +1,20 @@
 """
 ========================================================================================
-BESS Sandbox - Financial Viability & 15-Year TCO View
+BESS Sandbox - The Financials: Avoided Grid Upgrade vs. BESS 15Y TCO
 (ui_sandbox/BESS_sandbox/view_financial.py)
 ========================================================================================
 
 Description:
 ------------
-Comprehensive multi-year lifecycle financial viability assessment:
-  - Avoided grid upgrade CAPEX & monthly transformer rental comparison.
-  - BESS turnkey CAPEX, OPEX, conversion loss costs, and cell stack replacement.
-  - 6 executive KPI cards: Net Initial Investment Delta, Annual Gross/Net Savings,
-    Payback, 15Y NPV, IRR, and LCOS (€/kWh).
-  - Itemized annual cost comparison table (Baseline vs. With-BESS vs. Delta).
-  - High-contrast Plotly figures: 15Y Cumulative Trajectory, Break-Even Payback,
-    Annual Cost Bar Comparison, and CAPEX Sizing Donut.
+Comprehensive 15-year life-cycle financial comparison:
+  - Avoided grid upgrade CAPEX & monthly transformer lease charges vs. BESS / Hybrid investment.
+  - Optional Peaking Generator purchase, rental, and diesel fuel OPEX modeling.
+  - 6 executive KPI cards: Net Initial Investment Delta, Annual Gross Savings,
+    Annual OPEX, Simple Payback Period, 15-Year Life-Cycle NPV, and IRR / LCOS.
+  - Itemized annual operational cost comparison table (Baseline vs. With BESS vs. Delta).
+  - Strictly 2 high-impact trajectory charts:
+      1. 15-Year Cumulative Life-Cycle Expenditure (Status Quo vs. With BESS).
+      2. Cumulative Cash Flow & Amortization Payback Break-Even Curve.
 """
 
 import os
@@ -37,18 +38,14 @@ try:
     from current_model.core.bess_engine import BESSSimulationResult
     from current_model.ui.tab4_bess.financial_charts import (
         create_bess_cashflow_payback_figure,
-        create_bess_annual_cost_comparison_figure,
-        create_bess_cumulative_cost_trajectory_figure,
-        create_bess_capex_donut_figure
+        create_bess_cumulative_cost_trajectory_figure
     )
 except ImportError:
     from models.bess import BESSConfig, BESSFinancialMetrics
     from core.bess_engine import BESSSimulationResult
     from ui.tab4_bess.financial_charts import (
         create_bess_cashflow_payback_figure,
-        create_bess_annual_cost_comparison_figure,
-        create_bess_cumulative_cost_trajectory_figure,
-        create_bess_capex_donut_figure
+        create_bess_cumulative_cost_trajectory_figure
     )
 
 from ui_sandbox.BESS_sandbox import baseline_presets as presets
@@ -60,19 +57,23 @@ def render_financial_viability_tab(
     sim_result: BESSSimulationResult
 ) -> BESSFinancialMetrics:
     """
-    Renders the multi-year financial viability assessment comparing Status Quo / Grid Upgrade vs. With-BESS.
+    Renders the commercial comparison comparing utility grid reinforcement vs. BESS / Hybrid investment.
+    Displays strictly 2 trajectory curves: 15Y cumulative spend + cashflow break-even.
     """
-    st.subheader(":material/account_balance: Financial Viability & 15-Year Life-Cycle TCO")
+    st.subheader(":material/account_balance: Financial Comparison & 15Y TCO (The Economics)")
     st.caption(
-        "Compare the total cost of ownership (TCO) between paying for grid reinforcement & elevated capacity fees "
-        "versus investing in a Battery Energy Storage System (BESS)."
+        "Compare the total cost of ownership (TCO) between paying for physical grid expansion & elevated capacity tariffs "
+        "versus deploying an on-site Battery Energy Storage System (BESS) or a BESS + Peaking Generator hybrid."
     )
 
     bess_cfg = sim_result.config
     currency = bess_cfg.currency or "EUR"
 
+    enable_gen = bool(st.session_state.get("bess_sb_enable_gen", False))
+    gen_kw = float(st.session_state.get("bess_sb_gen_kw", 0.0)) if enable_gen else 0.0
+
     # --- Section 1: Financial Inputs & Cost Assumptions ---
-    with st.expander(":material/tune: Financial & Grid Upgrade Cost Parameters", expanded=True):
+    with st.expander(":material/tune: Financial & Grid Upgrade Parameters", expanded=True):
         col_f1, col_f2, col_f3 = st.columns(3)
 
         with col_f1:
@@ -150,13 +151,63 @@ def render_financial_viability_tab(
                 key="bess_sb_cell_rep_cost"
             )
 
-    # Recalculate BESS total capex
+        # Optional Peaking Generator Commercial Parameters
+        if enable_gen and gen_kw > 0.0:
+            st.markdown("---")
+            st.markdown(f"##### :material/power: Peaking Generator Commercial Parameters ({gen_kw:,.0f} kW Assisted)")
+            gen_f1, gen_f2, gen_f3, gen_f4 = st.columns(4)
+            with gen_f1:
+                default_gen_capex = float(gen_kw * 120.0)
+                gen_capex = st.number_input(
+                    f"Generator Purchase CAPEX ({currency})",
+                    min_value=0.0,
+                    max_value=300000.0,
+                    value=float(st.session_state.get("bess_sb_gen_capex", default_gen_capex)),
+                    step=1000.0,
+                    key="bess_sb_gen_capex",
+                    help="Upfront purchase and commissioning cost (typically €100-150/kW). Set to 0 if leasing."
+                )
+            with gen_f2:
+                gen_rent = st.number_input(
+                    f"Generator Rental ({currency}/mo)",
+                    min_value=0.0,
+                    max_value=10000.0,
+                    value=float(st.session_state.get("bess_sb_gen_rent", 0.0)),
+                    step=50.0,
+                    key="bess_sb_gen_rent",
+                    help="Monthly equipment lease fee if renting the peaking generator rather than purchasing."
+                )
+            with gen_f3:
+                diesel_price = st.number_input(
+                    f"Fuel Price ({currency}/Liter)",
+                    min_value=0.50,
+                    max_value=4.00,
+                    value=float(st.session_state.get("bess_sb_diesel_price", 1.65)),
+                    step=0.05,
+                    key="bess_sb_diesel_price"
+                )
+            with gen_f4:
+                fuel_rate = st.number_input(
+                    "Fuel Consumption (Liters/kWh)",
+                    min_value=0.15,
+                    max_value=0.60,
+                    value=float(st.session_state.get("bess_sb_fuel_rate", 0.28)),
+                    step=0.01,
+                    key="bess_sb_fuel_rate"
+                )
+        else:
+            gen_capex = 0.0
+            gen_rent = 0.0
+            diesel_price = 1.65
+            fuel_rate = 0.28
+
+    # Update active config parameters
     bess_cfg.cost_per_kwh = float(capex_per_kwh)
     bess_cfg.fixed_installation_cost = float(fixed_install_fee)
     bess_cfg.annual_om_pct = float(annual_om_pct)
     bess_cfg.cell_replacement_cost_pct = float(cell_rep_cost_pct)
 
-    # --- Section 2: Execute Financial Evaluation ---
+    # --- Section 2: Execute Life-Cycle Financial Evaluation ---
     fin_metrics = engine.evaluate_sandbox_bess_economics(
         bess_config=bess_cfg,
         sim_result=sim_result,
@@ -168,24 +219,43 @@ def render_financial_viability_tab(
         discount_rate_pct=float(discount_rate_pct),
         electricity_price_inflation_pct=float(inflation_pct),
         ambient_temperature_c=25.0,
-        step_hours=0.25
+        step_hours=0.25,
+        generator_capex=float(gen_capex),
+        generator_monthly_rent=float(gen_rent),
+        diesel_price_per_liter=float(diesel_price),
+        fuel_liters_per_kwh=float(fuel_rate)
     )
 
-    # Net Initial Investment
     gross_bess_capex = float(bess_cfg.total_capex)
-    net_initial_investment = max(0.0, gross_bess_capex - avoided_upgrade_capex)
+    total_turnkey_capex = gross_bess_capex + float(gen_capex)
+    net_initial_investment = max(0.0, total_turnkey_capex - avoided_upgrade_capex)
+
+    # Generator fuel & rental calculation for reporting
+    df_ts = sim_result.df_timeseries
+    if "P_Generator_kW" in df_ts.columns:
+        gen_annual_kwh = float(np.sum(df_ts["P_Generator_kW"].to_numpy(dtype=float)) * 0.25)
+    else:
+        gen_annual_kwh = 0.0
+    gen_annual_fuel_cost = round(gen_annual_kwh * float(fuel_rate) * float(diesel_price), 2)
+    gen_annual_rent_cost = round(float(gen_rent) * 12.0, 2)
+    gen_total_opex = gen_annual_fuel_cost + gen_annual_rent_cost
 
     # --- Section 3: Executive KPI Cards ---
     st.markdown("#### :material/analytics: Executive Investment & Savings KPIs")
 
     kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
     with kpi_col1:
+        if enable_gen and gen_capex > 0:
+            delta_capex_str = f"BESS: {gross_bess_capex:,.0f} | Gen: {gen_capex:,.0f} | Avoided: -{avoided_upgrade_capex:,.0f} {currency}"
+        else:
+            delta_capex_str = f"BESS: {gross_bess_capex:,.0f} | Avoided: -{avoided_upgrade_capex:,.0f} {currency}"
+
         st.metric(
             label="Net Initial Investment Delta",
             value=f"{net_initial_investment:,.0f} {currency}",
-            delta=f"BESS: {gross_bess_capex:,.0f} | Avoided: -{avoided_upgrade_capex:,.0f} {currency}",
+            delta=delta_capex_str,
             delta_color="off",
-            help="Net initial capital outlay required for BESS after offsetting the avoided physical grid expansion CAPEX."
+            help="Net initial capital outlay required after offsetting the avoided physical grid expansion CAPEX."
         )
     with kpi_col2:
         st.metric(
@@ -196,12 +266,17 @@ def render_financial_viability_tab(
             help="Total annual cost reduction across peak demand charges, contracted capacity, and avoided transformer rental."
         )
     with kpi_col3:
+        if enable_gen and gen_total_opex > 0:
+            delta_opex_str = f"O&M: {fin_metrics.annual_fixed_om:,.0f} | Loss: {fin_metrics.annual_loss_cost:,.0f} | Gen: {gen_total_opex:,.0f} {currency}"
+        else:
+            delta_opex_str = f"O&M: {fin_metrics.annual_fixed_om:,.0f} | Loss: {fin_metrics.annual_loss_cost:,.0f} {currency}"
+
         st.metric(
             label="Annual OPEX & Efficiency Cost",
             value=f"{fin_metrics.annual_opex_year1:,.0f} {currency}/yr",
-            delta=f"O&M: {fin_metrics.annual_fixed_om:,.0f} | Loss: {fin_metrics.annual_loss_cost:,.0f} {currency}",
+            delta=delta_opex_str,
             delta_color="inverse",
-            help="Annual operational costs including maintenance and energy lost to battery conversion inefficiency."
+            help="Annual operational costs including maintenance, battery round-trip conversion losses, and generator fuel/rental."
         )
 
     kpi_col4, kpi_col5, kpi_col6 = st.columns(3)
@@ -239,7 +314,6 @@ def render_financial_viability_tab(
     # --- Section 4: Itemized Annual Cost Comparison Table ---
     st.markdown("#### :material/table_chart: Annual Operational Cost Comparison (Year 1)")
 
-    # Build clear itemized comparison rows
     sq_demand = fin_metrics.annual_status_quo_demand_cost
     wb_demand = fin_metrics.annual_with_bess_demand_cost
 
@@ -259,7 +333,7 @@ def render_financial_viability_tab(
     wb_losses = fin_metrics.annual_loss_cost
 
     sq_total = fin_metrics.annual_status_quo_total_bill + sq_rent
-    wb_total = fin_metrics.annual_with_bess_total_bill + wb_om + wb_losses
+    wb_total = fin_metrics.annual_with_bess_total_bill + wb_om + wb_losses + gen_total_opex
 
     comparison_data = [
         {
@@ -293,31 +367,38 @@ def render_financial_viability_tab(
             "Annual Delta (Savings)": f"+{wb_om:,.0f} {currency}"
         },
         {
-            "Cost Component": "Battery Round-Trip Efficiency Conversion Losses",
+            "Cost Component": "Battery Round-Trip Conversion Losses",
             "Baseline / Upgrade": f"{sq_losses:,.0f} {currency}",
             "With BESS System": f"{wb_losses:,.0f} {currency}",
             "Annual Delta (Savings)": f"+{wb_losses:,.0f} {currency}"
-        },
-        {
-            "Cost Component": "**TOTAL ANNUAL OPERATING EXPENDITURE**",
-            "Baseline / Upgrade": f"**{sq_total:,.0f} {currency}**",
-            "With BESS System": f"**{wb_total:,.0f} {currency}**",
-            "Annual Delta (Savings)": f"**-{sq_total - wb_total:,.0f} {currency}**"
         }
     ]
+
+    if enable_gen and (gen_total_opex > 0 or gen_annual_rent_cost > 0):
+        comparison_data.append({
+            "Cost Component": "Peaking Generator Fuel & Rental OPEX",
+            "Baseline / Upgrade": f"0 {currency}",
+            "With BESS System": f"{gen_total_opex:,.0f} {currency}",
+            "Annual Delta (Savings)": f"+{gen_total_opex:,.0f} {currency}"
+        })
+
+    comparison_data.append({
+        "Cost Component": "**TOTAL ANNUAL OPERATING EXPENDITURE**",
+        "Baseline / Upgrade": f"**{sq_total:,.0f} {currency}**",
+        "With BESS System": f"**{wb_total:,.0f} {currency}**",
+        "Annual Delta (Savings)": f"**-{sq_total - wb_total:,.0f} {currency}**"
+    })
 
     st.table(pd.DataFrame(comparison_data))
 
     st.markdown("---")
 
-    # --- Section 5: Plotly Financial Visualizations ---
-    st.markdown("#### :material/insights: Financial Trajectory Visualizations")
+    # --- Section 5: Strictly the 2 Key Trajectory Visualizations ---
+    st.markdown("#### :material/insights: Financial Life-Cycle Trajectories")
 
-    tab_traj, tab_cf, tab_bar, tab_donut = st.tabs([
-        ":material/trending_up: 15-Year Life-Cycle Trajectory",
-        ":material/payments: Cumulative Cash Flow & Break-Even",
-        ":material/bar_chart: Annual Cost Breakdown Bar",
-        ":material/pie_chart: Turn-Key CAPEX Sizing Donut"
+    tab_traj, tab_cf = st.tabs([
+        ":material/trending_up: 1. 15-Year Cumulative Life-Cycle Trajectory",
+        ":material/payments: 2. Cumulative Cash Flow & Amortization Payback"
     ])
 
     with tab_traj:
@@ -329,29 +410,6 @@ def render_financial_viability_tab(
         st.caption("Cumulative cash flow trajectory showing the exact amortization break-even year.")
         fig_cf = create_bess_cashflow_payback_figure(fin_metrics, currency=currency)
         st.plotly_chart(fig_cf, use_container_width=True)
-
-    with tab_bar:
-        st.caption("Stacked annual electricity and operating expenditure breakdown in Year 1.")
-        fig_bar = create_bess_annual_cost_comparison_figure(fin_metrics, currency=currency)
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-    with tab_donut:
-        st.caption("Turn-key capital investment breakdown by hardware subsystem.")
-        # Component breakdown
-        cells_capex = gross_bess_capex * 0.52
-        inverter_capex = gross_bess_capex * 0.18
-        bos_capex = gross_bess_capex * 0.15
-        install_capex = gross_bess_capex * 0.15
-        capex_dict = {
-            "capex_cells_modules": cells_capex,
-            "capex_inverter_pcs": inverter_capex,
-            "capex_bos_enclosure": bos_capex,
-            "capex_installation_grid": install_capex,
-            "total_capex": gross_bess_capex,
-            "capex_per_kwh": bess_cfg.cost_per_kwh
-        }
-        fig_donut = create_bess_capex_donut_figure(capex_dict, currency=currency)
-        st.plotly_chart(fig_donut, use_container_width=True)
 
     # --- Section 6: 15-Year Cash Flow Projection Table ---
     with st.expander(":material/list_alt: Detailed 15-Year Cash Flow & Capacity Degradation Table", expanded=False):

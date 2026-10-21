@@ -8,17 +8,16 @@ ui_sandbox/BESS_sandbox/app.py
 
 Description:
 ------------
-Standalone, high-precision Battery Energy Storage System (BESS) optimization laboratory:
-  1. Technical Peak Shaving Feasibility & Interval Dispatch
-     - 15-minute dispatch simulation, safe SoC envelopes, C-rate adherence,
-       gross nameplate sizing recommendations, and 100% overload elimination verification.
-  2. Financial Viability & 15-Year Life-Cycle TCO
-     - Avoided grid upgrade CAPEX & transformer rental vs. BESS turnkey investment,
-       unbundled bill reductions (kW-max demand + GTV capacity tariffs), dynamic degradation,
-       OPEX, conversion loss costs, NPV, IRR, and payback.
-  3. Sizing Optimizer & Multi-Parameter Sensitivity
-     - Parametric capacity sweep across strategic size multiples, minimum feasible
-       vs. maximum economic NPV sizing, and sensitivity tornado charts.
+Streamlined 3-tab BESS engineering and commercial decision platform:
+  1. Tab 1: Current Situation (The Problem)
+     - Unmitigated facility demand vs. contracted grid connection limit.
+     - Overload diagnostics and single high-contrast exceedance preview chart.
+  2. Tab 2: BESS Peak Shaving (The Solution)
+     - Modular sizing form with automated gross nameplate recommendations.
+     - 100% feasibility verdict and strictly 2 operational charts (15-min timeseries + SoC).
+  3. Tab 3: Financial Comparison & 15Y TCO (The Economics)
+     - Avoided grid upgrade CAPEX & transformer rent vs. BESS turnkey investment.
+     - 6 executive KPI cards, itemized Year-1 table, and 2 life-cycle trajectory curves.
 """
 
 import os
@@ -47,15 +46,14 @@ except ImportError:
         apply_custom_styles = None
 
 from ui_sandbox.BESS_sandbox import baseline_presets as presets
-from ui_sandbox.BESS_sandbox import sandbox_bess_engine as engine
+from ui_sandbox.BESS_sandbox.view_problem import render_problem_baseline_tab
 from ui_sandbox.BESS_sandbox.view_technical import render_technical_feasibility_tab
 from ui_sandbox.BESS_sandbox.view_financial import render_financial_viability_tab
-from ui_sandbox.BESS_sandbox.view_optimizer import render_optimizer_tab
 
 
 def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
     """
-    Renders the complete BESS Peak Shaving & 15-Year TCO sandbox workbench.
+    Renders the streamlined 3-tab BESS Peak Shaving & 15-Year TCO sandbox workbench.
     """
     st.markdown("## :material/battery_charging_full: BESS Peak Shaving & 15-Year TCO Sandbox")
     st.caption(
@@ -86,45 +84,43 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
         if "Case 1" in selected_option:
             active_preset = presets.get_case1_liander_industrial_preset()
             st.info(
-                f"**Scenario:** {active_preset.title}\n\n"
-                f"Grid Cap: `{active_preset.grid_limit_kw:.0f} kW` | Avoided Upgrade: `€{active_preset.avoided_grid_upgrade_capex:,.0f}`",
+                f"**Benchmark Profile:** {active_preset.title}\n\n"
+                f"Peak Demand: `350 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW`",
                 icon=":material/factory:"
             )
         elif "Case 2" in selected_option:
             active_preset = presets.get_case2_enexis_commercial_preset()
             st.info(
-                f"**Scenario:** {active_preset.title}\n\n"
-                f"Grid Cap: `{active_preset.grid_limit_kw:.0f} kW` | Avoided Upgrade: `€{active_preset.avoided_grid_upgrade_capex:,.0f}`",
+                f"**Benchmark Profile:** {active_preset.title}\n\n"
+                f"Peak Demand: `250 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW`",
                 icon=":material/business:"
             )
         else:
             # Custom Profile
-            if has_sandbox_csv:
-                st.success(
-                    f"**Connected to Current Situation Sandbox:** Using `{len(active_csv_df):,}` 15-minute load rows.",
-                    icon=":material/link:"
-                )
+            custom_df = st.session_state.get("bess_sb_custom_df")
+            if custom_df is None and has_sandbox_csv:
                 custom_df = active_csv_df
-            else:
-                st.warning("No CSV detected in Current Situation Sandbox. Upload a 15-min CSV below.", icon=":material/upload_file:")
-                uploaded = st.file_uploader("Upload 15-Min Load CSV", type=["csv"], key=f"{key_prefix}_csv_up")
-                if uploaded is not None:
-                    try:
-                        custom_df = pd.read_csv(uploaded)
-                        st.session_state["active_csv_df"] = custom_df
-                        st.session_state["active_csv_filename"] = uploaded.name
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(f"Error parsing uploaded CSV: {ex}")
-                        custom_df = None
-                else:
-                    custom_df = None
 
             if custom_df is not None:
+                st.success(
+                    f"**Active Custom Load Profile:** `{len(custom_df):,}` 15-minute intervals loaded.",
+                    icon=":material/data_object:"
+                )
                 active_preset = presets.build_custom_comparison_preset(custom_df, grid_limit_kw=150.0)
             else:
-                # Fallback to Case 1
+                st.info(
+                    "**Custom Ingestion Mode:** Use Tab 1 below to upload and configure your 15-min CSV load profile.",
+                    icon=":material/upload_file:"
+                )
                 active_preset = presets.get_case1_liander_industrial_preset()
+
+        # Auto-synchronize grid limit and reset hardware overrides if preset changes
+        prev_preset_key = f"{key_prefix}_prev_selected_option"
+        if st.session_state.get(prev_preset_key) != selected_option:
+            st.session_state[prev_preset_key] = selected_option
+            st.session_state[f"{key_prefix}_grid_limit_kw"] = float(active_preset.grid_limit_kw)
+            for tech_key in ["unit_count", "unit_kwh", "discharge_kw", "charge_kw"]:
+                st.session_state.pop(f"{key_prefix}_{tech_key}", None)
 
     with col_p3:
         st.markdown("**Session Actions:**")
@@ -136,25 +132,17 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
 
     st.markdown("---")
 
-    # --- 3 Navigation Tabs ---
+    # --- 2 Physics & Feasibility Tabs ---
     tabs = st.tabs([
-        ":material/speed: 1. Peak Shaving & Dispatch (Technical)",
-        ":material/account_balance: 2. Financial Viability & 15Y TCO (Economics)",
-        ":material/precision_manufacturing: 3. Sizing Optimizer & Sensitivity (Parametric)"
+        ":material/warning: 1. Current Situation & Load Ingestion (The Problem)",
+        ":material/battery_charging_full: 2. BESS Sizing & Excel Validation (The Solution)"
     ])
 
     with tabs[0]:
-        sim_result = render_technical_feasibility_tab(active_preset)
+        active_limit_kw = render_problem_baseline_tab(active_preset)
 
     with tabs[1]:
-        # Use active sim_result from Tab 1 or fallback
-        cur_sim = st.session_state.get("bess_sb_sim_result", sim_result)
-        fin_metrics = render_financial_viability_tab(active_preset, cur_sim)
-
-    with tabs[2]:
-        cur_cfg = st.session_state.get("bess_sb_active_config", active_preset.bess_config)
-        cur_sim = st.session_state.get("bess_sb_sim_result", sim_result)
-        render_optimizer_tab(active_preset, cur_cfg, cur_sim)
+        sim_result = render_technical_feasibility_tab(active_preset, grid_limit_kw=active_limit_kw)
 
 
 def main() -> None:
