@@ -85,9 +85,11 @@ current_model/ui_sandbox/Currentsituation_sandbox/
       1. *Fixed Dual Rate (Dubbeltarief HT/NT)*: Workdays 07:00–23:00 High Tariff, Nights & Weekends Low Tariff.
       2. *Fixed Single Rate (Enkeltarief)*: Uniform 24/7 all-in commodity price.
       3. *Dynamic Day-Ahead (EPEX Spot NL + Opslag)*: Synchronous hourly wholesale index + supplier markup.
-    - **Performance Encapsulation (`st.form`)**:
+    - **Performance Encapsulation (`st.form`) & Time-of-Use Matrix Editor**:
       - Numerical inputs encapsulated within `st.form` with primary `Apply Provider Tariff & Calculate` button preventing unwanted full-page reruns on typing.
-      - Contextual parameter rendering: only fields relevant to the active pricing model are visible (Dual: HT/NT rates; Single: Flat rate; Dynamic: Retail markup & procurement fee; Standing fee and Green certificates GvO always visible).
+      - **Interactive Time-of-Use Matrix (`st.data_editor`) for Fixed Dual Rate (HT/NT)**: Exactly matching Sub-Tab 1 (DSO), users can directly inspect and edit the tariff names, commodity rates (€/kWh), and Start/End times (`HH:MM`) along with a dedicated `"Treat Weekends as Off-Peak"` checkbox.
+      - Dynamic recalculation: The HT/NT volume split, costs, settlement statement, and the diurnal 24h schedule curve dynamically synchronize with the configured hours and weekend rule.
+      - Contextual parameter rendering: only fields relevant to the active pricing model are visible (Dual: Interactive TOU matrix & weekend toggle; Single: Flat rate; Dynamic: Retail markup & procurement fee; Standing fee and Green certificates GvO always visible).
     - **Dual Evaluation Horizon Switch**:
       - *Modus A: Actual Measured Period (DEFAULT)*: Tagesgenaue Abrechnung für den realen Messzeitraum (z. B. 28 Tage) mit pro-rata Grundgebühr ($V_{\text{annual}} \times \frac{T_{\text{days}}}{365}$).
       - *Modus B: Annualized Projection (365-Tage-Hochrechnung)*: Lineare 365-Tage-Skalierung mit automatischer Info-Badge-Kennzeichnung bei Profilen $< 360$ Tagen.

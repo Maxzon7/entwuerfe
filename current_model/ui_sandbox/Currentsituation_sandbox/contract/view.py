@@ -620,9 +620,20 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 "single_rate": float(prod_data.get("fixed_rate_kwh", 0.1250)),
                 "supplier_margin": float(prod_data.get("supplier_margin_kwh", 0.0075)),
                 "procure_fee": float(prod_data.get("procurement_fee_kwh", 0.0015)),
+                "weekend_offpeak": True,
             }
 
         curr_vals = st.session_state[supp_state_key]
+
+        # Dynamic session state key for Supplier TOU rates matrix
+        state_supp_tou_key = f"{key_prefix}_supp_tou_df_{selected_supplier_name}_{selected_model_type}"
+        if state_supp_tou_key not in st.session_state or last_preset != preset_hash:
+            default_supp_ht = float(curr_vals.get("ht_rate", 0.1340))
+            default_supp_nt = float(curr_vals.get("nt_rate", 0.1180))
+            st.session_state[state_supp_tou_key] = pd.DataFrame([
+                {"name": "High Tariff HT (Normaaltarief)", "rate": default_supp_ht, "start_time": "07:00", "end_time": "23:00"},
+                {"name": "Off-Peak NT (Daltarief)", "rate": default_supp_nt, "start_time": "23:00", "end_time": "07:00"}
+            ])
 
         # ------------------------------------------------------------------------------
         # B. Encapsulated Form (st.form) for Numerical Parameters
@@ -648,31 +659,68 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 )
 
             # Contextual Fields by Selected Model
+            edited_supp_tou = None
+            supp_weekend_offpeak = True
+            ht_start_hour_supp = 7
+            ht_end_hour_supp = 23
+
             if selected_model_type == MODEL_DUAL:
                 active_pricing_mode = PricingMode.FIXED
                 is_dual_rate = True
                 supp_margin = 0.0
                 procure_fee = 0.0
 
-                col_c1, col_c2 = st.columns(2)
-                with col_c1:
-                    fixed_rate_ht = st.number_input(
-                        "High Tariff Rate HT (€/kWh) – Mo-Fr 07:00-23:00:",
-                        min_value=0.0,
-                        value=float(curr_vals["ht_rate"]),
-                        format="%.4f",
-                        step=0.0020,
-                        help="Normaaltarief / Piekuren tijdens werkdagen"
-                    )
-                with col_c2:
-                    fixed_rate_nt = st.number_input(
-                        "Off-Peak Rate NT (€/kWh) – Night & Weekend:",
-                        min_value=0.0,
-                        value=float(curr_vals["nt_rate"]),
-                        format="%.4f",
-                        step=0.0020,
-                        help="Daltarief tijdens nachten en weekenden"
-                    )
+                st.markdown("###### :material/schedule: Time-of-Use Electricity Rates (Working Hours vs. Off-Peak)")
+                st.caption("Define commodity rate windows. The table supports direct editing of rates and hours:")
+
+                edited_supp_tou = st.data_editor(
+                    st.session_state[state_supp_tou_key],
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "name": st.column_config.TextColumn("Tariff Name", required=True),
+                        "rate": st.column_config.NumberColumn(
+                            "Rate (€/kWh)",
+                            format="%.4f",
+                            min_value=0.0,
+                            step=0.0001,
+                            required=True
+                        ),
+                        "start_time": st.column_config.TextColumn("Start Time (HH:MM)", required=True),
+                        "end_time": st.column_config.TextColumn("End Time (HH:MM)", required=True)
+                    },
+                    key=f"{key_prefix}_supp_tou_editor_{selected_supplier_name}_{selected_model_type}"
+                )
+
+                supp_weekend_offpeak = st.checkbox(
+                    "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
+                    value=bool(curr_vals.get("weekend_offpeak", True)),
+                    key=f"{key_prefix}_supp_weekend_offpeak",
+                    help="Pas gedurende het gehele weekend het daltarief (NT) toe"
+                )
+
+                # Extract rates and hours from matrix
+                current_matrix = edited_supp_tou if (edited_supp_tou is not None and not edited_supp_tou.empty) else st.session_state[state_supp_tou_key]
+                fixed_rate_ht = float(curr_vals["ht_rate"])
+                fixed_rate_nt = float(curr_vals["nt_rate"])
+
+                if current_matrix is not None and not current_matrix.empty:
+                    rows = current_matrix.to_dict(orient="records")
+                    for r in rows:
+                        r_name = str(r.get("name", "")).lower()
+                        r_rate = float(r.get("rate", fixed_rate_ht))
+                        if any(k in r_name for k in ["high", "normaal", "peak", "ht", "hoch", "daytime", "working"]):
+                            fixed_rate_ht = r_rate
+                            try:
+                                s_str = str(r.get("start_time", "07:00")).split(":")[0]
+                                e_str = str(r.get("end_time", "23:00")).split(":")[0]
+                                ht_start_hour_supp = int(s_str)
+                                ht_end_hour_supp = int(e_str)
+                            except Exception:
+                                pass
+                        elif any(k in r_name for k in ["off", "dal", "laag", "nt", "niedrig", "night", "weekend"]):
+                            fixed_rate_nt = r_rate
+
                 fixed_rate_val = fixed_rate_ht
 
             elif selected_model_type == MODEL_SINGLE:
@@ -730,8 +778,11 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             st.session_state[supp_state_key]["base_fee"] = supp_base
             st.session_state[supp_state_key]["green_surcharge"] = green_surcharge
             if selected_model_type == MODEL_DUAL:
+                if edited_supp_tou is not None and not edited_supp_tou.empty:
+                    st.session_state[state_supp_tou_key] = edited_supp_tou
                 st.session_state[supp_state_key]["ht_rate"] = fixed_rate_ht
                 st.session_state[supp_state_key]["nt_rate"] = fixed_rate_nt
+                st.session_state[supp_state_key]["weekend_offpeak"] = supp_weekend_offpeak
             elif selected_model_type == MODEL_SINGLE:
                 st.session_state[supp_state_key]["single_rate"] = fixed_rate_val
             else:
@@ -781,7 +832,24 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
         # D. Mathematics: Pure Supplier Costs & Benchmark Shadow Calculation
         # ------------------------------------------------------------------------------
         total_kwh = float(load_series.total_energy_kwh)
-        ht_mask = load_series.is_peak_tou
+
+        # Dynamic HT/NT mask: adapts to user-defined start/end hours and weekend toggle
+        ts = load_series.timestamps
+        if selected_model_type == MODEL_DUAL:
+            if supp_weekend_offpeak:
+                day_filter = (ts.dayofweek < 5)
+            else:
+                day_filter = np.ones(len(ts), dtype=bool)
+
+            if ht_start_hour_supp <= ht_end_hour_supp:
+                hour_filter = (ts.hour >= ht_start_hour_supp) & (ts.hour < ht_end_hour_supp)
+            else:
+                hour_filter = (ts.hour >= ht_start_hour_supp) | (ts.hour < ht_end_hour_supp)
+
+            ht_mask = np.asarray(day_filter & hour_filter, dtype=bool)
+        else:
+            ht_mask = load_series.is_peak_tou
+
         ht_kwh = float(np.sum(load_series.energy_kwh[ht_mask]))
         nt_kwh = float(np.sum(load_series.energy_kwh[~ht_mask]))
 
@@ -933,9 +1001,11 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 )
                 st.plotly_chart(fig_dyn, use_container_width=True)
             else:
-                # 24h Diurnal load schedule with HT/NT window
+                # 24h Diurnal load schedule with HT/NT window adapting to configured hours
                 fig_diurnal = create_tou_schedule_diurnal_figure(
                     load=load_series,
+                    ht_start_hour=ht_start_hour_supp,
+                    ht_end_hour=ht_end_hour_supp,
                     ht_rate_label=f"High Tariff HT ({fixed_rate_ht:.4f} €/kWh)",
                     nt_rate_label=f"Off-Peak NT ({fixed_rate_nt:.4f} €/kWh)"
                 )
