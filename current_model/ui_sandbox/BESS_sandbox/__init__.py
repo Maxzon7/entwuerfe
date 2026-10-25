@@ -18,6 +18,7 @@ from ui_sandbox.BESS_sandbox.baseline_presets import (
     BaselinePreset,
     get_case1_liander_industrial_preset,
     get_case2_enexis_commercial_preset,
+    get_case3_paula_dutch_site_preset,
     build_custom_comparison_preset
 )
 from ui_sandbox.BESS_sandbox.sandbox_bess_engine import (
@@ -57,6 +58,7 @@ __all__ = [
     "BaselinePreset",
     "get_case1_liander_industrial_preset",
     "get_case2_enexis_commercial_preset",
+    "get_case3_paula_dutch_site_preset",
     "build_custom_comparison_preset",
     "ExcelSizingValidationResult",
     "calculate_excel_bess_sizing_and_diagnostics",

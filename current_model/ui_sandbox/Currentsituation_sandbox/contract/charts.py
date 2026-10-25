@@ -240,9 +240,12 @@ def create_monthly_payment_series_figure(
 
 
 def create_tou_schedule_diurnal_figure(
-    load_series: Any,
+    load_series: Any = None,
     ht_start_hour: int = 7,
     ht_end_hour: int = 23,
+    load: Any = None,
+    ht_rate_label: Optional[str] = None,
+    nt_rate_label: Optional[str] = None,
 ) -> go.Figure:
     """
     Constructs an interactive 24-hour diurnal profile chart displaying:
@@ -250,6 +253,8 @@ def create_tou_schedule_diurnal_figure(
       2. Average Weekday demand curve (Monday - Friday).
       3. Average Weekend demand curve (Saturday - Sunday).
     """
+    if load_series is None:
+        load_series = load
     import numpy as np
     import pandas as pd
 
@@ -299,24 +304,26 @@ def create_tou_schedule_diurnal_figure(
         line_width=1,
         line_dash="dot",
         line_color="#38BDF8",
-        annotation_text="High Tariff (HT / Normaal Window: Mo-Fr 07:00 - 23:00)",
+        annotation_text=f"High Tariff (HT / Normaal: 07:00 - 23:00){' | ' + ht_rate_label if ht_rate_label else ''}",
         annotation_position="top left",
         annotation_font=dict(color="#38BDF8", size=11)
     )
 
     # 2. Weekday Average Demand Trace
+    wk_name = "Weekday Profile (Mo-Fr)"
     fig.add_trace(
         go.Scatter(
             x=time_labels,
             y=weekday_avg,
             mode="lines",
-            name="Weekday Profile (Mo-Fr)",
+            name=wk_name,
             line=dict(color="#38BDF8", width=2.5),
             hovertemplate="<b>Weekday Avg</b>: %{y:.1f} kW<br>Time: %{x}<extra></extra>"
         )
     )
 
     # 3. Weekend Average Demand Trace
+    we_name = f"Weekend Profile (Sa-Su Off-Peak{' | ' + nt_rate_label if nt_rate_label else ''})"
     fig.add_trace(
         go.Scatter(
             x=time_labels,
@@ -512,4 +519,145 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
     )
 
     return fig
+
+
+def create_supplier_benchmark_figure(benchmark_costs: Dict[str, float]) -> go.Figure:
+    """
+    Constructs a clean horizontal bar chart benchmarking pure supplier costs across the 3 core models:
+    - Fixed Dual Rate (HT/NT)
+    - Fixed Single Rate (Enkeltarief)
+    - Dynamic Day-Ahead (EPEX Spot NL)
+    """
+    fig = go.Figure()
+
+    model_names = list(benchmark_costs.keys())
+    costs = [benchmark_costs[k] for k in model_names]
+
+    # Palette: Fixed Dual -> #38BDF8 (Sky), Fixed Single -> #818CF8 (Indigo), Dynamic -> #34D399 (Emerald)
+    colors = ["#38BDF8", "#818CF8", "#34D399"][:len(model_names)]
+
+    fig.add_trace(
+        go.Bar(
+            y=model_names,
+            x=costs,
+            orientation="h",
+            marker=dict(
+                color=colors,
+                line=dict(color="#1E293B", width=1.5),
+            ),
+            text=[f"€ {c:,.2f}" for c in costs],
+            textposition="auto",
+            hovertemplate="<b>%{y}</b><br>Net Supplier Cost: € %{x:,.2f}<extra></extra>"
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text="<b>Pure Supplier Cost Benchmark (3 Pricing Models)</b>",
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.02,
+            y=0.95
+        ),
+        xaxis=dict(
+            title="Total Supplier Cost (Netto €)",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155"
+        ),
+        yaxis=dict(
+            autorange="reversed",
+            tickfont=dict(size=12)
+        ),
+        margin=dict(l=20, r=20, t=45, b=35),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=260,
+    )
+
+    return fig
+
+
+def create_dynamic_price_consumption_figure(
+    timestamps: Any,
+    power_kw: Any,
+    spot_prices_eur_mwh: Any,
+    title_suffix: str = ""
+) -> go.Figure:
+    """
+    Constructs a dual-axis interactive Plotly chart correlating electricity demand (kW)
+    on the primary axis with synchronous EPEX Spot Day-Ahead prices (€/MWh) on the secondary axis.
+    """
+    fig = go.Figure()
+
+    # 1. Primary Y-Axis: Power Consumption (kW)
+    fig.add_trace(
+        go.Scatter(
+            x=timestamps,
+            y=power_kw,
+            name="Electricity Demand (kW)",
+            mode="lines",
+            line=dict(color="#38BDF8", width=1.5),
+            fill="tozeroy",
+            fillcolor="rgba(56, 189, 248, 0.12)",
+            hovertemplate="<b>Demand</b>: %{y:,.1f} kW<extra></extra>"
+        )
+    )
+
+    # 2. Secondary Y-Axis: EPEX Spot Price (€/MWh)
+    fig.add_trace(
+        go.Scatter(
+            x=timestamps,
+            y=spot_prices_eur_mwh,
+            name="EPEX Spot Price (€/MWh)",
+            mode="lines",
+            line=dict(color="#F59E0B", width=1.5),
+            yaxis="y2",
+            hovertemplate="<b>Spot Price</b>: € %{y:,.2f}/MWh<extra></extra>"
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text=f"<b>Dynamic Correlation: Power Demand (kW) vs. EPEX Spot Price (€/MWh)</b> {title_suffix}",
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.02,
+            y=0.96
+        ),
+        xaxis=dict(
+            title="Date / Time (Europe/Amsterdam)",
+            gridcolor="#1E293B",
+            rangeslider=dict(visible=False),
+        ),
+        yaxis=dict(
+            title=dict(text="Load Demand (kW)", font=dict(color="#38BDF8")),
+            gridcolor="#1E293B",
+            zerolinecolor="#334155",
+            tickfont=dict(color="#38BDF8")
+        ),
+        yaxis2=dict(
+            title=dict(text="EPEX Spot Price (€/MWh)", font=dict(color="#F59E0B")),
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            zeroline=True,
+            zerolinecolor="#EF4444",
+            tickfont=dict(color="#F59E0B")
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(l=40, r=50, t=55, b=40),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=320,
+        hovermode="x unified"
+    )
+
+    return fig
+
 

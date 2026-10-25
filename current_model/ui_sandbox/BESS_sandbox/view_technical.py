@@ -1,6 +1,6 @@
 """
 ========================================================================================
-BESS Sandbox - The Solution: Peak Shaving & Excel Validation View
+BESS Sandbox - Peak Shaving & Excel Validation View
 (ui_sandbox/BESS_sandbox/view_technical.py)
 ========================================================================================
 
@@ -12,7 +12,7 @@ Pareto coverage tradeoff, and synchronized 2-in-1 timeseries dispatch:
   - Block 2 (Middle Sub-Tabs):
       * Sub-Tab 2.1: Hardware Specification & Operating Limits (Manual / 0.5C Setup with st.form).
       * Sub-Tab 2.2: Interactive Pareto Sizing & Coverage Tradeoff (Smart Sizing).
-  - Block 3: Simultaneous 4-Criterion Bottleneck Checklist & Paula's 5 Excel Validation KPIs.
+  - Block 3: Simultaneous 4-Criterion Bottleneck Checklist & 5-Metric Excel Validation Block.
   - Block 4 (Bottom): Synchronized 2-in-1 Timeseries Chart (Power Dispatch + SoC Envelope).
 ========================================================================================
 """
@@ -57,14 +57,15 @@ def render_technical_feasibility_tab(
     Renders the peak shaving solution and technical feasibility workspace:
       - Block 1: 100% Zero-Deficit Reference Box.
       - Block 2: Middle Sub-Tabs (Manual 0.5C Setup with st.form vs. Pareto Tradeoff).
-      - Block 3: Simultaneous 4-Criterion Bottleneck Checklist & Paula's 5 Excel KPIs.
+      - Block 3: Simultaneous 4-Criterion Bottleneck Checklist & 5-Metric Excel Validation Block.
       - Block 4: Synchronized 2-in-1 Plotly Subplot (Power Dispatch + SoC Envelope).
     """
-    st.subheader(":material/battery_charging_full: BESS Sizing & Physical Validation (The Solution)")
+    st.subheader(":material/battery_charging_full: BESS Sizing & Physical Validation")
     st.caption(
         "Size and configure the Battery Energy Storage System (BESS) to eliminate peak overloads "
         "down to the contracted grid connection limit with 1:1 Excel-validated physics."
     )
+
 
     # Resolve active dataset (custom CSV if loaded, else preset benchmark)
     custom_df = st.session_state.get("bess_sb_custom_df")
@@ -373,7 +374,7 @@ def render_technical_feasibility_tab(
         power_col=power_col
     )
 
-    # --- Block 3: Simultaneous Bottleneck Checklist & Paula's 5 Excel KPIs ---
+    # --- Block 3: Simultaneous Bottleneck Checklist & 5-Metric Excel Validation Block ---
     st.markdown("---")
     st.markdown("#### :material/checklist: Simultaneous Bottleneck Audit & Physical Constraints")
     st.caption("All 4 physical engineering criteria are evaluated simultaneously without short-circuiting.")
@@ -415,59 +416,58 @@ def render_technical_feasibility_tab(
                 help=check.description
             )
 
-    # Paula's 5 Excel Validation KPIs
-    st.markdown("---")
-    st.markdown("#### :material/fact_check: Excel Validation Summary (Identical Input Verification)")
-    st.caption("Verify physical simulation outputs against the Excel benchmark across the 5 core dimensions.")
+    # 5-Metric Excel Validation Block
+    with st.expander(":material/fact_check: Excel Model Verification Audit (5 Core Dimensions)", expanded=False):
+        st.caption("Verify physical simulation outputs against the Excel benchmark across the 5 core dimensions.")
 
-    val_col1, val_col2, val_col3, val_col4, val_col5 = st.columns(5)
-    with val_col1:
-        st.metric(
-            label="Battery Capacity",
-            value=f"{active_bess_config.capacity_kwh:,.1f} kWh",
-            delta=f"Usable: {active_bess_config.effective_usable_kwh:,.1f} kWh",
-            delta_color="off",
-            help="Total gross nameplate battery storage capacity and net usable buffer."
-        )
-    with val_col2:
-        c_rate = active_bess_config.max_discharge_power_kw / max(active_bess_config.capacity_kwh, 1.0)
-        st.metric(
-            label="Battery Power",
-            value=f"{active_bess_config.max_discharge_power_kw:,.1f} kW",
-            delta=f"Charge: {active_bess_config.max_charge_power_kw:,.1f} kW ({c_rate:.2f} C)",
-            delta_color="off",
-            help="Continuous discharge and charge power ratings with effective C-rate."
-        )
-    with val_col3:
-        max_grid_import = float(sim_result.df_timeseries["P_Grid_kW"].max()) if "P_Grid_kW" in sim_result.df_timeseries.columns else 0.0
-        st.metric(
-            label="Max Grid Import",
-            value=f"{max_grid_import:,.1f} kW",
-            delta=f"Limit: {active_limit:,.1f} kW",
-            delta_color="off",
-            help="Peak grid import observed across all 15-minute dispatch intervals."
-        )
-    with val_col4:
-        min_soc_pct = float(sim_result.df_timeseries["SoC_pct"].min()) if "SoC_pct" in sim_result.df_timeseries.columns else 0.0
-        max_soc_pct = float(sim_result.df_timeseries["SoC_pct"].max()) if "SoC_pct" in sim_result.df_timeseries.columns else 0.0
-        min_soc_kwh = float(sim_result.df_timeseries["SoC_kWh"].min()) if "SoC_kWh" in sim_result.df_timeseries.columns else 0.0
-        st.metric(
-            label="Observed SoC Range",
-            value=f"{min_soc_pct:.1f}% – {max_soc_pct:.1f}%",
-            delta=f"Min: {min_soc_kwh:,.1f} kWh",
-            delta_color="off",
-            help="Minimum and maximum battery State of Charge reached during the year."
-        )
-    with val_col5:
-        rem_deficit_kw = float(sim_result.df_timeseries["P_Overload_Unmet_kW"].max()) if "P_Overload_Unmet_kW" in sim_result.df_timeseries.columns else 0.0
-        rem_deficit_kwh = float(sim_result.df_timeseries["P_Overload_Unmet_kW"].sum() * 0.25) if "P_Overload_Unmet_kW" in sim_result.df_timeseries.columns else 0.0
-        st.metric(
-            label="Remaining Deficit (Excel 'Generator')",
-            value=f"{rem_deficit_kwh:,.1f} kWh",
-            delta=f"Peak Deficit: {rem_deficit_kw:,.1f} kW",
-            delta_color="normal" if rem_deficit_kwh <= 0.05 else "inverse",
-            help="Uncovered energy demand above the grid limit (modeled as backup generator in Excel)."
-        )
+        val_col1, val_col2, val_col3, val_col4, val_col5 = st.columns(5)
+        with val_col1:
+            st.metric(
+                label="Battery Capacity",
+                value=f"{active_bess_config.capacity_kwh:,.1f} kWh",
+                delta=f"Usable: {active_bess_config.effective_usable_kwh:,.1f} kWh",
+                delta_color="off",
+                help="Total gross nameplate battery storage capacity and net usable buffer."
+            )
+        with val_col2:
+            c_rate = active_bess_config.max_discharge_power_kw / max(active_bess_config.capacity_kwh, 1.0)
+            st.metric(
+                label="Battery Power",
+                value=f"{active_bess_config.max_discharge_power_kw:,.1f} kW",
+                delta=f"Charge: {active_bess_config.max_charge_power_kw:,.1f} kW ({c_rate:.2f} C)",
+                delta_color="off",
+                help="Continuous discharge and charge power ratings with effective C-rate."
+            )
+        with val_col3:
+            max_grid_import = float(sim_result.df_timeseries["P_Grid_kW"].max()) if "P_Grid_kW" in sim_result.df_timeseries.columns else 0.0
+            st.metric(
+                label="Max Grid Import",
+                value=f"{max_grid_import:,.1f} kW",
+                delta=f"Limit: {active_limit:,.1f} kW",
+                delta_color="off",
+                help="Peak grid import observed across all 15-minute dispatch intervals."
+            )
+        with val_col4:
+            min_soc_pct = float(sim_result.df_timeseries["SoC_pct"].min()) if "SoC_pct" in sim_result.df_timeseries.columns else 0.0
+            max_soc_pct = float(sim_result.df_timeseries["SoC_pct"].max()) if "SoC_pct" in sim_result.df_timeseries.columns else 0.0
+            min_soc_kwh = float(sim_result.df_timeseries["SoC_kWh"].min()) if "SoC_kWh" in sim_result.df_timeseries.columns else 0.0
+            st.metric(
+                label="Observed SoC Range",
+                value=f"{min_soc_pct:.1f}% – {max_soc_pct:.1f}%",
+                delta=f"Min: {min_soc_kwh:,.1f} kWh",
+                delta_color="off",
+                help="Minimum and maximum battery State of Charge reached during the year."
+            )
+        with val_col5:
+            rem_deficit_kw = float(sim_result.df_timeseries["P_Overload_Unmet_kW"].max()) if "P_Overload_Unmet_kW" in sim_result.df_timeseries.columns else 0.0
+            rem_deficit_kwh = float(sim_result.df_timeseries["P_Overload_Unmet_kW"].sum() * 0.25) if "P_Overload_Unmet_kW" in sim_result.df_timeseries.columns else 0.0
+            st.metric(
+                label="Remaining Deficit (Excel 'Generator')",
+                value=f"{rem_deficit_kwh:,.1f} kWh",
+                delta=f"Peak Deficit: {rem_deficit_kw:,.1f} kW",
+                delta_color="normal" if rem_deficit_kwh <= 0.05 else "inverse",
+                help="Uncovered energy demand above the grid limit (modeled as backup generator in Excel)."
+            )
 
     # --- Block 4 (Bottom): Synchronized 2-in-1 Timeseries Chart ---
     st.markdown("---")

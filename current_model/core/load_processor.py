@@ -66,7 +66,26 @@ def _try_parse_timestamps(
     if dayfirst is not None:
         user_candidates = [c for c in candidates if c[1] == dayfirst]
         if user_candidates and user_candidates[0][0] >= max(1, int(0.95 * best_count)):
-            return user_candidates[0][2], dayfirst
+            best_parsed, best_dayfirst = user_candidates[0][2], dayfirst
+
+    # "No-Date Fallback" Anchor:
+    # Detect time-only sequences (e.g. 00:00..23:45 repeated across days) where pd.to_datetime
+    # assigns today's date to all rows, causing multi-day series to collapse into a single day.
+    if best_parsed is not None and not best_parsed.empty:
+        valid_subset = best_parsed.dropna()
+        is_time_only = False
+        if len(valid_subset) > 96 and valid_subset.dt.date.nunique() == 1:
+            time_diffs = valid_subset.diff().dt.total_seconds()
+            has_backward_jumps = bool((time_diffs < 0).any())
+            time_str_match = bool(cleaned_ts.str.match(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s*$").mean() > 0.8)
+            if has_backward_jumps or time_str_match:
+                is_time_only = True
+        elif len(cleaned_ts) > 0 and bool(cleaned_ts.str.match(r"^\s*\d{1,2}:\d{2}(?::\d{2})?\s*$").mean() > 0.8):
+            is_time_only = True
+
+        if is_time_only:
+            anchored_ts = pd.date_range("2026-01-01 00:00:00", periods=len(df), freq="15min")
+            return pd.Series(anchored_ts, index=df.index), True
 
     # Otherwise return the highest-coverage parser
     return best_parsed, best_dayfirst

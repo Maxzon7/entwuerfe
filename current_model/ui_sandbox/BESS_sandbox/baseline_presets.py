@@ -288,9 +288,119 @@ def get_case2_enexis_commercial_preset() -> BaselinePreset:
     )
 
 
+def get_case3_paula_dutch_site_preset() -> BaselinePreset:
+    """
+    Case 3: Paula Dutch Site (28-Day WKO / 110 kW Contract Limit).
+
+    Load: 28 days of 15-minute intervals (2,688 intervals) with 131.4 kW peak demand.
+    Contract limit: 110.0 kW.
+    Initial unserved overload: +21.4 kW peak exceedance.
+    """
+    data_path = os.path.join(CURRENT_DIR, "data", "Paula3_totaal_clean.csv")
+    if os.path.exists(data_path):
+        raw_df = pd.read_csv(data_path)
+        if "Date" in raw_df.columns and "Time" in raw_df.columns:
+            ts = pd.to_datetime(raw_df["Date"] + " " + raw_df["Time"], format="%d.%m.%Y %H:%M", errors="coerce")
+        elif "timestamp" in raw_df.columns:
+            ts = pd.to_datetime(raw_df["timestamp"], errors="coerce")
+        else:
+            ts = pd.date_range("2026-01-01 00:00:00", periods=len(raw_df), freq="15min")
+
+        if ts.isna().all():
+            ts = pd.date_range("2026-01-01 00:00:00", periods=len(raw_df), freq="15min")
+
+        p_vals = pd.to_numeric(raw_df["Total_Demand_kW"] if "Total_Demand_kW" in raw_df.columns else raw_df.iloc[:, -1], errors="coerce").fillna(0.0)
+        load_df = pd.DataFrame({
+            "timestamp": ts,
+            "Total_Demand_kW": p_vals.to_numpy(dtype=float),
+            "P_Load_kW": p_vals.to_numpy(dtype=float)
+        })
+    else:
+        # Fallback synthetic 28-day 131.4 kW profile
+        n_steps = 28 * 96
+        ts = pd.date_range("2026-01-01 00:00:00", periods=n_steps, freq="15min")
+        hour = ts.hour + ts.minute / 60.0
+        base = 40.0 + 5.0 * np.sin(np.pi * (hour - 3) / 12.0)
+        hp = np.where((hour >= 6.0) & (hour <= 18.0), np.sin(np.pi * (hour - 6.0) / 12.0) * 55.0, 10.0)
+        p = np.clip(base + hp, 25.0, 131.4)
+        p[-1] = 131.4
+        load_df = pd.DataFrame({
+            "timestamp": ts,
+            "Total_Demand_kW": p,
+            "P_Load_kW": p
+        })
+
+    contract_base = Contract(
+        name="Paula WKO Baseline Contract (131.4 kW)",
+        currency="EUR",
+        contracted_capacity_kw=131.4,
+        monthly_capacity_tariff=3.50,
+        demand_capacity_tariff=3.50,
+        peak_penalty_rate=25.0,
+        default_energy_rate=0.20,
+        base_monthly_fee=75.0,
+        taxes_and_fees=[{"name": "VAT", "type": "percentage", "value": 21.0}]
+    )
+
+    contract_bess = Contract(
+        name="Paula WKO With-BESS Contract (110.0 kW Capped)",
+        currency="EUR",
+        contracted_capacity_kw=110.0,
+        monthly_capacity_tariff=3.50,
+        demand_capacity_tariff=3.50,
+        peak_penalty_rate=25.0,
+        default_energy_rate=0.20,
+        base_monthly_fee=75.0,
+        taxes_and_fees=[{"name": "VAT", "type": "percentage", "value": 21.0}]
+    )
+
+    bess_cfg = BESSConfig(
+        capacity_kwh=100.0,
+        unit_count=2,
+        unit_capacity_kwh=50.0,
+        battery_chemistry="LFP (Lithium Iron Phosphate - Standard)",
+        max_charge_power_kw=50.0,
+        max_discharge_power_kw=50.0,
+        round_trip_efficiency_pct=90.0,
+        soc_min_pct=10.0,
+        soc_max_pct=95.0,
+        initial_soc_pct=90.0,
+        max_dod_pct=85.0,
+        dispatch_strategy="peak_shaving",
+        peak_shaving_threshold_kw=110.0,
+        allow_grid_charging=True,
+        currency="EUR",
+        cost_per_kwh=350.0,
+        fixed_installation_cost=5000.0,
+        annual_om_pct=1.5,
+        cell_replacement_year=10,
+        cell_replacement_cost_pct=50.0
+    )
+
+    return BaselinePreset(
+        key="paula_dutch_wko_site",
+        title="Case 3: Paula Dutch Site (28-Day WKO / 110 kW Contract Limit)",
+        description=(
+            "Dutch 28-day WKO heat pump facility with 131.4 kW peak demand and a 110.0 kW "
+            "contracted grid capacity limit (+21.4 kW peak overload)."
+        ),
+        grid_limit_kw=110.0,
+        load_df=load_df,
+        contract_baseline=contract_base,
+        contract_bess=contract_bess,
+        bess_config=bess_cfg,
+        avoided_grid_upgrade_capex=35000.0,
+        avoided_monthly_transformer_rent=0.0,
+        notes="Paula's 28-day WKO benchmark for 1:1 Excel validation and deficit quantification."
+    )
+
+
 def load_preset_by_key(preset_key: str) -> BaselinePreset:
     """Returns the requested preset instance."""
-    if "enexis" in preset_key.lower():
+    p_lower = preset_key.lower()
+    if "paula" in p_lower or "case 3" in p_lower or "wko" in p_lower:
+        return get_case3_paula_dutch_site_preset()
+    if "enexis" in p_lower or "case 2" in p_lower:
         return get_case2_enexis_commercial_preset()
     return get_case1_liander_industrial_preset()
 

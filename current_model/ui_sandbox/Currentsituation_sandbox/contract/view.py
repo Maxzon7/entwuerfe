@@ -30,6 +30,8 @@ try:
         create_cost_donut_figure,
         create_tou_schedule_diurnal_figure,
         create_15_year_lifecycle_cost_figure,
+        create_supplier_benchmark_figure,
+        create_dynamic_price_consumption_figure,
     )
 except ImportError:
     try:
@@ -40,6 +42,8 @@ except ImportError:
             create_cost_donut_figure,
             create_tou_schedule_diurnal_figure,
             create_15_year_lifecycle_cost_figure,
+            create_supplier_benchmark_figure,
+            create_dynamic_price_consumption_figure,
         )
     except ImportError:
         from current_model.ui.common.styles import apply_custom_styles
@@ -49,6 +53,8 @@ except ImportError:
             create_cost_donut_figure,
             create_tou_schedule_diurnal_figure,
             create_15_year_lifecycle_cost_figure,
+            create_supplier_benchmark_figure,
+            create_dynamic_price_consumption_figure,
         )
 
 # 2025 5-Layer Accounting Modules & Official Catalogs
@@ -82,6 +88,7 @@ try:
         convert_to_financial_cost_breakdown,
     )
     from ui_sandbox.Currentsituation_sandbox.engine.audit import perform_full_status_quo_audit
+    from ui_sandbox.Currentsituation_sandbox.engine.commercial_accounting import align_spot_prices_amsterdam_2025
 except ImportError:
     try:
         from engine.config_and_models import (
@@ -113,6 +120,7 @@ except ImportError:
             convert_to_financial_cost_breakdown,
         )
         from engine.audit import perform_full_status_quo_audit
+        from engine.commercial_accounting import align_spot_prices_amsterdam_2025
     except ImportError:
         try:
             from current_model.ui_sandbox.Currentsituation_sandbox.engine.config_and_models import (
@@ -144,6 +152,7 @@ except ImportError:
                 convert_to_financial_cost_breakdown,
             )
             from current_model.ui_sandbox.Currentsituation_sandbox.engine.audit import perform_full_status_quo_audit
+            from current_model.ui_sandbox.Currentsituation_sandbox.engine.commercial_accounting import align_spot_prices_amsterdam_2025
         except ImportError:
             from ui_sandbox.status_quo_2025.config_and_models import (
                 TariffStage,
@@ -174,6 +183,7 @@ except ImportError:
                 convert_to_financial_cost_breakdown,
             )
             from ui_sandbox.status_quo_2025.audit import perform_full_status_quo_audit
+            from ui_sandbox.status_quo_2025.commercial_accounting import align_spot_prices_amsterdam_2025
 
 
 def _find_or_create_load_series_2025() -> Tuple[LoadSeries2025, str]:
@@ -506,8 +516,28 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     with actor_tabs[1]:
         st.markdown("##### Commercial Energy Supply Contract (Commodity Rates & Retail Pricing)")
 
-        col_supp_co, col_supp_prod = st.columns([1.5, 2.5])
-        with col_supp_co:
+        # Determine Profile Duration in Actual Days
+        actual_profile_days = 365.0
+        if "active_csv_df" in st.session_state and isinstance(st.session_state["active_csv_df"], pd.DataFrame):
+            df_active = st.session_state["active_csv_df"]
+            t_col_cand = "timestamp" if "timestamp" in df_active.columns else (df_active.columns[0] if "time" in str(df_active.columns[0]).lower() else None)
+            if t_col_cand and t_col_cand in df_active.columns:
+                try:
+                    ts_parsed = pd.to_datetime(df_active[t_col_cand], errors="coerce").dropna()
+                    if len(ts_parsed) > 1:
+                        dur_d = (ts_parsed.max() - ts_parsed.min()).total_seconds() / 86400.0
+                        if dur_d > 0.5:
+                            actual_profile_days = float(dur_d)
+                except Exception:
+                    pass
+        elif getattr(load_series, "duration_days", None):
+            actual_profile_days = float(load_series.duration_days)
+
+        # ------------------------------------------------------------------------------
+        # A. Pre-Selection Toolbar (Outside the Form)
+        # ------------------------------------------------------------------------------
+        col_tb_supp, col_tb_mode = st.columns([1.5, 2.5])
+        with col_tb_supp:
             supplier_options = list(SUPPLIER_CATALOG_2025.keys()) + ["Custom Energy Retailer"]
             selected_supplier_name = st.selectbox(
                 "Energy Retailer (Leverancier):",
@@ -516,164 +546,469 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 key=f"{key_prefix}_supp_name_select"
             )
 
-        with col_supp_prod:
-            if selected_supplier_name in SUPPLIER_CATALOG_2025:
-                prod_dict = SUPPLIER_CATALOG_2025[selected_supplier_name]
-                prod_options = list(prod_dict.keys())
-                selected_product = st.selectbox(
-                    "Contract Product & Pricing Tier:",
-                    options=prod_options,
-                    index=0,
-                    key=f"{key_prefix}_supp_product_{selected_supplier_name}"
-                )
-                prod_data = prod_dict[selected_product]
-                st.caption(f":material/info: *{prod_data.get('description', '')}*")
-            else:
-                selected_product = "Custom Contract"
-                prod_data = {
-                    "pricing_mode": PricingMode.FIXED,
-                    "is_dual_rate": False,
-                    "base_fee_annual": 180.00,
-                    "fixed_rate_kwh": 0.1250,
-                    "rate_peak_kwh": 0.1340,
-                    "rate_offpeak_kwh": 0.1180,
-                    "supplier_margin_kwh": 0.0075,
-                    "procurement_fee_kwh": 0.0,
-                    "green_surcharge_kwh": 0.0,
-                }
-                st.caption(":material/tune: *Custom energy retailer contract parameters.*")
+        # 3 Core Pricing Models (covering >90% of Dutch commercial market)
+        MODEL_DUAL = "Fixed Dual Rate (Dubbeltarief HT/NT)"
+        MODEL_SINGLE = "Fixed Single Rate (Enkeltarief)"
+        MODEL_DYNAMIC = "Dynamic Day-Ahead (EPEX Spot NL + Opslag)"
+        model_options = [MODEL_DUAL, MODEL_SINGLE, MODEL_DYNAMIC]
 
-        col_smode, col_sbase = st.columns([2.5, 1.5])
-        with col_smode:
-            default_mode = prod_data.get("pricing_mode", PricingMode.FIXED)
-            mode_idx = 0 if default_mode == PricingMode.DYNAMIC else (1 if default_mode == PricingMode.FIXED else 2)
-            selected_pricing_mode_str = st.radio(
-                "Supplier Pricing Mechanism:",
-                options=[
-                    ":material/show_chart: Dynamic Spot (EPEX Spot NL 2025)",
-                    ":material/lock: Fixed All-In Rate",
-                    ":material/calendar_month: Variable Monthly Rates"
-                ],
-                index=mode_idx,
+        # Determine best default model from catalog if present
+        def_model_idx = 0
+        if selected_supplier_name in SUPPLIER_CATALOG_2025:
+            supp_prods = SUPPLIER_CATALOG_2025[selected_supplier_name]
+            first_prod = list(supp_prods.values())[0]
+            if first_prod.get("pricing_mode") == PricingMode.DYNAMIC:
+                def_model_idx = 2
+            elif first_prod.get("is_dual_rate", False):
+                def_model_idx = 0
+            else:
+                def_model_idx = 1
+        elif "tibber" in selected_supplier_name.lower():
+            def_model_idx = 2
+
+        with col_tb_mode:
+            selected_model_type = st.radio(
+                "Contract Pricing Model:",
+                options=model_options,
+                index=def_model_idx,
                 horizontal=True,
-                key=f"{key_prefix}_pricing_mode_radio_{selected_supplier_name}_{selected_product}"
+                key=f"{key_prefix}_supp_model_radio_{selected_supplier_name}"
             )
-            if "Dynamic" in selected_pricing_mode_str:
-                active_pricing_mode = PricingMode.DYNAMIC
-            elif "Fixed" in selected_pricing_mode_str:
-                active_pricing_mode = PricingMode.FIXED
-            else:
-                active_pricing_mode = PricingMode.VARIABLE
 
-        with col_sbase:
-            supp_base = st.number_input(
-                "Retailer Standing Fee (€/year):",
-                min_value=0.0,
-                value=float(prod_data.get("base_fee_annual", 180.00)),
-                step=15.0,
-                key=f"{key_prefix}_supp_base_{selected_supplier_name}_{selected_product}",
-                help="Vastrecht levering per jaar excl. btw"
+        # Derive initial defaults matching the selected supplier & model
+        found_prod_key = None
+        found_prod_data: Dict[str, Any] = {}
+        if selected_supplier_name in SUPPLIER_CATALOG_2025:
+            prods = SUPPLIER_CATALOG_2025[selected_supplier_name]
+            # Match product with chosen model
+            for p_k, p_v in prods.items():
+                if selected_model_type == MODEL_DYNAMIC and p_v.get("pricing_mode") == PricingMode.DYNAMIC:
+                    found_prod_key, found_prod_data = p_k, p_v
+                    break
+                elif selected_model_type == MODEL_DUAL and p_v.get("pricing_mode") == PricingMode.FIXED and p_v.get("is_dual_rate", False):
+                    found_prod_key, found_prod_data = p_k, p_v
+                    break
+                elif selected_model_type == MODEL_SINGLE and p_v.get("pricing_mode") == PricingMode.FIXED and not p_v.get("is_dual_rate", False):
+                    found_prod_key, found_prod_data = p_k, p_v
+                    break
+            # Fallback to first product if no exact match found
+            if not found_prod_data and prods:
+                found_prod_key = list(prods.keys())[0]
+                found_prod_data = prods[found_prod_key]
+
+        selected_product = found_prod_key or f"{selected_supplier_name} {selected_model_type}"
+        prod_data = found_prod_data
+
+        if prod_data.get("description"):
+            st.caption(f":material/info: *{prod_data['description']}*")
+
+        # Session state buffering for form values
+        supp_state_key = f"{key_prefix}_supp_form_vals"
+        if supp_state_key not in st.session_state:
+            st.session_state[supp_state_key] = {}
+
+        # Reset defaults if supplier or model changed
+        preset_hash = f"{selected_supplier_name}_{selected_model_type}"
+        last_preset = st.session_state[supp_state_key].get("_preset_hash")
+        if last_preset != preset_hash:
+            st.session_state[supp_state_key] = {
+                "_preset_hash": preset_hash,
+                "base_fee": float(prod_data.get("base_fee_annual", 180.00)),
+                "green_surcharge": float(prod_data.get("green_surcharge_kwh", 0.0030)),
+                "ht_rate": float(prod_data.get("rate_peak_kwh", 0.1340)),
+                "nt_rate": float(prod_data.get("rate_offpeak_kwh", 0.1180)),
+                "single_rate": float(prod_data.get("fixed_rate_kwh", 0.1250)),
+                "supplier_margin": float(prod_data.get("supplier_margin_kwh", 0.0075)),
+                "procure_fee": float(prod_data.get("procurement_fee_kwh", 0.0015)),
+            }
+
+        curr_vals = st.session_state[supp_state_key]
+
+        # ------------------------------------------------------------------------------
+        # B. Encapsulated Form (st.form) for Numerical Parameters
+        # ------------------------------------------------------------------------------
+        with st.form(key=f"{key_prefix}_retailer_form"):
+            col_f_base, col_f_green = st.columns(2)
+            with col_f_base:
+                supp_base = st.number_input(
+                    "Retailer Standing Fee (€/year):",
+                    min_value=0.0,
+                    value=float(curr_vals["base_fee"]),
+                    step=15.0,
+                    help="Vastrecht levering per jaar excl. btw"
+                )
+            with col_f_green:
+                green_surcharge = st.number_input(
+                    "Green Power Surcharge GvO (€/kWh):",
+                    min_value=0.0,
+                    value=float(curr_vals["green_surcharge"]),
+                    format="%.4f",
+                    step=0.0005,
+                    help="Garantie van Oorsprong (GvO) opslag voor 100% Nederlandse groene stroom"
+                )
+
+            # Contextual Fields by Selected Model
+            if selected_model_type == MODEL_DUAL:
+                active_pricing_mode = PricingMode.FIXED
+                is_dual_rate = True
+                supp_margin = 0.0
+                procure_fee = 0.0
+
+                col_c1, col_c2 = st.columns(2)
+                with col_c1:
+                    fixed_rate_ht = st.number_input(
+                        "High Tariff Rate HT (€/kWh) – Mo-Fr 07:00-23:00:",
+                        min_value=0.0,
+                        value=float(curr_vals["ht_rate"]),
+                        format="%.4f",
+                        step=0.0020,
+                        help="Normaaltarief / Piekuren tijdens werkdagen"
+                    )
+                with col_c2:
+                    fixed_rate_nt = st.number_input(
+                        "Off-Peak Rate NT (€/kWh) – Night & Weekend:",
+                        min_value=0.0,
+                        value=float(curr_vals["nt_rate"]),
+                        format="%.4f",
+                        step=0.0020,
+                        help="Daltarief tijdens nachten en weekenden"
+                    )
+                fixed_rate_val = fixed_rate_ht
+
+            elif selected_model_type == MODEL_SINGLE:
+                active_pricing_mode = PricingMode.FIXED
+                is_dual_rate = False
+                supp_margin = 0.0
+                procure_fee = 0.0
+
+                fixed_rate_val = st.number_input(
+                    "Uniform Fixed Rate (€/kWh) – 24/7 Flat Rate:",
+                    min_value=0.0,
+                    value=float(curr_vals["single_rate"]),
+                    format="%.4f",
+                    step=0.0020,
+                    help="Uniforme vaste leveringsprijs per actief kilowattuur over alle uren"
+                )
+                fixed_rate_ht = fixed_rate_val
+                fixed_rate_nt = fixed_rate_val
+
+            else:  # MODEL_DYNAMIC
+                active_pricing_mode = PricingMode.DYNAMIC
+                is_dual_rate = False
+                fixed_rate_val = 0.1250
+                fixed_rate_ht = 0.1340
+                fixed_rate_nt = 0.1180
+
+                col_dyn1, col_dyn2 = st.columns(2)
+                with col_dyn1:
+                    supp_margin = st.number_input(
+                        "Supplier Retail Markup / Opslag (€/kWh):",
+                        min_value=0.0,
+                        value=float(curr_vals["supplier_margin"]),
+                        format="%.4f",
+                        step=0.0005,
+                        help="Leveranciersopslag bovenop de EPEX Spot Day-Ahead uur-/kwartierprijs"
+                    )
+                with col_dyn2:
+                    procure_fee = st.number_input(
+                        "Procurement / Imbalance Fee (€/kWh):",
+                        min_value=0.0,
+                        value=float(curr_vals["procure_fee"]),
+                        format="%.4f",
+                        step=0.0005,
+                        help="Vaste inkoopvergoeding en onbalansbijdrage per kWh"
+                    )
+
+            form_submitted = st.form_submit_button(
+                "Apply Provider Tariff & Calculate",
+                type="primary",
+                icon=":material/calculate:"
             )
+
+        # Update session buffer on submission
+        if form_submitted:
+            st.session_state[supp_state_key]["base_fee"] = supp_base
+            st.session_state[supp_state_key]["green_surcharge"] = green_surcharge
+            if selected_model_type == MODEL_DUAL:
+                st.session_state[supp_state_key]["ht_rate"] = fixed_rate_ht
+                st.session_state[supp_state_key]["nt_rate"] = fixed_rate_nt
+            elif selected_model_type == MODEL_SINGLE:
+                st.session_state[supp_state_key]["single_rate"] = fixed_rate_val
+            else:
+                st.session_state[supp_state_key]["supplier_margin"] = supp_margin
+                st.session_state[supp_state_key]["procure_fee"] = procure_fee
 
         st.markdown("---")
 
-        # Fallback defaults ensuring no UnboundLocalError under any condition
-        fixed_rate_val = float(prod_data.get("fixed_rate_kwh", 0.1250))
-        fixed_rate_ht = float(prod_data.get("rate_peak_kwh", 0.1340))
-        fixed_rate_nt = float(prod_data.get("rate_offpeak_kwh", 0.1180))
-        supp_margin = 0.0
-        procure_fee = 0.0
-        is_dual_rate = False
+        # ------------------------------------------------------------------------------
+        # C. Isolated Supplier Accounting & 2-Way Evaluation Mode
+        # ------------------------------------------------------------------------------
+        st.markdown("##### :material/payments: Isolated Supplier Performance & Cost Analysis")
 
-        col_s1, col_s2, col_s3 = st.columns(3)
-        with col_s1:
-            green_surcharge = st.number_input(
-                "Green Power Surcharge GvO (€/kWh):",
-                min_value=0.0,
-                value=float(prod_data.get("green_surcharge_kwh", 0.0)),
-                format="%.4f",
-                key=f"{key_prefix}_supp_green_{selected_supplier_name}_{selected_product}",
-                help="Garantie van Oorsprong (GvO) opslag voor 100% Nederlandse groene stroom"
+        # 2-Way Evaluation Mode: Default is Modus A (Actual Measured Period)
+        col_eval_mode, col_eval_badge = st.columns([2.5, 1.5])
+        with col_eval_mode:
+            eval_mode = st.radio(
+                "Evaluation Horizon:",
+                options=[
+                    f"Actual Measured Period ({actual_profile_days:.0f} Days)",
+                    "Annualized Projection (365 Days)"
+                ],
+                index=0,  # MODUS A IS DEFAULT
+                horizontal=True,
+                key=f"{key_prefix}_supplier_eval_horizon_radio"
             )
 
-        with col_s2:
-            if active_pricing_mode == PricingMode.DYNAMIC:
-                supp_margin = st.number_input(
-                    "Supplier Retail Markup / Opslag (€/kWh):",
-                    min_value=0.0,
-                    value=float(prod_data.get("supplier_margin_kwh", 0.0075)),
-                    format="%.4f",
-                    key=f"{key_prefix}_supp_margin_{selected_supplier_name}_{selected_product}",
-                    help="Leveranciersopslag bovenop de EPEX Spot Day-Ahead uur-/kwartierprijs"
-                )
-                procure_fee = st.number_input(
-                    "Procurement Fee (€/kWh):",
-                    min_value=0.0,
-                    value=float(prod_data.get("procurement_fee_kwh", 0.0015)),
-                    format="%.4f",
-                    key=f"{key_prefix}_supp_procure_{selected_supplier_name}_{selected_product}",
-                    help="Vaste inkoopvergoeding per kWh"
-                )
-                is_dual_rate = False
-                fixed_rate_val = 0.1250
-                fixed_rate_ht = 0.1340
-                fixed_rate_nt = 0.1180
-            elif active_pricing_mode == PricingMode.FIXED:
-                is_dual_rate = st.checkbox(
-                    ":material/contrast: Dual Rate (Dubbeltarief: HT / NT)",
-                    value=bool(prod_data.get("is_dual_rate", False)),
-                    key=f"{key_prefix}_supp_is_dual_{selected_supplier_name}_{selected_product}",
-                    help="Vink aan voor afzonderlijke tarieven voor piekuren (normaaltarief) en daluren (daltarief)."
-                )
-                if is_dual_rate:
-                    fixed_rate_ht = st.number_input(
-                        "High Tariff Rate HT / Normaal (€/kWh):",
-                        min_value=0.0,
-                        value=float(prod_data.get("rate_peak_kwh", 0.1340)),
-                        format="%.4f",
-                        key=f"{key_prefix}_supp_ht_{selected_supplier_name}_{selected_product}",
-                        help="Tarief actieve energie tijdens werkdagen 07:00 - 23:00"
-                    )
-                    fixed_rate_val = fixed_rate_ht
-                else:
-                    fixed_rate_val = st.number_input(
-                        "Fixed Active Energy Rate (€/kWh):",
-                        min_value=0.0,
-                        value=float(prod_data.get("fixed_rate_kwh", 0.1250)),
-                        format="%.4f",
-                        key=f"{key_prefix}_supp_fixed_rate_{selected_supplier_name}_{selected_product}",
-                        help="Uniforme vaste leveringsprijs per actief kilowattuur"
-                    )
-                    fixed_rate_ht = fixed_rate_val
-                    fixed_rate_nt = fixed_rate_val
-                supp_margin = 0.0
-                procure_fee = 0.0
-            else:
-                st.caption(":material/calendar_month: *Using 12-month variable rate schedule.*")
-                is_dual_rate = False
-                fixed_rate_val = 0.1250
-                fixed_rate_ht = 0.1340
-                fixed_rate_nt = 0.1180
-                supp_margin = 0.0
-                procure_fee = 0.0
+        is_actual_horizon = "Actual Measured" in eval_mode
 
-        with col_s3:
-            if active_pricing_mode == PricingMode.FIXED:
-                if is_dual_rate:
-                    fixed_rate_nt = st.number_input(
-                        "Off-Peak Rate NT / Dal (€/kWh):",
-                        min_value=0.0,
-                        value=float(prod_data.get("rate_offpeak_kwh", 0.1180)),
-                        format="%.4f",
-                        key=f"{key_prefix}_supp_nt_{selected_supplier_name}_{selected_product}",
-                        help="Tarief actieve energie tijdens nachten (23:00 - 07:00) en weekenden (24h)"
-                    )
-                else:
+        with col_eval_badge:
+            if is_actual_horizon:
+                day_scale = actual_profile_days / 365.0
+                st.caption(
+                    f":material/event_available: Pro-rata standing fee: "
+                    f"€ {supp_base * day_scale:,.2f} ({actual_profile_days:.0f}/365 days)"
+                )
+            else:
+                day_scale = 1.0
+                annual_scaling_factor = 365.0 / max(1.0, actual_profile_days)
+                if actual_profile_days < 360:
                     st.info(
-                        f":material/check_circle: **Uniform Rate:** {fixed_rate_val:.4f} €/kWh flat across all hours."
+                        f":material/info: Scaled by {annual_scaling_factor:.2f}x to represent 365 days.",
+                        icon=":material/info:"
                     )
-            elif active_pricing_mode == PricingMode.DYNAMIC:
-                st.caption(":material/hub: *EPEX Spot wholesale series linked to Europe/Amsterdam timezone.*")
+
+        # ------------------------------------------------------------------------------
+        # D. Mathematics: Pure Supplier Costs & Benchmark Shadow Calculation
+        # ------------------------------------------------------------------------------
+        total_kwh = float(load_series.total_energy_kwh)
+        ht_mask = load_series.is_peak_tou
+        ht_kwh = float(np.sum(load_series.energy_kwh[ht_mask]))
+        nt_kwh = float(np.sum(load_series.energy_kwh[~ht_mask]))
+
+        # Helper temporary tariff for spot alignment
+        temp_spot_tariff = SupplierTariff(
+            supplier_name=selected_supplier_name,
+            pricing_mode=PricingMode.DYNAMIC,
+            tariff_product_name="Spot Temp",
+            base_fee_annual=supp_base,
+            supplier_margin_kwh=supp_margin if selected_model_type == MODEL_DYNAMIC else 0.0070,
+            procurement_fee_kwh=procure_fee if selected_model_type == MODEL_DYNAMIC else 0.0015,
+            green_certificate_surcharge_kwh=green_surcharge,
+            spot_default_fallback_rate=0.1200
+        )
+        spot_prices = align_spot_prices_amsterdam_2025(load_series, temp_spot_tariff)
+
+        # Pure commodity cost functions
+        surcharge_kwh = procure_fee + green_surcharge
+        if selected_model_type == MODEL_DUAL:
+            active_energy_cost = (ht_kwh * fixed_rate_ht) + (nt_kwh * fixed_rate_nt) + (total_kwh * surcharge_kwh)
+        elif selected_model_type == MODEL_SINGLE:
+            active_energy_cost = (total_kwh * fixed_rate_val) + (total_kwh * surcharge_kwh)
+        else:
+            all_in_spot = spot_prices + supp_margin + surcharge_kwh
+            active_energy_cost = float(np.sum(load_series.energy_kwh * all_in_spot))
+
+        # Benchmark Shadow Costs for all 3 models
+        # 1. Dual Benchmark:
+        bench_ht = fixed_rate_ht if selected_model_type == MODEL_DUAL else float(curr_vals.get("ht_rate", 0.1340))
+        bench_nt = fixed_rate_nt if selected_model_type == MODEL_DUAL else float(curr_vals.get("nt_rate", 0.1180))
+        cost_dual_energy = (ht_kwh * bench_ht) + (nt_kwh * bench_nt) + (total_kwh * surcharge_kwh)
+
+        # 2. Single Benchmark:
+        bench_single = fixed_rate_val if selected_model_type == MODEL_SINGLE else float(curr_vals.get("single_rate", 0.1250))
+        cost_single_energy = (total_kwh * bench_single) + (total_kwh * surcharge_kwh)
+
+        # 3. Dynamic Benchmark:
+        bench_dyn_margin = supp_margin if selected_model_type == MODEL_DYNAMIC else 0.0070
+        bench_dyn_procure = procure_fee if selected_model_type == MODEL_DYNAMIC else 0.0015
+        dyn_all_in = spot_prices + bench_dyn_margin + bench_dyn_procure + green_surcharge
+        cost_dynamic_energy = float(np.sum(load_series.energy_kwh * dyn_all_in))
+
+        # Apply Horizon Scaling
+        if is_actual_horizon:
+            horizon_kwh = total_kwh
+            horizon_ht_kwh = ht_kwh
+            horizon_nt_kwh = nt_kwh
+            base_fee_evaluated = supp_base * (actual_profile_days / 365.0)
+            evaluated_energy_cost = active_energy_cost
+            bench_total_dual = cost_dual_energy + base_fee_evaluated
+            bench_total_single = cost_single_energy + base_fee_evaluated
+            bench_total_dynamic = cost_dynamic_energy + base_fee_evaluated
+        else:
+            scale_fac = 365.0 / max(1.0, actual_profile_days)
+            horizon_kwh = total_kwh * scale_fac
+            horizon_ht_kwh = ht_kwh * scale_fac
+            horizon_nt_kwh = nt_kwh * scale_fac
+            base_fee_evaluated = supp_base
+            evaluated_energy_cost = active_energy_cost * scale_fac
+            bench_total_dual = (cost_dual_energy * scale_fac) + base_fee_evaluated
+            bench_total_single = (cost_single_energy * scale_fac) + base_fee_evaluated
+            bench_total_dynamic = (cost_dynamic_energy * scale_fac) + base_fee_evaluated
+
+        supplier_net_total = evaluated_energy_cost + base_fee_evaluated
+        effective_commodity_rate = supplier_net_total / max(1.0, horizon_kwh)
+
+        # Benchmark comparison against the main alternative model
+        if selected_model_type == MODEL_DYNAMIC:
+            alt_model_name = "Fixed Dual Rate"
+            alt_cost = bench_total_dual
+        else:
+            alt_model_name = "Dynamic Day-Ahead"
+            alt_cost = bench_total_dynamic
+
+        delta_eur = supplier_net_total - alt_cost
+        delta_pct = (delta_eur / max(1.0, alt_cost)) * 100.0
+
+        # ------------------------------------------------------------------------------
+        # E. 4 Executive KPI Cards
+        # ------------------------------------------------------------------------------
+        col_kpi_s1, col_kpi_s2, col_kpi_s3, col_kpi_s4 = st.columns(4)
+        with col_kpi_s1:
+            render_kpi_card(
+                title=":material/receipt_long: Pure Supplier Total",
+                value=f"€ {supplier_net_total:,.2f}",
+                subtext=f"Energy: € {evaluated_energy_cost:,.2f} | Base: € {base_fee_evaluated:,.2f}",
+                status="default"
+            )
+        with col_kpi_s2:
+            render_kpi_card(
+                title=":material/price_change: Effective Commodity Rate",
+                value=f"€ {effective_commodity_rate:.4f} / kWh",
+                subtext=f"Commodity only ({effective_commodity_rate * 100.0:.2f} ct/kWh)",
+                status="default"
+            )
+        with col_kpi_s3:
+            ht_share = (horizon_ht_kwh / max(1.0, horizon_kwh)) * 100.0
+            nt_share = (horizon_nt_kwh / max(1.0, horizon_kwh)) * 100.0
+            render_kpi_card(
+                title=":material/contrast: HT / NT Volume Split",
+                value=f"HT: {ht_share:.1f}% | NT: {nt_share:.1f}%",
+                subtext=f"HT: {horizon_ht_kwh:,.0f} kWh | NT: {horizon_nt_kwh:,.0f} kWh",
+                status="default"
+            )
+        with col_kpi_s4:
+            if abs(delta_eur) < 1.0:
+                delta_str = "Parity (±0 €)"
+                d_status = "ok"
+            elif delta_eur < 0:
+                delta_str = f"-€ {abs(delta_eur):,.0f} ({delta_pct:.1f}%)"
+                d_status = "ok"
+            else:
+                delta_str = f"+€ {delta_eur:,.0f} (+{delta_pct:.1f}%)"
+                d_status = "alert"
+
+            render_kpi_card(
+                title=f":material/compare_arrows: vs. {alt_model_name}",
+                value=delta_str,
+                subtext=f"Alt Cost: € {alt_cost:,.0f} net",
+                status=d_status
+            )
+
+        # ------------------------------------------------------------------------------
+        # F. Compact Visualizations & Itemized Settlement Table (2 Columns)
+        # ------------------------------------------------------------------------------
+        col_vis_left, col_vis_right = st.columns([1.1, 1.0])
+
+        with col_vis_left:
+            st.markdown("###### :material/insights: Visual Tariff Benchmark & Load Schedule")
+
+            # 1. Horizontal Benchmark Bar Chart
+            bench_dict = {
+                "Fixed Dual Rate (HT/NT)": bench_total_dual,
+                "Fixed Single Rate": bench_total_single,
+                "Dynamic Day-Ahead": bench_total_dynamic,
+            }
+            fig_bench = create_supplier_benchmark_figure(bench_dict)
+            st.plotly_chart(fig_bench, use_container_width=True)
+
+            # 2. Model-specific detail curve
+            if selected_model_type == MODEL_DYNAMIC:
+                # Dual-axis chart: Load demand (kW) vs. synchronous EPEX Spot Price (€/MWh)
+                spot_eur_mwh = spot_prices * 1000.0
+                fig_dyn = create_dynamic_price_consumption_figure(
+                    timestamps=load_series.timestamps,
+                    power_kw=load_series.power_kw,
+                    spot_prices_eur_mwh=spot_eur_mwh,
+                    title_suffix=f"({actual_profile_days:.0f} Days)"
+                )
+                st.plotly_chart(fig_dyn, use_container_width=True)
+            else:
+                # 24h Diurnal load schedule with HT/NT window
+                fig_diurnal = create_tou_schedule_diurnal_figure(
+                    load=load_series,
+                    ht_rate_label=f"High Tariff HT ({fixed_rate_ht:.4f} €/kWh)",
+                    nt_rate_label=f"Off-Peak NT ({fixed_rate_nt:.4f} €/kWh)"
+                )
+                st.plotly_chart(fig_diurnal, use_container_width=True)
+
+        with col_vis_right:
+            st.markdown("###### :material/table_chart: Pure Supplier Settlement Statement")
+
+            # Construct itemized monthly settlement rows
+            billing_rows = []
+            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            for m in range(1, 13):
+                m_mask = (load_series.month_indices == m)
+                m_kwh = float(np.sum(load_series.energy_kwh[m_mask]))
+                if m_kwh <= 0.0:
+                    continue
+
+                m_ht_kwh = float(np.sum(load_series.energy_kwh[m_mask & ht_mask]))
+                m_nt_kwh = float(np.sum(load_series.energy_kwh[m_mask & ~ht_mask]))
+
+                if selected_model_type == MODEL_DUAL:
+                    m_ecost = (m_ht_kwh * fixed_rate_ht) + (m_nt_kwh * fixed_rate_nt) + (m_kwh * surcharge_kwh)
+                elif selected_model_type == MODEL_SINGLE:
+                    m_ecost = (m_kwh * fixed_rate_val) + (m_kwh * surcharge_kwh)
+                else:
+                    m_all_in = spot_prices[m_mask] + supp_margin + surcharge_kwh
+                    m_ecost = float(np.sum(load_series.energy_kwh[m_mask] * m_all_in))
+
+                # Monthly standing fee allocation
+                if is_actual_horizon:
+                    # Days in this month contained in profile
+                    m_days = len(np.unique(load_series.timestamps[m_mask].date))
+                    m_base = supp_base * (m_days / 365.0)
+                else:
+                    m_base = supp_base / 12.0
+                    m_kwh = m_kwh * scale_fac
+                    m_ht_kwh = m_ht_kwh * scale_fac
+                    m_nt_kwh = m_nt_kwh * scale_fac
+                    m_ecost = m_ecost * scale_fac
+
+                m_total = m_ecost + m_base
+                m_eff_rate = m_total / max(1.0, m_kwh)
+
+                billing_rows.append({
+                    "Period": month_names[m - 1],
+                    "Total (kWh)": f"{m_kwh:,.0f}",
+                    "HT (kWh)": f"{m_ht_kwh:,.0f}",
+                    "NT (kWh)": f"{m_nt_kwh:,.0f}",
+                    "Energy (€)": f"€ {m_ecost:,.2f}",
+                    "Base (€)": f"€ {m_base:,.2f}",
+                    "Supplier Total (€)": f"€ {m_total:,.2f}",
+                    "Rate (€/kWh)": f"€ {m_eff_rate:.4f}"
+                })
+
+            # Append Consolidated Summary Row
+            billing_rows.append({
+                "Period": "TOTAL",
+                "Total (kWh)": f"{horizon_kwh:,.0f}",
+                "HT (kWh)": f"{horizon_ht_kwh:,.0f}",
+                "NT (kWh)": f"{horizon_nt_kwh:,.0f}",
+                "Energy (€)": f"€ {evaluated_energy_cost:,.2f}",
+                "Base (€)": f"€ {base_fee_evaluated:,.2f}",
+                "Supplier Total (€)": f"€ {supplier_net_total:,.2f}",
+                "Rate (€/kWh)": f"€ {effective_commodity_rate:.4f}"
+            })
+
+            df_billing = pd.DataFrame(billing_rows)
+            st.dataframe(df_billing, use_container_width=True, hide_index=True)
+
+            st.caption(
+                ":material/security: Pure supplier view strictly excludes DSO network tariffs, "
+                "metering telemetry services, energy taxes (EB) and statutory VAT."
+            )
 
     # ----------------------------------------------------------------------------------
     # Sub-Tab 3: Metering Company & Taxes

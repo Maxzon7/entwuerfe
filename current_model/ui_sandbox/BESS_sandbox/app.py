@@ -8,16 +8,16 @@ ui_sandbox/BESS_sandbox/app.py
 
 Description:
 ------------
-Streamlined 3-tab BESS engineering and commercial decision platform:
-  1. Tab 1: Current Situation (The Problem)
+Streamlined BESS engineering and commercial decision platform:
+  1. Tab 1: Current Situation & Load Ingestion
      - Unmitigated facility demand vs. contracted grid connection limit.
      - Overload diagnostics and single high-contrast exceedance preview chart.
-  2. Tab 2: BESS Peak Shaving (The Solution)
+  2. Tab 2: BESS Sizing & Excel Validation
      - Modular sizing form with automated gross nameplate recommendations.
-     - 100% feasibility verdict and strictly 2 operational charts (15-min timeseries + SoC).
-  3. Tab 3: Financial Comparison & 15Y TCO (The Economics)
+     - 100% feasibility verdict, simultaneous bottleneck checklist, and synchronized Plotly subplot.
+  3. Tab 3: Financial Comparison & 15Y TCO (Preserved for Step 2)
      - Avoided grid upgrade CAPEX & transformer rent vs. BESS turnkey investment.
-     - 6 executive KPI cards, itemized Year-1 table, and 2 life-cycle trajectory curves.
+
 """
 
 import os
@@ -71,6 +71,7 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
         preset_options = [
             "Case 1: Liander AC4b vs. AC5a Upgrade (Industrial 350 kW)",
             "Case 2: Enexis MS-D Commercial (250 kW Peak vs. 150 kW Cap)",
+            "Case 3: Paula Dutch Site (28-Day WKO / 110 kW Contract Limit)",
             "Custom Profile (Upload CSV or Current Situation Sandbox)"
         ]
         selected_option = st.selectbox(
@@ -95,6 +96,13 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
                 f"Peak Demand: `250 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW`",
                 icon=":material/business:"
             )
+        elif "Case 3" in selected_option:
+            active_preset = presets.get_case3_paula_dutch_site_preset()
+            st.info(
+                f"**Benchmark Profile:** {active_preset.title}\n\n"
+                f"Peak Demand: `131.4 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW` | Overload: `+21.4 kW`",
+                icon=":material/heat_pump:"
+            )
         else:
             # Custom Profile
             custom_df = st.session_state.get("bess_sb_custom_df")
@@ -106,7 +114,8 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
                     f"**Active Custom Load Profile:** `{len(custom_df):,}` 15-minute intervals loaded.",
                     icon=":material/data_object:"
                 )
-                active_preset = presets.build_custom_comparison_preset(custom_df, grid_limit_kw=150.0)
+                cur_limit = float(st.session_state.get(f"{key_prefix}_grid_limit_kw", 150.0))
+                active_preset = presets.build_custom_comparison_preset(custom_df, grid_limit_kw=cur_limit)
             else:
                 st.info(
                     "**Custom Ingestion Mode:** Use Tab 1 below to upload and configure your 15-min CSV load profile.",
@@ -128,15 +137,18 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
             for k in list(st.session_state.keys()):
                 if k.startswith("bess_sb"):
                     st.session_state.pop(k, None)
+            st.session_state.pop("active_csv_df", None)
+            st.session_state.pop("active_csv_filename", None)
             st.rerun()
 
     st.markdown("---")
 
     # --- 2 Physics & Feasibility Tabs ---
     tabs = st.tabs([
-        ":material/warning: 1. Current Situation & Load Ingestion (The Problem)",
-        ":material/battery_charging_full: 2. BESS Sizing & Excel Validation (The Solution)"
+        ":material/warning: 1. Current Situation & Load Ingestion",
+        ":material/battery_charging_full: 2. BESS Sizing & Excel Validation"
     ])
+
 
     with tabs[0]:
         active_limit_kw = render_problem_baseline_tab(active_preset)

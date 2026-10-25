@@ -21,13 +21,15 @@ python -m streamlit run "ui_sandbox/BESS_sandbox/app.py"
 ui_sandbox/BESS_sandbox/
 ├── __init__.py               # Package exports: render_bess_sandbox, tab views, engines, presets, charts
 ├── app.py                    # Main standalone Streamlit coordinator (2 physics tabs + benchmark switcher)
-├── baseline_presets.py       # Pre-configured Dutch industrial & commercial benchmark profiles
+├── baseline_presets.py       # Pre-configured Dutch industrial, commercial & Paula WKO benchmark profiles
 ├── sandbox_bess_engine.py    # Physics sizing engine: multi-peak clusters, simultaneous bottlenecks & Pareto tradeoff
 ├── sandbox_charts.py         # Sandbox-local Plotly figures (synchronized 2-in-1 dispatch/SoC & Pareto hockey stick)
-├── view_problem.py           # Tab 1: Current Situation & In-Tab CSV Quick Ingestion (The Problem)
-├── view_technical.py         # Tab 2: BESS Sizing & Excel Validation (The Solution - 4 structured blocks)
+├── view_problem.py           # Tab 1: Current Situation & 1:1 CSV Ingestion & Validation Pipeline
+├── view_technical.py         # Tab 2: BESS Sizing & Excel Validation (4 structured blocks)
 ├── view_financial.py         # Preserved for Step 2: Financial Comparison & 15Y TCO (Avoided grid upgrade vs. BESS)
 ├── view_optimizer.py         # Optional / Parametric capacity sweep & sensitivity library
+├── data/
+│   └── Paula3_totaal_clean.csv # Standardized 28-day 15-min benchmark CSV (Peak: 131.4 kW, Limit: 110 kW)
 └── README.md                 # Complete sandbox documentation
 ```
 
@@ -52,13 +54,20 @@ graph TD
 
 ---
 
-### Tab 1: Current Situation & Load Ingestion (The Problem) (`view_problem.py`)
+### Tab 1: Current Situation & Load Ingestion (`view_problem.py`)
 
-- **In-Tab CSV Quick Ingestor:**
-  - File uploader supporting `.csv` and `.txt` files directly inside Tab 1.
-  - Automatic column inspection and sniff-based mapping for timestamp and active power (`P_Load_kW`, `Total_Demand_kW`, `kW`, `W`, `MW` with auto-conversion).
-  - Integration with `core.csv_parser.process_load_profile_data` for frequency validation and leap-year sanitization.
-  - Session state persistence (`bess_sb_custom_csv_df`) surviving tab switches.
+- **1:1 Industrial-Grade CSV Load Ingestion Pipeline:**
+  - **Multi-Format & ZIP Decompression:** Ingests `.csv`, `.txt`, and compressed `.zip` archives with in-memory decompression and multi-encoding fallback (`utf-8`, `utf-8-sig`, `latin1`, `cp1252`).
+  - **1-Click Demo Generator:** `:material/play_circle: Load 15-Min Demo CSV (Full Year 2025)` generating a realistic 35,040-interval commercial load profile.
+  - **Table Inspector & Dynamic Header Skip:** Live `skiprows` control (0–50 rows) with head(15) preview for utility meter files with preamble metadata.
+  - **Column Auto-Detection & Multi-Meter Aggregation:** `detect_suggested_columns` heuristic for timestamp and power columns; supports multi-channel meter summing into `Total_Demand_kW`.
+  - **4 Unit Conversion Modes:** `kWh (15-min) → kW` ($\times 4.0$), `kW Direct`, `W → kW` ($/ 1,000$), `kWh (Hourly) → kW`.
+  - **Day-First Format Sniffer & Live Preview:** Automatic year-first vs. day-first regex detection (`^\s*\d{4}[./-]`), day-first toggle (`DD.MM`), and live formatted timestamp sample caption.
+  - **Day-Accurate Date Range Filter:** Inclusive Start Date and End Date calendar pickers (`DD.MM.YYYY`) with chronological validation (`start_date > end_date` check).
+  - **Time Series Gap & Continuity Detection:** `detect_load_profile_gaps` flags missing intervals (> 3 steps) with start/end timestamps and duration.
+  - **Multi-Year Timeseries Notice:** Informs users when recordings exceed 366 calendar days and explains baseline vs. annualized life-cycle handling.
+  - **Cleaned Data Preview Expander:** Expandable table displaying the normalized 15-minute timeseries dataframe.
+  - **Session State Persistence:** Synchronizes `bess_sb_custom_df`, `bess_sb_custom_filename`, `active_csv_df`, and `active_csv_filename`.
 - **Contracted Grid Limit Controls:**
   - Quick limit callback buttons (`147 kW (Liander AC4b)`, `150 kW (Enexis MS-D)`, `430 kW (Industrial Medium)`) utilizing pre-render `on_click` callbacks to avoid widget instantiation race conditions.
   - Numeric input for arbitrary custom grid limits with instant delta calculations.
@@ -72,7 +81,8 @@ graph TD
 
 ---
 
-### Tab 2: BESS Sizing & Excel Validation (The Solution) (`view_technical.py`)
+### Tab 2: BESS Sizing & Excel Validation (`view_technical.py`)
+
 
 Tab 2 is organized into **4 structured blocks**:
 
@@ -134,7 +144,13 @@ Tab 2 is organized into **4 structured blocks**:
    - Grid Limit: Contracted capacity capped at 150 kW.
    - Zero-Deficit BESS Sizing: ~100 kW / ~240 kWh LFP system.
 
-3. **Custom CSV Ingestion:**
+3. **Case 3: Paula Dutch Site (28-Day WKO / 110 kW Contract Limit)**
+   - Facility Load: 28-day 15-minute interval WKO heat pump / aquifer thermal storage profile (2,688 intervals) with 131.4 kW peak.
+   - Grid Limit: Contracted capacity capped at 110.0 kW.
+   - Overload Peak: +21.4 kW unmitigated peak above limit.
+   - Purpose: Direct 1:1 validation against Paula's Excel model benchmarks and remaining deficit quantification.
+
+4. **Custom CSV Ingestion:**
    - Ingests arbitrary 15-minute load CSV data uploaded by the user with automatic column sniffing and unit conversion.
 
 ---

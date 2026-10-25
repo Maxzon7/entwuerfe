@@ -27,13 +27,22 @@ current_model/ui_sandbox/Currentsituation_sandbox/
 │       ├── view.py                             <- 24h & 365-day synthetic simulator
 │       ├── charts.py                           <- Daily load profile curves & heatmaps
 │       └── forms.py                            <- Consumer appliance parametrization form
-└── contract/                                   <- Copied from current_model/ui/tab2_contract/
+├── contract/                                   <- Copied from current_model/ui/tab2_contract/
+│   ├── __init__.py
+│   ├── view.py                                 <- Contract & billing view with active dataset linkage
+│   ├── charts.py                               <- Donut chart and 12-month payment series
+│   ├── form.py                                 <- Contract tariff parameter configuration form
+│   ├── comparison_view.py                      <- Multi-contract scenario comparison view
+│   └── comparison_charts.py                    <- Tariff comparison figures
+└── engine/                                     <- Layer 2 to 5 Computational Accounting Engine
     ├── __init__.py
-    ├── view.py                                 <- Contract & billing view with active dataset linkage
-    ├── charts.py                               <- Donut chart and 12-month payment series
-    ├── form.py                                 <- Contract tariff parameter configuration form
-    ├── comparison_view.py                      <- Multi-contract scenario comparison view
-    └── comparison_charts.py                    <- Tariff comparison figures
+    ├── config_and_models.py                    <- Dataclasses for tariffs, statements, and load series
+    ├── tariff_defaults_2025.py                 <- Official 2025 Dutch rate catalogs (Enexis, Liander, Stedin)
+    ├── consumption_pipeline.py                 <- 35,040 interval normalization & Liander TOU tagger
+    ├── dso_accounting.py                       <- Regulated grid operator billing (standing, capacity, peak)
+    ├── commercial_accounting.py                <- Retailer TOU commodity, metering, energy taxes, VAT
+    ├── status_quo_master.py                    <- Master 12-month statement and 15-year NPV aggregator
+    └── audit.py                                <- 14-point mathematical integrity and tax compliance audit
 ```
 
 ---
@@ -71,9 +80,21 @@ current_model/ui_sandbox/Currentsituation_sandbox/
       * **`3. Time-of-Use Electricity Rates (Interactive Matrix Editor)`**: Dynamic `st.data_editor` table matching Tab 2 with intuitive rows (`Daytime / Working Hours (kWh hoch)` at € 0.2200/kWh, `Night & Weekend / Off-Peak (kWh niedrig)` at € 0.2200/kWh 1:1 matching printed PDF Table 2.1), Weekend Off-Peak toggle, and Dutch breach capacity adjustment rule.
       * Encapsulated in a performant **`st.form`** with primary **`Save Contract Configuration`** submit button.
   * **Sub-Tab 2: Energy Retailer (Energielieferant / Supplier)**:
-    - Commercial suppliers: **Vattenfall Zakelijk**, **Eneco Zakelijk**, **Essent Zakelijk**, **Shell Energy**, **TotalEnergies**, **Greenchoice**, **Tibber / Dynamisch**, **Custom**.
-    - Multi-tier product selector: *Fixed 1-Year (Dubbeltarief HT/NT)*, *Fixed 1-Year (Enkeltarief)*, *Fixed 3-Year (Prijszekerheid)*, *Dynamic Spot (EPEX Spot NL 2025)*, *Variable Monthly (12-mo schedule)*, *100% Dutch Green Power (GvO)*.
-    - Full support for **Dual Commodity TOU Rates**: Separate High Tariff ($E_{\text{HT}}$) and Low Tariff ($E_{\text{NT}}$) commodity prices, procurement fee (*Inkoopvergoeding*), and green power surcharge.
+    - Commercial suppliers: **Vattenfall Zakelijk**, **Eneco Zakelijk**, **Essent Zakelijk**, **Shell Energy**, **TotalEnergies**, **Greenchoice**, **Scholt Energy** (B2B/Industry), **Nieuwe Stroom** (Pure Spot/Dynamic standard), **Tibber / Dynamisch**, **Custom Energy Retailer**.
+    - **Streamlined Toolbar (outside form)**: Rapid pre-selection across the 3 core commercial pricing models (covering >90% of Dutch market):
+      1. *Fixed Dual Rate (Dubbeltarief HT/NT)*: Workdays 07:00–23:00 High Tariff, Nights & Weekends Low Tariff.
+      2. *Fixed Single Rate (Enkeltarief)*: Uniform 24/7 all-in commodity price.
+      3. *Dynamic Day-Ahead (EPEX Spot NL + Opslag)*: Synchronous hourly wholesale index + supplier markup.
+    - **Performance Encapsulation (`st.form`)**:
+      - Numerical inputs encapsulated within `st.form` with primary `Apply Provider Tariff & Calculate` button preventing unwanted full-page reruns on typing.
+      - Contextual parameter rendering: only fields relevant to the active pricing model are visible (Dual: HT/NT rates; Single: Flat rate; Dynamic: Retail markup & procurement fee; Standing fee and Green certificates GvO always visible).
+    - **Dual Evaluation Horizon Switch**:
+      - *Modus A: Actual Measured Period (DEFAULT)*: Tagesgenaue Abrechnung für den realen Messzeitraum (z. B. 28 Tage) mit pro-rata Grundgebühr ($V_{\text{annual}} \times \frac{T_{\text{days}}}{365}$).
+      - *Modus B: Annualized Projection (365-Tage-Hochrechnung)*: Lineare 365-Tage-Skalierung mit automatischer Info-Badge-Kennzeichnung bei Profilen $< 360$ Tagen.
+    - **Isolated Pure Supplier Analytics (Reine Lieferantensicht)**:
+      - *4 Executive KPI Cards*: Pure Supplier Total (Netto €), Effective Commodity Rate (€/kWh & ct/kWh), HT/NT Volume & Cost Split (% & kWh), Model Benchmark Delta (automatischer Schattenvergleich mit alternativen Tarifen).
+      - *Visual Benchmark & Load Schedule (Left)*: Horizontaler 3-Modell-Kostenvergleich (Fixed Dual vs. Fixed Single vs. Dynamic Spot) und modellabhängige Detailgrafik (24h-Tagesschnitt bei Festpreis; **Synchronous Dual-Axis Chart** Lastgang kW vs. EPEX Spot €/MWh bei dynamischem Tarif).
+      - *Itemized Settlement Statement (Right)*: Reine Lieferanten-Abrechnungstabelle mit Monats-/Periodenauflösung (kWh, HT, NT, Arbeitskosten, Grundgebühr, Effektivpreis).
   * **Sub-Tab 3: Certified Metering Company (Meetbedrijf) & Statutory Taxes**:
     - Providers: **Fudura B.V.**, **Joulz Meetbedrijf**, **Kenter B.V.**, **Custom**.
     - Multi-tier service packages: *Standard Grootverbruik Telemetry (MS/RLM)*, *Grootverbruik + Measurement Transformers (CT/VT)*, *Submetering (Kleinverbruik / Tussenmeting)*, *High Voltage Telemetry (HS/TS > 2 MW)*.

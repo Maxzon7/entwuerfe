@@ -71,7 +71,7 @@ current_model/ui_sandbox/
     ├── baseline_presets.py                     # Dutch industrial & commercial benchmark profiles
     ├── sandbox_bess_engine.py                  # Multi-peak clusters, simultaneous bottlenecks & Pareto tradeoff
     ├── sandbox_charts.py                       # Plotly synchronized 2-in-1 dispatch/SoC & Pareto hockey stick
-    ├── view_problem.py                         # Tab 1: Current situation & in-tab CSV quick ingestion
+    ├── view_problem.py                         # Tab 1: Current situation & 1:1 CSV load ingestion & validation pipeline
     ├── view_technical.py                       # Tab 2: 100% zero-deficit reference, manual 0.5C form, Pareto curve, 4 bottlenecks & synced chart
     ├── view_financial.py                       # Preserved for Step 2: Avoided grid upgrade CAPEX vs. BESS 15Y TCO
     ├── view_optimizer.py                       # Optional / Parametric capacity sweep & sensitivity
