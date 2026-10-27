@@ -78,7 +78,12 @@ current_model/ui_sandbox/Currentsituation_sandbox/
         - `Physical Transformer Limit (kW)` & `Capacity Exceedance Penalty (€/kW)`.
       * **`2. Reactive Power & Power Factor (Blindenergie)`**: `Reactive Power Rate (€/kVARh)` (€ 0.0000), `Target Power Factor (cos φ)` (0.90), `Free Reactive Energy Allowance (%)` (33%).
       * **`3. Time-of-Use Electricity Rates (Interactive Matrix Editor)`**: Dynamic `st.data_editor` table matching Tab 2 with intuitive rows (`Daytime / Working Hours (kWh hoch)` at € 0.2200/kWh, `Night & Weekend / Off-Peak (kWh niedrig)` at € 0.2200/kWh 1:1 matching printed PDF Table 2.1), Weekend Off-Peak toggle, and Dutch breach capacity adjustment rule.
-      * Encapsulated in a performant **`st.form`** with primary **`Save Contract Configuration`** submit button.
+      * **Side-by-Side `st.form` Architecture & Direct Cost Impact Card**:
+        - Form inputs (62% width, left) are paired directly with an itemized **Direct Cost Impact** preview card (38% width, right) inside the same `st.form`.
+        - Aligned Cost Table: strictly aligned tabular layout showing **Component | Per Year (€/yr) | Per Month (€/mo)** with zero row drift.
+        - Detailed Volumetric Sub-items: displays total Volumetric Transport alongside its individual **Daytime / HT** and **Off-Peak / NT** cost and volume (kWh) subcomponents.
+        - Live capacity & grid diagnostics indicate whether peak demand stays safely within reserved limits or triggers monthly capacity overloads.
+        - Preserves clean `st.form` encapsulation with a primary **`Save Contract Configuration & Recalculate`** button, preventing unwanted full-page reruns while typing.
   * **Sub-Tab 2: Energy Retailer (Energielieferant / Supplier)**:
     - Commercial suppliers: **Vattenfall Zakelijk**, **Eneco Zakelijk**, **Essent Zakelijk**, **Shell Energy**, **TotalEnergies**, **Greenchoice**, **Scholt Energy** (B2B/Industry), **Nieuwe Stroom** (Pure Spot/Dynamic standard), **Tibber / Dynamisch**, **Custom Energy Retailer**.
     - **Streamlined Toolbar (outside form)**: Rapid pre-selection across the 3 core commercial pricing models (covering >90% of Dutch market):

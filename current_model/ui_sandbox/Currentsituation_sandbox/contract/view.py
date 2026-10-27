@@ -82,6 +82,7 @@ try:
     from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
+        extract_monthly_consumption_records,
     )
     from ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
         calculate_status_quo_master_2025,
@@ -114,6 +115,7 @@ except ImportError:
         from engine.consumption_pipeline import (
             normalize_load_profile_2025,
             synthesize_benchmark_load_profile_2025,
+            extract_monthly_consumption_records,
         )
         from engine.status_quo_master import (
             calculate_status_quo_master_2025,
@@ -146,6 +148,7 @@ except ImportError:
             from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
                 normalize_load_profile_2025,
                 synthesize_benchmark_load_profile_2025,
+                extract_monthly_consumption_records,
             )
             from current_model.ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
                 calculate_status_quo_master_2025,
@@ -177,6 +180,7 @@ except ImportError:
             from ui_sandbox.status_quo_2025.consumption_pipeline import (
                 normalize_load_profile_2025,
                 synthesize_benchmark_load_profile_2025,
+                extract_monthly_consumption_records,
             )
             from ui_sandbox.status_quo_2025.status_quo_master import (
                 calculate_status_quo_master_2025,
@@ -323,169 +327,282 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
                 {"name": "Night & Weekend / Off-Peak (kWh niedrig)", "rate": default_offpeak, "start_time": "23:00", "end_time": "07:00"}
             ])
 
+        # Pre-compute current/saved DSO cost components for live preview card
+        saved_dso_kw_val = float(st.session_state.get(f"{key_prefix}_dso_p_contract_{selected_dso_company}_{selected_tier}_v{form_version}", max(50.0, round(load_series.peak_demand_kw * 1.05, 0))))
+        saved_dso_base_val = float(st.session_state.get(f"{key_prefix}_dso_base_fee_{selected_dso_company}_{selected_tier}_v{form_version}", round(float(preset_data.get("vastrecht_annual", 441.0)) / 12.0, 2)))
+        saved_dso_cap_rate = float(st.session_state.get(f"{key_prefix}_dso_rate_cap_{selected_dso_company}_{selected_tier}_v{form_version}", float(preset_data.get("rate_contracted_monthly", 2.4400))))
+        saved_dso_peak_rate = float(st.session_state.get(f"{key_prefix}_dso_rate_peak_{selected_dso_company}_{selected_tier}_v{form_version}", float(preset_data.get("rate_peak_monthly", 3.7100))))
+
+        # Monthly records from load series
+        _records_preview = extract_monthly_consumption_records(load_series)
+        _prev_peak_demand_annual = sum(r.peak_demand_kw * saved_dso_peak_rate for r in _records_preview)
+        _prev_fixed_annual = saved_dso_base_val * 12.0
+        _prev_cap_annual = saved_dso_kw_val * saved_dso_cap_rate * 12.0
+        _active_tou_df_prev = st.session_state.get(state_dso_tou_key)
+        _prev_trans_ht = float(preset_data.get("rate_peak_kwh", 0.0250))
+        _prev_trans_nt = float(preset_data.get("rate_offpeak_kwh", 0.0250))
+        if _active_tou_df_prev is not None and not _active_tou_df_prev.empty:
+            for _r in _active_tou_df_prev.to_dict(orient="records"):
+                _rn = str(_r.get("name", "")).lower()
+                _rr = float(_r.get("rate", _prev_trans_ht))
+                if any(_k in _rn for _k in ["high", "normaal", "peak", "ht", "hoch", "daytime", "working"]):
+                    _prev_trans_ht = _rr
+                elif any(_k in _rn for _k in ["off", "dal", "laag", "nt", "niedrig", "night", "weekend"]):
+                    _prev_trans_nt = _rr
+        # Calculate HT and NT volume sums and sub-costs
+        _total_ht_kwh = sum(r.peak_tou_kwh for r in _records_preview)
+        _total_nt_kwh = sum(r.offpeak_tou_kwh for r in _records_preview)
+        _prev_vol_ht_annual = _total_ht_kwh * _prev_trans_ht
+        _prev_vol_nt_annual = _total_nt_kwh * _prev_trans_nt
+        _prev_vol_annual = _prev_vol_ht_annual + _prev_vol_nt_annual
+        _prev_breach_months = [r.month_name for r in _records_preview if r.peak_demand_kw > (saved_dso_kw_val + 1e-4)]
+        _prev_dso_net_annual = _prev_fixed_annual + _prev_cap_annual + _prev_peak_demand_annual + _prev_vol_annual
+
         with st.form(key=f"{key_prefix}_dso_contract_form_{selected_dso_company}_{selected_tier}_v{form_version}"):
-            # ==============================================================================
-            # 1. Grid Capacity & Fixed Fees
-            # ==============================================================================
-            st.subheader("1. Grid Capacity & Fixed Fees")
+            col_form_inputs, col_form_preview = st.columns([1.65, 1.0], gap="large")
 
-            dso_contract_name_default = f"{selected_dso_company} - {selected_tier} (2025)"
-            contract_name_val = st.text_input(
-                "Contract Name / Identifier:",
-                value=dso_contract_name_default,
-                key=f"{key_prefix}_dso_name_val_{selected_dso_company}_{selected_tier}_v{form_version}",
-                help="Custom name or tariff identifier for the regulated grid operator contract."
-            )
+            with col_form_inputs:
+                # ==============================================================================
+                # 1. Grid Capacity & Fixed Fees
+                # ==============================================================================
+                st.subheader("1. Grid Capacity & Fixed Fees")
 
-            c1, c2 = st.columns(2)
-            with c1:
-                curr_options = ["EUR", "USD", "GBP", "CHF", "ARS"]
-                currency = st.selectbox(
-                    "Currency:",
-                    options=curr_options,
-                    index=0,
-                    key=f"{key_prefix}_dso_currency_v{form_version}"
-                )
-                # Fixed monthly transport standing charge = vastrecht / 12 (connection fee aansluitdienst omitted for now)
-                ann_standing_default = float(preset_data.get("vastrecht_annual", 441.0))
-                monthly_standing_default = round(ann_standing_default / 12.0, 2)
-                base_fee = st.number_input(
-                    "Fixed Monthly Grid Fee (€/month):",
-                    min_value=0.0,
-                    value=monthly_standing_default,
-                    step=5.0,
-                    format="%.2f",
-                    key=f"{key_prefix}_dso_base_fee_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Fixed standing charge for grid access (Festgebühr Transport / Vastrecht €/month)"
-                )
-                contracted_kw = st.number_input(
-                    "Reserved Grid Capacity (kW):",
-                    min_value=10.0,
-                    max_value=20000.0,
-                    value=float(max(50.0, round(load_series.peak_demand_kw * 1.05, 0))),
-                    step=10.0,
-                    format="%.1f",
-                    key=f"{key_prefix}_dso_p_contract_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Power reserved on the grid for your facility (kW-Vertrag / Gecontracteerd vermogen in kW)"
+                dso_contract_name_default = f"{selected_dso_company} - {selected_tier} (2025)"
+                contract_name_val = st.text_input(
+                    "Contract Name / Identifier:",
+                    value=dso_contract_name_default,
+                    key=f"{key_prefix}_dso_name_val_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help="Custom name or tariff identifier for the regulated grid operator contract."
                 )
 
-            with c2:
-                capacity_tariff = st.number_input(
-                    "Reserved Capacity Rate (€/kW/month):",
-                    min_value=0.0,
-                    value=float(preset_data.get("rate_contracted_monthly", 2.4400)),
-                    step=0.01,
-                    format="%.4f",
-                    key=f"{key_prefix}_dso_rate_cap_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Monthly fee billed per reserved kW (kW-Vertrag Tarif / Capaciteitstarief)"
-                )
-                demand_tariff = st.number_input(
-                    "Monthly Peak Demand Rate (€/kW/month):",
-                    min_value=0.0,
-                    value=float(preset_data.get("rate_peak_monthly", 3.7100)),
-                    step=0.01,
-                    format="%.4f",
-                    key=f"{key_prefix}_dso_rate_peak_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Monthly fee billed per measured 15-minute maximum peak (kW max. pro Monat / Piekvermogen)"
-                )
-                max_physical_kw = st.number_input(
-                    "Physical Transformer Limit (kW):",
-                    min_value=10.0,
-                    value=float(preset_data.get("max_physical_limit_kw", 1000.0)),
-                    step=50.0,
-                    format="%.1f",
-                    key=f"{key_prefix}_dso_max_phys_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Maximum physical electrical limit of your transformer or main connection"
-                )
-                penalty_rate = st.number_input(
-                    "Capacity Exceedance Penalty (€/kW):",
-                    min_value=0.0,
-                    value=float(preset_data.get("peak_penalty_rate_kw", 0.2500)),
-                    step=0.05,
-                    format="%.4f",
-                    key=f"{key_prefix}_dso_penalty_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Penalty fee charged when monthly peak demand exceeds reserved grid capacity"
-                )
-
-            # ==============================================================================
-            # 2. Reactive Power & Power Factor (Blindenergie)
-            # ==============================================================================
-            st.subheader("2. Reactive Power & Power Factor (Blindenergie)")
-            q1, q2, q3 = st.columns(3)
-            with q1:
-                reactive_tariff = st.number_input(
-                    "Reactive Power Rate (€/kVARh):",
-                    min_value=0.0,
-                    value=float(preset_data.get("reactive_tariff", 0.0188)),
-                    step=0.005,
-                    format="%.4f",
-                    key=f"{key_prefix}_dso_reactive_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Tariff for consumed reactive energy (Blindenergie €/kVARh)"
-                )
-            with q2:
-                min_cos_phi = st.number_input(
-                    "Target Power Factor (cos φ):",
-                    min_value=0.50,
-                    max_value=1.00,
-                    value=float(preset_data.get("min_power_factor", 0.90)),
-                    step=0.02,
-                    format="%.2f",
-                    key=f"{key_prefix}_dso_cosphi_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Minimum required power factor (cos φ = 0.90) to avoid reactive charges"
-                )
-            with q3:
-                reactive_allowance = st.number_input(
-                    "Free Reactive Energy Allowance (% of kWh):",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=float(preset_data.get("reactive_allowance_pct", 33.0)),
-                    step=1.0,
-                    format="%.1f",
-                    key=f"{key_prefix}_dso_q_allow_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help="Permitted free reactive energy as a percentage of active consumption (33%)"
-                )
-
-            # ==============================================================================
-            # 3. Time-of-Use Electricity Rates (Working Hours vs. Off-Peak)
-            # ==============================================================================
-            st.subheader("3. Time-of-Use Electricity Rates (Working Hours vs. Off-Peak)")
-            st.caption("Define Time-of-Use rate windows. The table supports adding and deleting rows:")
-
-            edited_dso_tou = st.data_editor(
-                st.session_state[state_dso_tou_key],
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "name": st.column_config.TextColumn("Tariff Name", required=True),
-                    "rate": st.column_config.NumberColumn(
-                        f"Rate ({currency}/kWh)",
-                        format="%.4f",
+                c1, c2 = st.columns(2)
+                with c1:
+                    curr_options = ["EUR", "USD", "GBP", "CHF", "ARS"]
+                    currency = st.selectbox(
+                        "Currency:",
+                        options=curr_options,
+                        index=0,
+                        key=f"{key_prefix}_dso_currency_v{form_version}"
+                    )
+                    ann_standing_default = float(preset_data.get("vastrecht_annual", 441.0))
+                    monthly_standing_default = round(ann_standing_default / 12.0, 2)
+                    base_fee = st.number_input(
+                        "Fixed Monthly Grid Fee (€/month):",
                         min_value=0.0,
-                        step=0.0001,
-                        required=True
-                    ),
-                    "start_time": st.column_config.TextColumn("Start Time (HH:MM)", required=True),
-                    "end_time": st.column_config.TextColumn("End Time (HH:MM)", required=True)
-                },
-                key=f"{key_prefix}_dso_tou_editor_{selected_dso_company}_{selected_tier}_v{form_version}"
-            )
+                        value=monthly_standing_default,
+                        step=5.0,
+                        format="%.2f",
+                        key=f"{key_prefix}_dso_base_fee_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Fixed standing charge for grid access (Festgebühr Transport / Vastrecht €/month)"
+                    )
+                    contracted_kw = st.number_input(
+                        "Reserved Grid Capacity (kW):",
+                        min_value=10.0,
+                        max_value=20000.0,
+                        value=float(max(50.0, round(load_series.peak_demand_kw * 1.05, 0))),
+                        step=10.0,
+                        format="%.1f",
+                        key=f"{key_prefix}_dso_p_contract_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Power reserved on the grid for your facility (kW-Vertrag / Gecontracteerd vermogen in kW)"
+                    )
 
-            weekend_off_peak = st.checkbox(
-                "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
-                value=True,
-                key=f"{key_prefix}_dso_weekend_offpeak",
-                help="Pas gedurende het gehele weekend het daltarief toe"
-            )
+                with c2:
+                    capacity_tariff = st.number_input(
+                        "Reserved Capacity Rate (€/kW/month):",
+                        min_value=0.0,
+                        value=float(preset_data.get("rate_contracted_monthly", 2.4400)),
+                        step=0.01,
+                        format="%.4f",
+                        key=f"{key_prefix}_dso_rate_cap_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Monthly fee billed per reserved kW (kW-Vertrag Tarif / Capaciteitstarief)"
+                    )
+                    demand_tariff = st.number_input(
+                        "Monthly Peak Demand Rate (€/kW/month):",
+                        min_value=0.0,
+                        value=float(preset_data.get("rate_peak_monthly", 3.7100)),
+                        step=0.01,
+                        format="%.4f",
+                        key=f"{key_prefix}_dso_rate_peak_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Monthly fee billed per measured 15-minute maximum peak (kW max. pro Monat / Piekvermogen)"
+                    )
+                    max_physical_kw = st.number_input(
+                        "Physical Transformer Limit (kW):",
+                        min_value=10.0,
+                        value=float(preset_data.get("max_physical_limit_kw", 1000.0)),
+                        step=50.0,
+                        format="%.1f",
+                        key=f"{key_prefix}_dso_max_phys_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Maximum physical electrical limit of your transformer or main connection"
+                    )
+                    penalty_rate = st.number_input(
+                        "Capacity Exceedance Penalty (€/kW):",
+                        min_value=0.0,
+                        value=float(preset_data.get("peak_penalty_rate_kw", 0.2500)),
+                        step=0.05,
+                        format="%.4f",
+                        key=f"{key_prefix}_dso_penalty_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Penalty fee charged when monthly peak demand exceeds reserved grid capacity"
+                    )
 
-            adjust_breach = st.checkbox(
-                ":material/shield: Adjust capacity billing to actual peak during breach months (Dutch standard rule)",
-                value=True,
-                key=f"{key_prefix}_dso_adjust_breach",
-                help="Bij overschrijding van het gecontracteerde vermogen wordt de capaciteitsvergoeding in de desbetreffende maand berekend op basis van de werkelijke piek."
-            )
+                # ==============================================================================
+                # 2. Reactive Power & Power Factor (Blindenergie)
+                # ==============================================================================
+                st.subheader("2. Reactive Power & Power Factor (Blindenergie)")
+                q1, q2, q3 = st.columns(3)
+                with q1:
+                    reactive_tariff = st.number_input(
+                        "Reactive Power Rate (€/kVARh):",
+                        min_value=0.0,
+                        value=float(preset_data.get("reactive_tariff", 0.0188)),
+                        step=0.005,
+                        format="%.4f",
+                        key=f"{key_prefix}_dso_reactive_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Tariff for consumed reactive energy (Blindenergie €/kVARh)"
+                    )
+                with q2:
+                    min_cos_phi = st.number_input(
+                        "Target Power Factor (cos φ):",
+                        min_value=0.50,
+                        max_value=1.00,
+                        value=float(preset_data.get("min_power_factor", 0.90)),
+                        step=0.02,
+                        format="%.2f",
+                        key=f"{key_prefix}_dso_cosphi_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Minimum required power factor (cos φ = 0.90) to avoid reactive charges"
+                    )
+                with q3:
+                    reactive_allowance = st.number_input(
+                        "Free Reactive Energy Allowance (% of kWh):",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=float(preset_data.get("reactive_allowance_pct", 33.0)),
+                        step=1.0,
+                        format="%.1f",
+                        key=f"{key_prefix}_dso_q_allow_{selected_dso_company}_{selected_tier}_v{form_version}",
+                        help="Permitted free reactive energy as a percentage of active consumption (33%)"
+                    )
 
+                # ==============================================================================
+                # 3. Time-of-Use Electricity Rates (Working Hours vs. Off-Peak)
+                # ==============================================================================
+                st.subheader("3. Time-of-Use Electricity Rates (Working Hours vs. Off-Peak)")
+                st.caption("Define Time-of-Use rate windows. The table supports adding and deleting rows:")
+
+                edited_dso_tou = st.data_editor(
+                    st.session_state[state_dso_tou_key],
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "name": st.column_config.TextColumn("Tariff Name", required=True),
+                        "rate": st.column_config.NumberColumn(
+                            f"Rate ({currency}/kWh)",
+                            format="%.4f",
+                            min_value=0.0,
+                            step=0.0001,
+                            required=True
+                        ),
+                        "start_time": st.column_config.TextColumn("Start Time (HH:MM)", required=True),
+                        "end_time": st.column_config.TextColumn("End Time (HH:MM)", required=True)
+                    },
+                    key=f"{key_prefix}_dso_tou_editor_{selected_dso_company}_{selected_tier}_v{form_version}"
+                )
+
+                weekend_off_peak = st.checkbox(
+                    "Treat Weekends as Off-Peak (Apply Lowest Tariff)",
+                    value=True,
+                    key=f"{key_prefix}_dso_weekend_offpeak",
+                    help="Pas gedurende het gehele weekend het daltarief toe"
+                )
+
+                adjust_breach = st.checkbox(
+                    ":material/shield: Adjust capacity billing to actual peak during breach months (Dutch standard rule)",
+                    value=True,
+                    key=f"{key_prefix}_dso_adjust_breach",
+                    help="Bij overschrijding van het gecontracteerde vermogen wordt de capaciteitsvergoeding in de desbetreffende maand berekend op basis van de werkelijke piek."
+                )
+
+            with col_form_preview:
+                # ==============================================================================
+                # DIRECT COST IMPACT & ITEMIZATION PREVIEW (SIDE-BY-SIDE INSIDE FORM)
+                # ==============================================================================
+                st.markdown("#### :material/receipt_long: Direct Cost Impact")
+                st.caption("Calculated based on active load baseline & current tariff rates:")
+
+                with st.container(border=True):
+                    st.metric(
+                        label="DSO Net Annual Cost",
+                        value=f"€ {_prev_dso_net_annual:,.2f}",
+                        delta=f"€ {_prev_dso_net_annual / 12.0:,.2f} / month (avg)",
+                        delta_color="off"
+                    )
+
+                    st.divider()
+
+                    st.markdown("**Itemized Cost Breakdown (Year & Month):**")
+                    cost_table_html = f"""
+                    <div style="width: 100%; overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.86rem;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.3); color: #888888; font-size: 0.78rem;">
+                                <th style="text-align: left; padding: 4px 6px;">Component</th>
+                                <th style="text-align: right; padding: 4px 6px;">Per Year</th>
+                                <th style="text-align: right; padding: 4px 6px;">Per Month</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);">
+                                <td style="padding: 6px 6px;">Fixed Standing Fee:</td>
+                                <td style="text-align: right; padding: 6px 6px; font-weight: bold;">€ {_prev_fixed_annual:,.2f}</td>
+                                <td style="text-align: right; padding: 6px 6px; color: #a0aec0;">€ {_prev_fixed_annual / 12.0:,.2f}</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);">
+                                <td style="padding: 6px 6px;">Reserved Capacity:</td>
+                                <td style="text-align: right; padding: 6px 6px; font-weight: bold;">€ {_prev_cap_annual:,.2f}</td>
+                                <td style="text-align: right; padding: 6px 6px; color: #a0aec0;">€ {_prev_cap_annual / 12.0:,.2f}</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);">
+                                <td style="padding: 6px 6px;">Peak Demand:</td>
+                                <td style="text-align: right; padding: 6px 6px; font-weight: bold;">€ {_prev_peak_demand_annual:,.2f}</td>
+                                <td style="text-align: right; padding: 6px 6px; color: #a0aec0;">€ {_prev_peak_demand_annual / 12.0:,.2f}</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.15);">
+                                <td style="padding: 6px 6px; font-weight: 600;">Volumetric Transport:</td>
+                                <td style="text-align: right; padding: 6px 6px; font-weight: bold;">€ {_prev_vol_annual:,.2f}</td>
+                                <td style="text-align: right; padding: 6px 6px; font-weight: bold; color: #a0aec0;">€ {_prev_vol_annual / 12.0:,.2f}</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.1); font-size: 0.80rem; color: #a0aec0;">
+                                <td style="padding: 3px 6px 3px 18px;">↳ Daytime / HT ({_total_ht_kwh:,.0f} kWh)</td>
+                                <td style="text-align: right; padding: 3px 6px;">€ {_prev_vol_ht_annual:,.2f}</td>
+                                <td style="text-align: right; padding: 3px 6px;">€ {_prev_vol_ht_annual / 12.0:,.2f}</td>
+                            </tr>
+                            <tr style="border-bottom: 1px solid rgba(128, 128, 128, 0.1); font-size: 0.80rem; color: #a0aec0;">
+                                <td style="padding: 3px 6px 3px 18px;">↳ Off-Peak / NT ({_total_nt_kwh:,.0f} kWh)</td>
+                                <td style="text-align: right; padding: 3px 6px;">€ {_prev_vol_nt_annual:,.2f}</td>
+                                <td style="text-align: right; padding: 3px 6px;">€ {_prev_vol_nt_annual / 12.0:,.2f}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    </div>
+                    """
+                    st.markdown(cost_table_html, unsafe_allow_html=True)
+
+                    st.divider()
+
+                    st.markdown("**Capacity & Grid Diagnostics:**")
+                    st.write(f"• Facility Peak: **{load_series.peak_demand_kw:,.1f} kW**")
+                    st.write(f"• Reserved Capacity: **{saved_dso_kw_val:,.1f} kW**")
+
+                    if len(_prev_breach_months) > 0:
+                        st.warning(
+                            f":material/warning: **Capacity Overload:** Exceeded in **{len(_prev_breach_months)} month(s)**: "
+                            f"{', '.join(_prev_breach_months[:3])}{'...' if len(_prev_breach_months) > 3 else ''}."
+                        )
+                    else:
+                        st.success(":material/check_circle: **Safe Capacity:** Peak within reserved limit across all 12 months.")
+
+            st.markdown("---")
             submitted_dso = st.form_submit_button(
-                "Save Contract Configuration",
+                "Save Contract Configuration & Recalculate",
                 icon=":material/save:",
                 type="primary",
                 use_container_width=True
