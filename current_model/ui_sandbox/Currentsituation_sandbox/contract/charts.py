@@ -661,3 +661,96 @@ def create_dynamic_price_consumption_figure(
     return fig
 
 
+def create_dso_monthly_peak_figure(
+    dso_monthly_results: List[Any],
+    contracted_capacity_kw: float
+) -> go.Figure:
+    """
+    Constructs a monthly peak demand bar chart comparing actual 15-minute monthly peak
+    demands (kW) against the contracted reserved grid capacity (kW), highlighting breach months in red.
+    """
+    month_names = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ]
+    
+    peaks = []
+    colors = []
+    custom_hover = []
+    
+    for idx, r in enumerate(dso_monthly_results):
+        p_val = getattr(r, "measured_peak_demand_kw", getattr(r, "peak_demand_kw", 0.0))
+        is_breach = getattr(r, "is_capacity_breached", p_val > (contracted_capacity_kw + 1e-4))
+        peaks.append(p_val)
+        m_name = month_names[idx] if idx < len(month_names) else f"M{idx+1}"
+        
+        if is_breach:
+            colors.append("#EF4444")  # Red for overload
+            excess = p_val - contracted_capacity_kw
+            custom_hover.append(f"{m_name}<br>Peak: {p_val:,.1f} kW<br>Status: Capacity Breach (+{excess:,.1f} kW)")
+        else:
+            colors.append("#38BDF8")  # Sky Blue for normal
+            margin = contracted_capacity_kw - p_val
+            custom_hover.append(f"{m_name}<br>Peak: {p_val:,.1f} kW<br>Status: Within Limit (Headroom: {margin:,.1f} kW)")
+            
+    fig = go.Figure()
+    
+    # 1. Bar Trace: Monthly Peak Demands
+    fig.add_trace(
+        go.Bar(
+            x=month_names[:len(peaks)],
+            y=peaks,
+            name="Monthly Peak (kW)",
+            marker_color=colors,
+            hoverinfo="text",
+            hovertext=custom_hover,
+            opacity=0.9
+        )
+    )
+    
+    # 2. Horizontal Reference Line: Reserved Grid Capacity
+    fig.add_trace(
+        go.Scatter(
+            x=month_names[:len(peaks)],
+            y=[contracted_capacity_kw] * len(peaks),
+            mode="lines",
+            name=f"Contracted Capacity ({contracted_capacity_kw:,.0f} kW)",
+            line=dict(color="#F59E0B", width=2.5, dash="dash"),
+            hoverinfo="skip"
+        )
+    )
+    
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text="<b>Monthly Peak Demand vs. Reserved Grid Capacity</b>",
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.02,
+            y=0.96
+        ),
+        xaxis=dict(
+            title="Billing Month",
+            gridcolor="#1E293B",
+        ),
+        yaxis=dict(
+            title="Peak Power (kW)",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155"
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(l=40, r=30, t=55, b=40),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=320,
+        hovermode="closest"
+    )
+    
+    return fig
+
+

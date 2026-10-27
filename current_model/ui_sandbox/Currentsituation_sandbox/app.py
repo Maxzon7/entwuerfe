@@ -41,27 +41,61 @@ import importlib
 
 # Copied Local Modules
 try:
-    import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
-    import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
     import ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
     importlib.reload(_con_charts)
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_dso as _tab_dso
+    importlib.reload(_tab_dso)
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_supplier as _tab_supplier
+    importlib.reload(_tab_supplier)
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_metering as _tab_metering
+    importlib.reload(_tab_metering)
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_overview as _tab_overview
+    importlib.reload(_tab_overview)
+    import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
     importlib.reload(_con_view)
+    import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
     importlib.reload(_c_view)
     render_tab1_consumption = _c_view.render_tab1_consumption
     render_tab2_base_contract = _con_view.render_tab2_base_contract
 except Exception:
     try:
-        import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
-        import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
         importlib.reload(_con_charts)
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_dso as _tab_dso
+        importlib.reload(_tab_dso)
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_supplier as _tab_supplier
+        importlib.reload(_tab_supplier)
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_metering as _tab_metering
+        importlib.reload(_tab_metering)
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_overview as _tab_overview
+        importlib.reload(_tab_overview)
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
         importlib.reload(_con_view)
+        import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
         importlib.reload(_c_view)
         render_tab1_consumption = _c_view.render_tab1_consumption
         render_tab2_base_contract = _con_view.render_tab2_base_contract
     except Exception:
-        from consumption.view import render_tab1_consumption
-        from contract.view import render_tab2_base_contract
+        try:
+            import contract.charts as _con_charts
+            importlib.reload(_con_charts)
+            import contract.tab_dso as _tab_dso
+            importlib.reload(_tab_dso)
+            import contract.tab_supplier as _tab_supplier
+            importlib.reload(_tab_supplier)
+            import contract.tab_metering as _tab_metering
+            importlib.reload(_tab_metering)
+            import contract.tab_overview as _tab_overview
+            importlib.reload(_tab_overview)
+            import contract.view as _con_view
+            importlib.reload(_con_view)
+            import consumption.view as _c_view
+            importlib.reload(_c_view)
+            render_tab1_consumption = _c_view.render_tab1_consumption
+            render_tab2_base_contract = _con_view.render_tab2_base_contract
+        except Exception:
+            from consumption.view import render_tab1_consumption
+            from contract.view import render_tab2_base_contract
 
 
 def render_current_situation_sandbox(key_prefix: str = "currsit") -> None:

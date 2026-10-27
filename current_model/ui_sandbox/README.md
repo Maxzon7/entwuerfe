@@ -50,9 +50,14 @@ current_model/ui_sandbox/
 │   │
 │   ├── contract/                               # Tab 2: Commercial Electricity Supply Contract & Billing
 │   │   ├── __init__.py
-│   │   ├── view.py
-│   │   ├── form.py
-│   │   ├── charts.py
+│   │   ├── view.py                             # Orchestrator module & Compact Total Strip
+│   │   ├── tab_dso.py                          # Sub-Tab 1: Regulated Grid Operator (DSO)
+│   │   ├── tab_supplier.py                     # Sub-Tab 2: Energy Retailer (Supplier)
+│   │   ├── tab_metering.py                     # Sub-Tab 3: Certified Metering & Statutory Taxes
+│   │   ├── tab_overview.py                     # Sub-Tab 4: Total Overview & Statement (at the end)
+│   │   ├── charts.py                           # Plotly donut, 12-month payment series & peak figures
+│   │   ├── form.py                             # Tariff configuration form
+│   │   ├── comparison_view.py                  # Multi-contract comparison
 │   │   └── comparison_charts.py
 │   │
 │   └── engine/                                 # 2025 5-Layer Unbundled Commercial Calculation Engine
