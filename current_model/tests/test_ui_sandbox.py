@@ -333,8 +333,65 @@ class TestUISandboxIsolation(unittest.TestCase):
         self.assertIsNotNone(fig_pareto)
 
 
+class TestClassicInvoiceReconciliation(unittest.TestCase):
+    """Verifies that tab_invoice_experimental derives positions matching master results to the cent."""
+
+    def test_annual_and_monthly_cent_reconciliation(self):
+        from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
+            synthesize_benchmark_load_profile_2025
+        )
+        from ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
+            get_stage_1_default_config_2025
+        )
+        from ui_sandbox.Currentsituation_sandbox.engine.config_and_models import PricingMode
+        from ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
+            calculate_status_quo_master_2025
+        )
+        from ui_sandbox.Currentsituation_sandbox.contract.tab_invoice_experimental import (
+            build_invoice_positions
+        )
+
+        load = synthesize_benchmark_load_profile_2025(nominal_peak_kw=250.0)
+
+        for mode in [PricingMode.FIXED, PricingMode.DYNAMIC]:
+            config = get_stage_1_default_config_2025(pricing_mode=mode, contracted_capacity_kw=250.0)
+            if mode == PricingMode.FIXED:
+                config.supplier.is_dual_rate = True
+            result = calculate_status_quo_master_2025(load=load, config=config)
+
+            # 1. Test Annual Statement
+            inv_ann = build_invoice_positions(result, config, "Annual Statement 2025 (Full Year)")
+            self.assertAlmostEqual(inv_ann["subtotal_a"], result.total_supplier_net, places=2)
+            self.assertAlmostEqual(inv_ann["subtotal_b"], result.total_dso_net, places=2)
+            self.assertAlmostEqual(inv_ann["subtotal_c"], result.total_metering_net, places=2)
+            self.assertAlmostEqual(inv_ann["subtotal_d"], result.total_levies_net, places=2)
+            self.assertAlmostEqual(inv_ann["total_net"], result.total_status_quo_net, places=2)
+            self.assertAlmostEqual(inv_ann["total_gross"], result.total_status_quo_gross, places=2)
+
+            sum_lines = (
+                sum(p["amount_net"] for p in inv_ann["block_a"])
+                + sum(p["amount_net"] for p in inv_ann["block_b"])
+                + sum(p["amount_net"] for p in inv_ann["block_c"])
+                + sum(p["amount_net"] for p in inv_ann["block_d"])
+            )
+            self.assertAlmostEqual(sum_lines, result.total_status_quo_net, places=2)
+
+            # 2. Test All 12 Individual Months
+            for r in result.monthly_records:
+                inv_m = build_invoice_positions(result, config, f"{r.month_name} 2025")
+                self.assertAlmostEqual(inv_m["total_net"], r.total_net, places=2)
+                self.assertAlmostEqual(inv_m["total_gross"], r.total_gross, places=2)
+                sum_m_lines = (
+                    sum(p["amount_net"] for p in inv_m["block_a"])
+                    + sum(p["amount_net"] for p in inv_m["block_b"])
+                    + sum(p["amount_net"] for p in inv_m["block_c"])
+                    + sum(p["amount_net"] for p in inv_m["block_d"])
+                )
+                self.assertAlmostEqual(sum_m_lines, r.total_net, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

@@ -673,17 +673,17 @@ def create_dso_monthly_peak_figure(
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
     ]
-    
+
     peaks = []
     colors = []
     custom_hover = []
-    
+
     for idx, r in enumerate(dso_monthly_results):
         p_val = getattr(r, "measured_peak_demand_kw", getattr(r, "peak_demand_kw", 0.0))
         is_breach = getattr(r, "is_capacity_breached", p_val > (contracted_capacity_kw + 1e-4))
         peaks.append(p_val)
         m_name = month_names[idx] if idx < len(month_names) else f"M{idx+1}"
-        
+
         if is_breach:
             colors.append("#EF4444")  # Red for overload
             excess = p_val - contracted_capacity_kw
@@ -692,9 +692,9 @@ def create_dso_monthly_peak_figure(
             colors.append("#38BDF8")  # Sky Blue for normal
             margin = contracted_capacity_kw - p_val
             custom_hover.append(f"{m_name}<br>Peak: {p_val:,.1f} kW<br>Status: Within Limit (Headroom: {margin:,.1f} kW)")
-            
+
     fig = go.Figure()
-    
+
     # 1. Bar Trace: Monthly Peak Demands
     fig.add_trace(
         go.Bar(
@@ -707,7 +707,7 @@ def create_dso_monthly_peak_figure(
             opacity=0.9
         )
     )
-    
+
     # 2. Horizontal Reference Line: Reserved Grid Capacity
     fig.add_trace(
         go.Scatter(
@@ -719,7 +719,7 @@ def create_dso_monthly_peak_figure(
             hoverinfo="skip"
         )
     )
-    
+
     fig.update_layout(
         template="plotly_dark",
         title=dict(
@@ -750,7 +750,8 @@ def create_dso_monthly_peak_figure(
         height=320,
         hovermode="closest"
     )
-    
+
     return fig
+
 
 
