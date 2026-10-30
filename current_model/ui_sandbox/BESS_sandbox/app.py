@@ -15,9 +15,12 @@ Streamlined BESS engineering and commercial decision platform:
   2. Tab 2: BESS Sizing & Excel Validation
      - Modular sizing form with automated gross nameplate recommendations.
      - 100% feasibility verdict, simultaneous bottleneck checklist, and synchronized Plotly subplot.
-  3. Tab 3: Financial Comparison & 15Y TCO (Preserved for Step 2)
+  3. Tab 3: Baseline vs. BESS Bill & Profile Comparison
+     - Side-by-side comparison of grid demand profile (`P_Load_kW` vs `P_Grid_kW`), remaining peaks,
+       battery SoC, and itemized 4-Pillar electricity bills (with PDF Report export).
+  4. Tab 4: Financial Comparison & 15Y TCO
      - Avoided grid upgrade CAPEX & transformer rent vs. BESS turnkey investment.
-
+========================================================================================
 """
 
 import os
@@ -48,17 +51,38 @@ except ImportError:
 from ui_sandbox.BESS_sandbox import baseline_presets as presets
 from ui_sandbox.BESS_sandbox.view_problem import render_problem_baseline_tab
 from ui_sandbox.BESS_sandbox.view_technical import render_technical_feasibility_tab
+from ui_sandbox.BESS_sandbox.view_bill_comparison import (
+    render_bill_and_profile_comparison_tab,
+    build_4pillar_configs_for_preset,
+)
 from ui_sandbox.BESS_sandbox.view_financial import render_financial_viability_tab
+
+try:
+    from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
+        normalize_load_profile_2025,
+    )
+    from ui_sandbox.Currentsituation_sandbox.contract.assumptions_banner import (
+        build_assumptions_register_dict,
+        render_assumptions_banner,
+    )
+except ImportError:
+    from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
+        normalize_load_profile_2025,
+    )
+    from current_model.ui_sandbox.Currentsituation_sandbox.contract.assumptions_banner import (
+        build_assumptions_register_dict,
+        render_assumptions_banner,
+    )
 
 
 def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
     """
-    Renders the streamlined 3-tab BESS Peak Shaving & 15-Year TCO sandbox workbench.
+    Renders the 4-tab BESS Peak Shaving, Bill Comparison & 15-Year TCO sandbox workbench.
     """
-    st.markdown("## :material/battery_charging_full: BESS Peak Shaving & 15-Year TCO Sandbox")
+    st.markdown("## :material/battery_charging_full: BESS Peak Shaving, Bill Comparison & 15-Year TCO Sandbox")
     st.caption(
-        "Isolated engineering and financial laboratory to test battery peak shaving feasibility, "
-        "gross modular sizing, and life-cycle economics against avoided utility grid upgrade costs."
+        "Isolated engineering and commercial laboratory to test battery peak shaving feasibility, "
+        "gross modular sizing, side-by-side 4-Pillar electricity bill savings, and 15-year life-cycle economics."
     )
 
     # --- Top Control Bar: Active Preset & Load Profile Selection ---
@@ -69,9 +93,10 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
 
     with col_p1:
         preset_options = [
+            "Case 3: Rotterdam / Paula Dutch Site (Stedin 28-Day WKO / 110 kW Limit)",
+            "Case 4: EDEMSA Mendoza T2 RMT (Bodegas Salentein - 430 kW Limit)",
             "Case 1: Liander AC4b vs. AC5a Upgrade (Industrial 350 kW)",
             "Case 2: Enexis MS-D Commercial (250 kW Peak vs. 150 kW Cap)",
-            "Case 3: Paula Dutch Site (28-Day WKO / 110 kW Contract Limit)",
             "Custom Profile (Upload CSV or Current Situation Sandbox)"
         ]
         selected_option = st.selectbox(
@@ -82,7 +107,21 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
         )
 
     with col_p2:
-        if "Case 1" in selected_option:
+        if "Case 3" in selected_option or "Rotterdam" in selected_option:
+            active_preset = presets.get_case3_paula_dutch_site_preset()
+            st.info(
+                f"**Benchmark Profile:** {active_preset.title}\n\n"
+                f"Peak Demand: `131.4 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW` | Overload: `+21.4 kW`",
+                icon=":material/heat_pump:"
+            )
+        elif "Case 4" in selected_option or "EDEMSA" in selected_option:
+            active_preset = presets.get_case4_edemsa_salentein_preset()
+            st.info(
+                f"**Benchmark Profile:** {active_preset.title}\n\n"
+                f"Peak Demand: `691.0 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW` | Exceso: `+261.0 kW`",
+                icon=":material/wine_bar:"
+            )
+        elif "Case 1" in selected_option:
             active_preset = presets.get_case1_liander_industrial_preset()
             st.info(
                 f"**Benchmark Profile:** {active_preset.title}\n\n"
@@ -95,13 +134,6 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
                 f"**Benchmark Profile:** {active_preset.title}\n\n"
                 f"Peak Demand: `250 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW`",
                 icon=":material/business:"
-            )
-        elif "Case 3" in selected_option:
-            active_preset = presets.get_case3_paula_dutch_site_preset()
-            st.info(
-                f"**Benchmark Profile:** {active_preset.title}\n\n"
-                f"Peak Demand: `131.4 kW` | Contracted Grid Limit: `{active_preset.grid_limit_kw:.0f} kW` | Overload: `+21.4 kW`",
-                icon=":material/heat_pump:"
             )
         else:
             # Custom Profile
@@ -121,7 +153,7 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
                     "**Custom Ingestion Mode:** Use Tab 1 below to upload and configure your 15-min CSV load profile.",
                     icon=":material/upload_file:"
                 )
-                active_preset = presets.get_case1_liander_industrial_preset()
+                active_preset = presets.get_case3_paula_dutch_site_preset()
 
         # Auto-synchronize grid limit and reset hardware overrides if preset changes
         prev_preset_key = f"{key_prefix}_prev_selected_option"
@@ -141,20 +173,50 @@ def render_bess_sandbox(key_prefix: str = "bess_sb") -> None:
             st.session_state.pop("active_csv_filename", None)
             st.rerun()
 
+    assumptions_banner_container = st.container()
     st.markdown("---")
 
-    # --- 2 Physics & Feasibility Tabs ---
+    # --- 4 Engineering, Bill Comparison & TCO Tabs ---
     tabs = st.tabs([
         ":material/warning: 1. Current Situation & Load Ingestion",
-        ":material/battery_charging_full: 2. BESS Sizing & Excel Validation"
+        ":material/battery_charging_full: 2. BESS Sizing & Excel Validation",
+        ":material/compare_arrows: 3. Baseline vs. BESS Bill & Profile Comparison",
+        ":material/account_balance: 4. Financial Comparison & 15Y TCO"
     ])
-
 
     with tabs[0]:
         active_limit_kw = render_problem_baseline_tab(active_preset)
 
     with tabs[1]:
         sim_result = render_technical_feasibility_tab(active_preset, grid_limit_kw=active_limit_kw)
+
+    # Build Explicit Simulation Assumptions Register
+    p_col = "Total_Demand_kW" if "Total_Demand_kW" in active_preset.load_df.columns else "P_Load_kW"
+    load_norm_2025, _ = normalize_load_profile_2025(active_preset.load_df, power_col=p_col, time_col="timestamp")
+    cfg_base, _ = build_4pillar_configs_for_preset(active_preset, active_limit_kw=active_limit_kw)
+    assumptions_dict = build_assumptions_register_dict(
+        load_series=load_norm_2025,
+        config=cfg_base,
+        source_filename=f"{active_preset.title} ({len(active_preset.load_df):,} steps)",
+        bess_config=sim_result.config
+    )
+
+    with assumptions_banner_container:
+        render_assumptions_banner(assumptions_dict=assumptions_dict, expanded=False)
+
+    with tabs[2]:
+        render_bill_and_profile_comparison_tab(
+            preset=active_preset,
+            sim_result=sim_result,
+            assumptions_dict=assumptions_dict,
+            key_prefix=f"{key_prefix}_comp"
+        )
+
+    with tabs[3]:
+        render_financial_viability_tab(
+            preset=active_preset,
+            sim_result=sim_result
+        )
 
 
 def main() -> None:

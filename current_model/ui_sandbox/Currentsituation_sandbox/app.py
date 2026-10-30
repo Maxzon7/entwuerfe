@@ -1,17 +1,16 @@
 # to run: python -m streamlit run "ui_sandbox/Currentsituation_sandbox/app.py"
-
 """
 ========================================================================================
 Current Situation (Status Quo) Sandbox App
 ui_sandbox/Currentsituation_sandbox/app.py
 ========================================================================================
 
-Standalone Streamlit application encapsulating the baseline Status Quo workflow directly 
-copied from the main program:
+Standalone Streamlit application encapsulating the baseline Status Quo workflow:
   1. Consumption Profile Modeling & Real CSV Ingestion (with full interactive Plotly load curves,
      365-day baseline, monthly breakdown, overload analysis, and KPI cards).
-  2. Electricity Contract & Status Quo Billing Assessment (with tariff parameter form,
-     unbundled calculation, monthly payment series, and cost donut chart).
+  2. Electricity Contract & Status Quo Billing Assessment (with Master Bill Equation Bar and
+     5 modular sub-tabs: Grid Network DSO, Energy Supply Retailer, Metering & Statutory Taxes,
+     Executive Overview & 15Y TCO, and Classic Electricity Bill).
 """
 
 import os
@@ -39,34 +38,50 @@ except ImportError:
 
 import importlib
 
-# Copied Local Modules
+# Reload all modular contract submodules + charts + assumptions + pdf exporter + view
 try:
+    import ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+    import ui_sandbox.Currentsituation_sandbox.contract.assumptions_banner as _assump_ban
+    import ui_sandbox.Currentsituation_sandbox.contract.invoice_pdf_exporter as _pdf_exp
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_dso as _tab_dso
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_supplier as _tab_supp
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_metering as _tab_meter
+    import ui_sandbox.Currentsituation_sandbox.contract.tab_overview as _tab_ov
     import ui_sandbox.Currentsituation_sandbox.contract.tab_invoice_experimental as _tab_inv
-    importlib.reload(_tab_inv)
     import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
     import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
-    import ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
-    importlib.reload(_con_charts)
-    importlib.reload(_con_view)
-    importlib.reload(_c_view)
+    for _mod in (_con_charts, _assump_ban, _pdf_exp, _tab_dso, _tab_supp, _tab_meter, _tab_ov, _tab_inv, _con_view, _c_view):
+        importlib.reload(_mod)
     render_tab1_consumption = _c_view.render_tab1_consumption
     render_tab2_base_contract = _con_view.render_tab2_base_contract
 except Exception:
     try:
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.assumptions_banner as _assump_ban
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.invoice_pdf_exporter as _pdf_exp
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_dso as _tab_dso
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_supplier as _tab_supp
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_metering as _tab_meter
+        import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_overview as _tab_ov
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_invoice_experimental as _tab_inv
-        importlib.reload(_tab_inv)
         import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
-        import current_model.ui_sandbox.Currentsituation_sandbox.contract.charts as _con_charts
-        importlib.reload(_con_charts)
-        importlib.reload(_con_view)
-        importlib.reload(_c_view)
+        for _mod in (_con_charts, _assump_ban, _pdf_exp, _tab_dso, _tab_supp, _tab_meter, _tab_ov, _tab_inv, _con_view, _c_view):
+            importlib.reload(_mod)
         render_tab1_consumption = _c_view.render_tab1_consumption
         render_tab2_base_contract = _con_view.render_tab2_base_contract
     except Exception:
         try:
+            import contract.charts as _con_charts
+            import contract.assumptions_banner as _assump_ban
+            import contract.invoice_pdf_exporter as _pdf_exp
+            import contract.tab_dso as _tab_dso
+            import contract.tab_supplier as _tab_supp
+            import contract.tab_metering as _tab_meter
+            import contract.tab_overview as _tab_ov
             import contract.tab_invoice_experimental as _tab_inv
-            importlib.reload(_tab_inv)
+            for _mod in (_con_charts, _assump_ban, _pdf_exp, _tab_dso, _tab_supp, _tab_meter, _tab_ov, _tab_inv):
+                importlib.reload(_mod)
         except Exception:
             pass
         from consumption.view import render_tab1_consumption

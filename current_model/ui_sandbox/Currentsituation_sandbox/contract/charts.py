@@ -7,7 +7,7 @@ Description:
 ------------
 Generates minimalist, professional Plotly dark-themed charts:
   1. Donut chart visualizing monthly cost distribution across all line item categories.
-  2. Stacked Bar chart visualizing monthly payment timeseries (Zahlungsreihe) across full duration.
+  2. Stacked Bar chart visualizing monthly payment timeseries across full duration.
 """
 
 from typing import Optional, List, Dict, Any
@@ -198,7 +198,7 @@ def create_monthly_payment_series_figure(
         template="plotly_dark",
         barmode="stack",
         title=dict(
-            text="<b>Monthly Payment Schedule across Duration (Zahlungsreihe)</b>",
+            text="<b>Monthly Payment Schedule across Duration</b>",
             font=dict(size=15, color="#F8FAFC")
         ),
         xaxis=dict(
@@ -304,7 +304,7 @@ def create_tou_schedule_diurnal_figure(
         line_width=1,
         line_dash="dot",
         line_color="#38BDF8",
-        annotation_text=f"High Tariff (HT / Normaal: 07:00 - 23:00){' | ' + ht_rate_label if ht_rate_label else ''}",
+        annotation_text=f"Peak Hours (HT: {ht_start_hour:02d}:00 - {ht_end_hour:02d}:00){' | ' + ht_rate_label if ht_rate_label else ''}",
         annotation_position="top left",
         annotation_font=dict(color="#38BDF8", size=11)
     )
@@ -416,15 +416,16 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
         cumulative_series.append(round(cum_sum, 2))
 
     fig = go.Figure()
+    currency = getattr(result.config, "currency_code", "EUR") if hasattr(result, "config") else "EUR"
 
     # 1. Stacked Bars: DSO Grid
     fig.add_trace(
         go.Bar(
             x=year_labels,
             y=dso_series,
-            name="Regulated Grid Operator (DSO)",
+            name="Pillar 2: Grid Network (DSO)",
             marker=dict(color="#F59E0B"),
-            hovertemplate="<b>DSO Grid</b>: € %{y:,.2f}<extra></extra>"
+            hovertemplate=f"<b>Grid Network (DSO)</b>: {currency} %{{y:,.2f}}<extra></extra>"
         )
     )
 
@@ -433,9 +434,9 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
         go.Bar(
             x=year_labels,
             y=supp_series,
-            name="Energy Retailer (Supplier)",
+            name="Pillar 1: Energy Supply (Retailer)",
             marker=dict(color="#38BDF8"),
-            hovertemplate="<b>Energy Supplier</b>: € %{y:,.2f}<extra></extra>"
+            hovertemplate=f"<b>Energy Supply (Retailer)</b>: {currency} %{{y:,.2f}}<extra></extra>"
         )
     )
 
@@ -444,9 +445,9 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
         go.Bar(
             x=year_labels,
             y=meter_taxes_series,
-            name="Metering & Statutory Taxes",
+            name="Pillars 3 & 4: Metering & Statutory Taxes",
             marker=dict(color="#10B981"),
-            hovertemplate="<b>Metering & Taxes</b>: € %{y:,.2f}<extra></extra>"
+            hovertemplate=f"<b>Metering & Taxes</b>: {currency} %{{y:,.2f}}<extra></extra>"
         )
     )
 
@@ -459,7 +460,7 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
             mode="lines+markers",
             line=dict(color="#A78BFA", width=3, dash="dot"),
             marker=dict(size=7, color="#A78BFA"),
-            hovertemplate="<b>Present Value (PV)</b>: € %{y:,.2f}<extra></extra>"
+            hovertemplate=f"<b>Present Value (PV)</b>: {currency} %{{y:,.2f}}<extra></extra>"
         )
     )
 
@@ -473,7 +474,7 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
             line=dict(color="#F43F5E", width=2.5),
             marker=dict(size=6, color="#F43F5E"),
             yaxis="y2",
-            hovertemplate="<b>Cumulative 15y Spend</b>: € %{y:,.2f}<extra></extra>"
+            hovertemplate=f"<b>Cumulative 15y Spend</b>: {currency} %{{y:,.2f}}<extra></extra>"
         )
     )
 
@@ -489,13 +490,13 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
             gridcolor="#1E293B"
         ),
         yaxis=dict(
-            title="Annual Expenditure (€ / year)",
+            title=f"Annual Expenditure ({currency} / year)",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
         yaxis2=dict(
             title=dict(
-                text="Cumulative 15-Year Spend (€)",
+                text=f"Cumulative 15-Year Spend ({currency})",
                 font=dict(color="#F43F5E")
             ),
             overlaying="y",
@@ -521,11 +522,11 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
     return fig
 
 
-def create_supplier_benchmark_figure(benchmark_costs: Dict[str, float]) -> go.Figure:
+def create_supplier_benchmark_figure(benchmark_costs: Dict[str, float], currency: str = "EUR") -> go.Figure:
     """
     Constructs a clean horizontal bar chart benchmarking pure supplier costs across the 3 core models:
     - Fixed Dual Rate (HT/NT)
-    - Fixed Single Rate (Enkeltarief)
+    - Fixed Single Rate (24/7 Flat)
     - Dynamic Day-Ahead (EPEX Spot NL)
     """
     fig = go.Figure()
@@ -545,9 +546,9 @@ def create_supplier_benchmark_figure(benchmark_costs: Dict[str, float]) -> go.Fi
                 color=colors,
                 line=dict(color="#1E293B", width=1.5),
             ),
-            text=[f"€ {c:,.2f}" for c in costs],
+            text=[f"{currency} {c:,.2f}" for c in costs],
             textposition="auto",
-            hovertemplate="<b>%{y}</b><br>Net Supplier Cost: € %{x:,.2f}<extra></extra>"
+            hovertemplate=f"<b>%{{y}}</b><br>Net Supplier Cost: {currency} %{{x:,.2f}}<extra></extra>"
         )
     )
 
@@ -560,7 +561,7 @@ def create_supplier_benchmark_figure(benchmark_costs: Dict[str, float]) -> go.Fi
             y=0.95
         ),
         xaxis=dict(
-            title="Total Supplier Cost (Netto €)",
+            title=f"Total Supplier Cost (Net {currency})",
             gridcolor="#1E293B",
             zerolinecolor="#334155"
         ),
@@ -581,11 +582,12 @@ def create_dynamic_price_consumption_figure(
     timestamps: Any,
     power_kw: Any,
     spot_prices_eur_mwh: Any,
-    title_suffix: str = ""
+    title_suffix: str = "",
+    currency: str = "EUR"
 ) -> go.Figure:
     """
     Constructs a dual-axis interactive Plotly chart correlating electricity demand (kW)
-    on the primary axis with synchronous EPEX Spot Day-Ahead prices (€/MWh) on the secondary axis.
+    on the primary axis with synchronous EPEX Spot Day-Ahead prices ({currency}/MWh) on the secondary axis.
     """
     fig = go.Figure()
 
@@ -603,23 +605,23 @@ def create_dynamic_price_consumption_figure(
         )
     )
 
-    # 2. Secondary Y-Axis: EPEX Spot Price (€/MWh)
+    # 2. Secondary Y-Axis: EPEX Spot Price ({currency}/MWh)
     fig.add_trace(
         go.Scatter(
             x=timestamps,
             y=spot_prices_eur_mwh,
-            name="EPEX Spot Price (€/MWh)",
+            name=f"EPEX Spot Price ({currency}/MWh)",
             mode="lines",
             line=dict(color="#F59E0B", width=1.5),
             yaxis="y2",
-            hovertemplate="<b>Spot Price</b>: € %{y:,.2f}/MWh<extra></extra>"
+            hovertemplate=f"<b>Spot Price</b>: {currency} %{{y:,.2f}}/MWh<extra></extra>"
         )
     )
 
     fig.update_layout(
         template="plotly_dark",
         title=dict(
-            text=f"<b>Dynamic Correlation: Power Demand (kW) vs. EPEX Spot Price (€/MWh)</b> {title_suffix}",
+            text=f"<b>Dynamic Correlation: Power Demand (kW) vs. EPEX Spot Price ({currency}/MWh)</b> {title_suffix}",
             font=dict(size=14, color="#F8FAFC"),
             x=0.02,
             y=0.96
@@ -636,7 +638,7 @@ def create_dynamic_price_consumption_figure(
             tickfont=dict(color="#38BDF8")
         ),
         yaxis2=dict(
-            title=dict(text="EPEX Spot Price (€/MWh)", font=dict(color="#F59E0B")),
+            title=dict(text=f"EPEX Spot Price ({currency}/MWh)", font=dict(color="#F59E0B")),
             overlaying="y",
             side="right",
             showgrid=False,

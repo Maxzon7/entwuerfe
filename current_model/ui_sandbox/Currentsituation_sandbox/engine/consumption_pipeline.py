@@ -68,6 +68,20 @@ def classify_liander_tou_window(timestamps: pd.DatetimeIndex) -> np.ndarray:
     return np.asarray(is_weekday & is_ht_hours, dtype=bool)
 
 
+def classify_edemsa_tou_windows(timestamps: pd.DatetimeIndex) -> np.ndarray:
+    """
+    Classifies timestamps into Argentine EDEMSA 3-Window TOU bands:
+      - Code 1 = Pico (Peak): 18:00 to 23:00 (5 hours/day)
+      - Code 0 = Valle (Off-Peak): 23:00 to 05:00 (6 hours/day)
+      - Code 2 = Resto (Shoulder): 05:00 to 18:00 (13 hours/day)
+    """
+    hr = timestamps.hour.to_numpy(dtype=int)
+    codes = np.full(len(hr), 2, dtype=int)  # Default 2 = Resto (05:00-18:00)
+    codes[(hr >= 18) & (hr < 23)] = 1       # 1 = Pico (18:00-23:00)
+    codes[(hr >= 23) | (hr < 5)] = 0        # 0 = Valle (23:00-05:00)
+    return codes
+
+
 def normalize_load_profile_2025(
     raw_df: pd.DataFrame,
     power_col: Optional[str] = None,
@@ -254,29 +268,109 @@ def synthesize_benchmark_load_profile_2025(
     )
 
 
+def synthesize_edemsa_salentein_load_profile_2025() -> LoadSeries2025:
+    """
+    Synthesizes the authentic 35,040-step 15-minute load profile for Bodegas Salentein
+    (EDEMSA Mendoza T2 RMT) calibrated 1:1 to the real utility bill (02/2026):
+      - Pico (18:00-23:00, 5h/day): 33,965.0 kWh | Registered Peak in Pico: 649.0 kW
+      - Valle (23:00-05:00, 6h/day): 34,667.0 kWh | Registered Peak in Valle: 559.0 kW
+      - Resto (05:00-18:00, 13h/day): 94,967.0 kWh | Registered Max Peak in Resto: 691.0 kW
+      - Total Monthly Active Energy: 163,599.0 kWh | Contracted Limit: 430.0 kW | Excess: 261.0 kW
+    """
+    ref_index = create_reference_2025_timestamps()
+    n_steps = len(ref_index)
+    month_indices = ref_index.month.to_numpy(dtype=int)
+    tou_codes = classify_edemsa_tou_windows(ref_index)  # 0=Valle, 1=Pico, 2=Resto
+    power_kw = np.zeros(n_steps, dtype=float)
+
+    target_pico_kwh = 33965.0
+    target_valle_kwh = 34667.0
+    target_resto_kwh = 94967.0
+    peak_pico_kw = 649.0
+    peak_valle_kw = 559.0
+    peak_resto_kw = 691.0
+
+    for m in range(1, 13):
+        m_mask = (month_indices == m)
+        # 1. Pico (code == 1)
+        idx_pico = np.where(m_mask & (tou_codes == 1))[0]
+        if len(idx_pico) > 1:
+            p_rest = (target_pico_kwh - (peak_pico_kw * 0.25)) / ((len(idx_pico) - 1) * 0.25)
+            power_kw[idx_pico] = p_rest
+            power_kw[idx_pico[len(idx_pico) // 2]] = peak_pico_kw
+
+        # 2. Valle (code == 0)
+        idx_valle = np.where(m_mask & (tou_codes == 0))[0]
+        if len(idx_valle) > 1:
+            p_rest = (target_valle_kwh - (peak_valle_kw * 0.25)) / ((len(idx_valle) - 1) * 0.25)
+            power_kw[idx_valle] = p_rest
+            power_kw[idx_valle[len(idx_valle) // 2]] = peak_valle_kw
+
+        # 3. Resto (code == 2)
+        idx_resto = np.where(m_mask & (tou_codes == 2))[0]
+        if len(idx_resto) > 1:
+            p_rest = (target_resto_kwh - (peak_resto_kw * 0.25)) / ((len(idx_resto) - 1) * 0.25)
+            power_kw[idx_resto] = p_rest
+            power_kw[idx_resto[len(idx_resto) // 2]] = peak_resto_kw
+
+    energy_kwh = power_kw * 0.25
+    is_peak_tou = (tou_codes == 1)
+
+    return LoadSeries2025(
+        timestamps=ref_index,
+        power_kw=power_kw,
+        energy_kwh=energy_kwh,
+        month_indices=month_indices,
+        is_peak_tou=is_peak_tou,
+        total_steps=n_steps,
+        step_hours=0.25,
+        tou_window_codes=tou_codes,
+    )
+
+
 def extract_monthly_consumption_records(
     load: LoadSeries2025
 ) -> List[MonthlyConsumptionRecord]:
     """
     Aggregates the 35,040 intervals into exactly 12 calendar month records:
       - Total active kWh (E_m)
-      - Peak TOU energy (HT)
-      - Off-peak TOU energy (NT)
-      - Maximum active 15-minute power demand (P_peak,m in kW)
+      - Peak TOU energy (HT or Pico 18:00-23:00)
+      - Off-peak TOU energy (NT or Valle 23:00-05:00)
+      - Optional Shoulder TOU energy (Resto 05:00-18:00) when tou_window_codes is present
+      - Maximum active 15-minute power demand (P_peak,m in kW) & window-specific peaks
     """
     records: List[MonthlyConsumptionRecord] = []
+    has_3win = (load.tou_window_codes is not None and len(load.tou_window_codes) == len(load.power_kw))
     
     for m in range(1, 13):
         mask = (load.month_indices == m)
         m_power = load.power_kw[mask]
         m_energy = load.energy_kwh[mask]
-        m_is_ht = load.is_peak_tou[mask]
-        
         m_total_kwh = float(np.sum(m_energy))
-        m_ht_kwh = float(np.sum(m_energy[m_is_ht]))
-        m_nt_kwh = float(np.sum(m_energy[~m_is_ht]))
         m_peak_kw = float(np.max(m_power)) if len(m_power) > 0 else 0.0
         days_in_m = MONTH_DAYS_2025.get(m, 30)
+
+        if has_3win:
+            m_codes = load.tou_window_codes[mask]
+            mask_pico = (m_codes == 1)
+            mask_valle = (m_codes == 0)
+            mask_resto = (m_codes == 2)
+
+            m_ht_kwh = float(np.sum(m_energy[mask_pico]))
+            m_nt_kwh = float(np.sum(m_energy[mask_valle]))
+            m_sh_kwh = float(np.sum(m_energy[mask_resto]))
+
+            p_pico_kw = float(np.max(m_power[mask_pico])) if np.any(mask_pico) else 0.0
+            p_valle_kw = float(np.max(m_power[mask_valle])) if np.any(mask_valle) else 0.0
+            p_resto_kw = float(np.max(m_power[mask_resto])) if np.any(mask_resto) else 0.0
+        else:
+            m_is_ht = load.is_peak_tou[mask]
+            m_ht_kwh = float(np.sum(m_energy[m_is_ht]))
+            m_nt_kwh = float(np.sum(m_energy[~m_is_ht]))
+            m_sh_kwh = 0.0
+            p_pico_kw = float(np.max(m_power[m_is_ht])) if np.any(m_is_ht) else m_peak_kw
+            p_valle_kw = float(np.max(m_power[~m_is_ht])) if np.any(~m_is_ht) else 0.0
+            p_resto_kw = 0.0
 
         records.append(
             MonthlyConsumptionRecord(
@@ -286,7 +380,11 @@ def extract_monthly_consumption_records(
                 total_kwh=round(m_total_kwh, 3),
                 peak_tou_kwh=round(m_ht_kwh, 3),
                 offpeak_tou_kwh=round(m_nt_kwh, 3),
-                peak_demand_kw=round(m_peak_kw, 3)
+                peak_demand_kw=round(m_peak_kw, 3),
+                shoulder_tou_kwh=round(m_sh_kwh, 3),
+                peak_tou_demand_kw=round(p_pico_kw, 3),
+                offpeak_tou_demand_kw=round(p_valle_kw, 3),
+                shoulder_tou_demand_kw=round(p_resto_kw, 3),
             )
         )
 

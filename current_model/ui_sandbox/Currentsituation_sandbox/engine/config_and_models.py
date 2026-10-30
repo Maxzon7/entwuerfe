@@ -46,6 +46,7 @@ class LoadSeries2025:
     is_peak_tou: np.ndarray          # 35,040 boolean array (True = Peak/HT, False = Off-Peak/NT)
     total_steps: int = 35040
     step_hours: float = 0.25
+    tou_window_codes: Optional[np.ndarray] = None  # Optional 3-window code array: 0=Off-Peak/Valle, 1=Peak/Pico, 2=Shoulder/Resto
 
     def __post_init__(self):
         if len(self.power_kw) != self.total_steps:
@@ -72,7 +73,7 @@ class LoadSeries2025:
 @dataclass
 class DSOTariff:
     """
-    Regulated Distribution System Operator tariff parameters (Liander/Stedin/Enexis).
+    Regulated Distribution System Operator tariff parameters (Liander/Stedin/Enexis/EDEMSA).
     """
     dso_name: str = "Liander Netbeheer B.V."
     grid_tier: str = "MS"                         # Voltage tier, e.g. MS (Medium Voltage)
@@ -89,8 +90,10 @@ class DSOTariff:
     rate_peak_demand: float = 3.4600             # €/kW/month (piekvermogenstarief for measured kW max)
     
     # Volumetric transport tariffs
-    rate_transport_peak_kwh: float = 0.0000      # €/kWh for Peak (HT) transport (0.00 for MS Liander)
-    rate_transport_offpeak_kwh: float = 0.0000   # €/kWh for Off-Peak (NT) transport
+    rate_transport_peak_kwh: float = 0.0000      # €/kWh for Peak (HT / Pico 18:00-23:00) transport
+    rate_transport_offpeak_kwh: float = 0.0000   # €/kWh for Off-Peak (NT / Valle 23:00-05:00) transport
+    rate_transport_shoulder_kwh: float = 0.0000  # €/kWh for Shoulder (Resto 05:00-18:00) transport
+    enable_three_window_tou: bool = False        # True = 3-window TOU (Pico / Valle / Resto)
 
     # Breach logic specification
     # When P_peak_m > P_contract: capacity fee billed on P_peak_m in that month
@@ -101,9 +104,16 @@ class DSOTariff:
     peak_penalty_rate_kw: float = 0.2500
 
     # Reactive power parameters
-    reactive_power_tariff: float = 0.0188        # €/kVARh
+    reactive_power_tariff: float = 0.0188        # EUR/kVARh
     min_power_factor: float = 0.90
     reactive_allowance_pct: float = 33.0
+
+    # Explicit excess capacity penalty mode (e.g., EDEMSA T2 RMT Exceso de Potencia)
+    enable_excess_capacity_penalty: bool = False
+    # Bill Pos 2.3 Peak Demand Fee strictly on Peak/Pico window demand (e.g. 649 kW in Pico vs 691 kW overall max)
+    bill_peak_demand_on_peak_tou_only: bool = False
+    # Monthly regulatory & seasonal pass-through adjustments (e.g. EDEMSA GUDI / seasonal stabilization net pass-through)
+    regulatory_adjustments_monthly: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -118,12 +128,17 @@ class DSOTariff:
             "rate_peak_demand": self.rate_peak_demand,
             "rate_transport_peak_kwh": self.rate_transport_peak_kwh,
             "rate_transport_offpeak_kwh": self.rate_transport_offpeak_kwh,
+            "rate_transport_shoulder_kwh": self.rate_transport_shoulder_kwh,
+            "enable_three_window_tou": self.enable_three_window_tou,
             "adjust_capacity_on_breach": self.adjust_capacity_on_breach,
             "max_physical_limit_kw": self.max_physical_limit_kw,
             "peak_penalty_rate_kw": self.peak_penalty_rate_kw,
             "reactive_power_tariff": self.reactive_power_tariff,
             "min_power_factor": self.min_power_factor,
             "reactive_allowance_pct": self.reactive_allowance_pct,
+            "enable_excess_capacity_penalty": self.enable_excess_capacity_penalty,
+            "bill_peak_demand_on_peak_tou_only": self.bill_peak_demand_on_peak_tou_only,
+            "regulatory_adjustments_monthly": self.regulatory_adjustments_monthly,
         }
 
 
@@ -210,13 +225,17 @@ class LevyConfig:
     # Flat volumetric levy (€/kWh) for 2025 baseline evaluation
     statutory_levy_rate_kwh: float = 0.0125      # €/kWh (Energiebelasting & ODE approximation)
     annual_tax_reduction: float = 0.0            # €/year (Vermindering energiebelasting / Heffingskorting)
-    vat_rate_pct: float = 21.0                   # Statutory VAT (BTW 21.0% in the Netherlands)
+    vat_rate_pct: float = 21.0                   # Statutory VAT (BTW 21.0% in NL, IVA 27.0% in AR)
+    percentage_levy_rate_pct: float = 0.0        # Provincial/Municipal percentage tax rate on net electric concepts (%)
+    vat_applies_to_levies: bool = True           # True in NL (21% BTW on P1+P2+P3+P4); False in AR (27% IVA on P1+P2+P3 electric concepts)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "statutory_levy_rate_kwh": self.statutory_levy_rate_kwh,
             "annual_tax_reduction": self.annual_tax_reduction,
             "vat_rate_pct": self.vat_rate_pct,
+            "percentage_levy_rate_pct": self.percentage_levy_rate_pct,
+            "vat_applies_to_levies": self.vat_applies_to_levies,
         }
 
 
@@ -234,6 +253,14 @@ class StatusQuoConfig2025:
     energy_escalation_pct: float = 3.0           # g: Annual price escalation rate (3.0%)
     evaluation_horizon_years: int = 15           # 15-year TCO horizon
 
+    # Market structure & currency toggles
+    currency_code: str = "EUR"
+    market_mode: str = "unbundled_4_pillar"
+    enable_pillar_1_supplier: bool = True
+    enable_pillar_2_dso: bool = True
+    enable_pillar_3_metering: bool = True
+    enable_pillar_4_taxes: bool = True
+
 
 # ======================================================================================
 # Calculation Result Containers
@@ -246,9 +273,13 @@ class MonthlyConsumptionRecord:
     month_name: str                              # "January", "February", ...
     days_count: int                              # 31, 28, 31, ...
     total_kwh: float                             # Total energy E_m
-    peak_tou_kwh: float                          # High-tariff / Peak energy (HT)
-    offpeak_tou_kwh: float                       # Low-tariff / Off-peak energy (NT)
+    peak_tou_kwh: float                          # High-tariff / Peak energy (HT or Pico 18:00-23:00)
+    offpeak_tou_kwh: float                       # Low-tariff / Off-peak energy (NT or Valle 23:00-05:00)
     peak_demand_kw: float                        # P_peak,m: Highest 15-minute active power (kW)
+    shoulder_tou_kwh: float = 0.0                # Optional Shoulder energy (Resto 05:00-18:00)
+    peak_tou_demand_kw: float = 0.0              # Highest 15-minute power during Peak/Pico window (kW)
+    offpeak_tou_demand_kw: float = 0.0           # Highest 15-minute power during Off-Peak/Valle window (kW)
+    shoulder_tou_demand_kw: float = 0.0          # Highest 15-minute power during Shoulder/Resto window (kW)
 
 
 @dataclass
@@ -258,14 +289,20 @@ class DSOMonthlyResult:
     fixed_connection_fee: float                  # Monthly connection fee
     fixed_transport_fee: float                   # Monthly vastrecht
     cable_surcharge: float                       # Monthly cable fee
-    volumetric_transport_fee: float              # kWh transport cost
-    measured_peak_demand_kw: float               # P_peak,m
+    volumetric_transport_fee: float              # Total kWh transport cost
+    measured_peak_demand_kw: float               # P_peak,m (Overall registered max peak)
     billed_capacity_kw: float                    # Max(P_contract, P_peak_m) if breach
     contracted_capacity_fee: float               # Contract capacity charge
-    peak_demand_fee: float                       # Measured peak fee (P_peak,m * rate)
+    peak_demand_fee: float                       # Measured peak fee (billed_peak_demand_kw * rate)
     is_capacity_breached: bool                   # True if P_peak,m > P_contract
     excess_capacity_kw: float                    # Max(0, P_peak,m - P_contract)
     subtotal_dso_net: float                      # Total DSO net for this month
+    excess_penalty_fee: float = 0.0              # Explicit excess capacity penalty (Exceso de Potencia)
+    billed_peak_demand_kw: float = 0.0           # Peak kW used for Pos 2.3 (either overall P_peak,m or Pico peak)
+    volumetric_peak_fee: float = 0.0             # Pos 2.4a: Peak / Pico transport cost
+    volumetric_offpeak_fee: float = 0.0          # Pos 2.4b / 2.5: Off-Peak / Valle transport cost
+    volumetric_shoulder_fee: float = 0.0         # Pos 2.4c: Shoulder / Resto transport cost
+    regulatory_adjustments_fee: float = 0.0      # Pos 2.7: Regulatory & Seasonal Pass-Through Adjustments
 
 
 @dataclass

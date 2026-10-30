@@ -124,14 +124,60 @@ def calculate_status_quo_master_2025(
         levy_config=config.levies
     )
 
-    # Phase 4: Master Monthly Consolidation
+    # Phase 4: Master Monthly Consolidation (respecting Market Role Toggles)
+    enable_p1 = getattr(config, "enable_pillar_1_supplier", True)
+    enable_p2 = getattr(config, "enable_pillar_2_dso", True)
+    enable_p3 = getattr(config, "enable_pillar_3_metering", True)
+    enable_p4 = getattr(config, "enable_pillar_4_taxes", True)
+
     vat_rate = config.levies.vat_rate_pct / 100.0
+    pct_levy_rate = float(getattr(config.levies, "percentage_levy_rate_pct", 0.0)) / 100.0
+    vat_applies_to_levies = bool(getattr(config.levies, "vat_applies_to_levies", True))
     monthly_records: List[StatusQuoMonthlyResult] = []
 
     for c_rec, d_rec, m_rec in zip(monthly_consumption, dso_results, comm_results):
-        m_net = d_rec.subtotal_dso_net + m_rec.subtotal_commercial_net
-        m_vat = m_net * vat_rate
-        m_gross = m_net + m_vat
+        if not enable_p2:
+            d_rec.fixed_connection_fee = 0.0
+            d_rec.fixed_transport_fee = 0.0
+            d_rec.cable_surcharge = 0.0
+            d_rec.volumetric_transport_fee = 0.0
+            d_rec.volumetric_peak_fee = 0.0
+            d_rec.volumetric_offpeak_fee = 0.0
+            d_rec.volumetric_shoulder_fee = 0.0
+            d_rec.contracted_capacity_fee = 0.0
+            d_rec.peak_demand_fee = 0.0
+            d_rec.excess_penalty_fee = 0.0
+            d_rec.regulatory_adjustments_fee = 0.0
+            d_rec.subtotal_dso_net = 0.0
+
+        if not enable_p1:
+            m_rec.supplier_base_fee = 0.0
+            m_rec.supplier_energy_cost = 0.0
+
+        if not enable_p3:
+            m_rec.metering_fee = 0.0
+
+        # Net electric concepts base (P1 + P2 + P3) for percentage levies and VAT
+        m_electric_concepts_net = round(
+            d_rec.subtotal_dso_net + m_rec.supplier_base_fee + m_rec.supplier_energy_cost + m_rec.metering_fee - m_rec.feed_in_credit,
+            2
+        )
+
+        if enable_p4:
+            pct_levy_m = round(m_electric_concepts_net * pct_levy_rate, 2) if pct_levy_rate > 0.0 else 0.0
+            m_rec.statutory_levies = round(m_rec.statutory_levies + pct_levy_m, 2)
+        else:
+            m_rec.statutory_levies = 0.0
+
+        m_rec.subtotal_commercial_net = round(
+            m_rec.supplier_base_fee + m_rec.supplier_energy_cost + m_rec.metering_fee + m_rec.statutory_levies - m_rec.feed_in_credit,
+            2
+        )
+
+        m_net = round(d_rec.subtotal_dso_net + m_rec.subtotal_commercial_net, 2)
+        vat_base_m = m_net if vat_applies_to_levies else m_electric_concepts_net
+        m_vat = round(vat_base_m * vat_rate, 2)
+        m_gross = round(m_net + m_vat, 2)
         eff_rate_net = (m_net / c_rec.total_kwh) if c_rec.total_kwh > 0 else 0.0
 
         monthly_records.append(
@@ -141,24 +187,24 @@ def calculate_status_quo_master_2025(
                 consumption=c_rec,
                 dso=d_rec,
                 commercial=m_rec,
-                total_net=round(m_net, 2),
-                vat_amount=round(m_vat, 2),
-                total_gross=round(m_gross, 2),
+                total_net=m_net,
+                vat_amount=m_vat,
+                total_gross=m_gross,
                 effective_rate_net_kwh=round(eff_rate_net, 4)
             )
         )
 
-    # Party Subtotals (Net)
-    total_dso_net = sum(r.dso.subtotal_dso_net for r in monthly_records)
-    total_supplier_net = comm_summary["total_supplier_net_annual"]
-    total_metering_net = comm_summary["total_metering_annual"]
-    total_levies_net = comm_summary["total_levies_annual"]
+    # Party Subtotals (Net) summed cleanly from monthly records
+    total_dso_net = round(sum(r.dso.subtotal_dso_net for r in monthly_records), 2) if enable_p2 else 0.0
+    total_supplier_net = round(sum(r.commercial.supplier_base_fee + r.commercial.supplier_energy_cost for r in monthly_records), 2) if enable_p1 else 0.0
+    total_metering_net = round(sum(r.commercial.metering_fee for r in monthly_records), 2) if enable_p3 else 0.0
+    total_levies_net = round(sum(r.commercial.statutory_levies for r in monthly_records), 2) if enable_p4 else 0.0
     total_feed_in_credit = 0.0
 
     # Criterion 4.1: Net Total
-    total_status_quo_net = total_dso_net + total_supplier_net + total_metering_net + total_levies_net
-    total_vat = total_status_quo_net * vat_rate
-    total_status_quo_gross = total_status_quo_net + total_vat
+    total_status_quo_net = round(total_dso_net + total_supplier_net + total_metering_net + total_levies_net, 2)
+    total_vat = round(sum(r.vat_amount for r in monthly_records), 2)
+    total_status_quo_gross = round(total_status_quo_net + total_vat, 2)
 
     total_kwh = load.total_energy_kwh
     total_ht_kwh = sum(r.consumption.peak_tou_kwh for r in monthly_records)
@@ -286,7 +332,7 @@ def convert_to_financial_cost_breakdown(
                 )
 
             return FinancialCostBreakdown(
-                currency="EUR",
+                currency=getattr(result.config, "currency_code", "EUR"),
                 duration_days=float(r.consumption.days_count),
                 total_consumption_kwh=r.consumption.total_kwh,
                 peak_demand_kw=r.consumption.peak_demand_kw,
@@ -294,7 +340,7 @@ def convert_to_financial_cost_breakdown(
                 line_items=line_items,
                 monthly_series=[],
                 energy_cost_period=r.commercial.supplier_energy_cost,
-                capacity_cost_period=r.dso.contracted_capacity_fee + r.dso.peak_demand_fee,
+                capacity_cost_period=r.dso.contracted_capacity_fee + r.dso.peak_demand_fee + getattr(r.dso, "excess_penalty_fee", 0.0),
                 network_cost_period=r.dso.volumetric_transport_fee,
                 base_fee_period=r.dso.fixed_connection_fee + r.dso.fixed_transport_fee + r.commercial.metering_fee + r.commercial.supplier_base_fee,
                 total_net_period=r.total_net,
@@ -313,7 +359,7 @@ def convert_to_financial_cost_breakdown(
             peak_demand_kw=r.consumption.peak_demand_kw,
             energy_cost_net=r.commercial.supplier_energy_cost,
             capacity_cost_net=r.dso.contracted_capacity_fee,
-            penalty_cost_net=r.dso.peak_demand_fee,
+            penalty_cost_net=r.dso.peak_demand_fee + getattr(r.dso, "excess_penalty_fee", 0.0),
             base_fee_net=r.dso.fixed_connection_fee + r.dso.fixed_transport_fee + r.commercial.metering_fee + r.commercial.supplier_base_fee,
             reactive_cost_net=0.0,
             total_net=r.total_net,
@@ -324,6 +370,7 @@ def convert_to_financial_cost_breakdown(
         )
         monthly_series.append(rec)
 
+    gross_denom = result.total_status_quo_gross if result.total_status_quo_gross > 0 else 1.0
     # Line items
     line_items: List[CostLineItem] = [
         CostLineItem(
@@ -334,7 +381,7 @@ def convert_to_financial_cost_breakdown(
             unit_rate=round(result.total_supplier_net / result.total_consumption_kwh, 4) if result.total_consumption_kwh > 0 else 0.0,
             cost_period=result.total_supplier_net,
             cost_monthly=round(result.total_supplier_net / 12.0, 2),
-            share_pct=round((result.total_supplier_net / result.total_status_quo_gross * 100.0), 1)
+            share_pct=round((result.total_supplier_net / gross_denom * 100.0), 1)
         ),
         CostLineItem(
             category="Capacity (Contracted)",
@@ -344,17 +391,17 @@ def convert_to_financial_cost_breakdown(
             unit_rate=result.config.dso.rate_contracted_capacity,
             cost_period=result.total_dso_net,
             cost_monthly=round(result.total_dso_net / 12.0, 2),
-            share_pct=round((result.total_dso_net / result.total_status_quo_gross * 100.0), 1)
+            share_pct=round((result.total_dso_net / gross_denom * 100.0), 1)
         ),
         CostLineItem(
-            category="Metering (Meetbedrijf)",
+            category="Base Fee",
             description=f"Interval Telemetry ({result.config.metering.meter_company_name})",
             basis_quantity=12.0,
             unit="Month",
             unit_rate=round(result.total_metering_net / 12.0, 2),
             cost_period=result.total_metering_net,
             cost_monthly=round(result.total_metering_net / 12.0, 2),
-            share_pct=round((result.total_metering_net / result.total_status_quo_gross * 100.0), 1)
+            share_pct=round((result.total_metering_net / gross_denom * 100.0), 1)
         ),
         CostLineItem(
             category="Taxes & Levies",
@@ -364,12 +411,12 @@ def convert_to_financial_cost_breakdown(
             unit_rate=result.config.levies.statutory_levy_rate_kwh,
             cost_period=round(result.total_levies_net + result.total_vat_amount, 2),
             cost_monthly=round((result.total_levies_net + result.total_vat_amount) / 12.0, 2),
-            share_pct=round(((result.total_levies_net + result.total_vat_amount) / result.total_status_quo_gross * 100.0), 1)
+            share_pct=round(((result.total_levies_net + result.total_vat_amount) / gross_denom * 100.0), 1)
         ),
     ]
 
     return FinancialCostBreakdown(
-        currency="EUR",
+        currency=getattr(result.config, "currency_code", "EUR"),
         duration_days=365.0,
         total_consumption_kwh=result.total_consumption_kwh,
         peak_demand_kw=result.annual_peak_demand_kw,

@@ -20,16 +20,17 @@ python -m streamlit run "ui_sandbox/BESS_sandbox/app.py"
 ```text
 ui_sandbox/BESS_sandbox/
 ├── __init__.py               # Package exports: render_bess_sandbox, tab views, engines, presets, charts
-├── app.py                    # Main standalone Streamlit coordinator (2 physics tabs + benchmark switcher)
-├── baseline_presets.py       # Pre-configured Dutch industrial, commercial & Paula WKO benchmark profiles
+├── app.py                    # Main standalone Streamlit coordinator (4 tabs + Explicit Assumptions Banner + benchmark switcher)
+├── baseline_presets.py       # Pre-configured Rotterdam Stedin WKO, EDEMSA Mendoza T2 RMT, Liander & Enexis presets
 ├── sandbox_bess_engine.py    # Physics sizing engine: multi-peak clusters, simultaneous bottlenecks & Pareto tradeoff
 ├── sandbox_charts.py         # Sandbox-local Plotly figures (synchronized 2-in-1 dispatch/SoC & Pareto hockey stick)
 ├── view_problem.py           # Tab 1: Current Situation & 1:1 CSV Ingestion & Validation Pipeline
 ├── view_technical.py         # Tab 2: BESS Sizing & Excel Validation (4 structured blocks)
-├── view_financial.py         # Preserved for Step 2: Financial Comparison & 15Y TCO (Avoided grid upgrade vs. BESS)
+├── view_bill_comparison.py   # Tab 3: Side-by-Side Baseline vs. With-BESS 4-Pillar Electricity Bill & Profile Comparison + PDF Export
+├── view_financial.py         # Tab 4: Financial Comparison & 15Y TCO (Avoided grid upgrade vs. BESS)
 ├── view_optimizer.py         # Optional / Parametric capacity sweep & sensitivity library
 ├── data/
-│   └── Paula3_totaal_clean.csv # Standardized 28-day 15-min benchmark CSV (Peak: 131.4 kW, Limit: 110 kW)
+│   └── Paula3_totaal_clean.csv # Standardized 28-day 15-min Rotterdam/Dutch WKO benchmark CSV (Peak: 131.4 kW, Limit: 110 kW)
 └── README.md                 # Complete sandbox documentation
 ```
 

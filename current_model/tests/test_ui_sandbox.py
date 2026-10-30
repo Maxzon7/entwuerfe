@@ -48,7 +48,8 @@ class TestUISandboxIsolation(unittest.TestCase):
         self.assertTrue(os.path.isdir(bess_dir), "ui_sandbox/BESS_sandbox directory must exist")
         for expected_file in [
             "__init__.py", "app.py", "baseline_presets.py", "sandbox_bess_engine.py",
-            "view_problem.py", "view_technical.py", "view_financial.py", "view_optimizer.py", "README.md"
+            "view_problem.py", "view_technical.py", "view_bill_comparison.py",
+            "view_financial.py", "view_optimizer.py", "README.md"
         ]:
             f_path = os.path.join(bess_dir, expected_file)
             self.assertTrue(os.path.isfile(f_path), f"ui_sandbox/BESS_sandbox/{expected_file} must exist")
@@ -348,13 +349,17 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
             calculate_status_quo_master_2025
         )
         from ui_sandbox.Currentsituation_sandbox.contract.tab_invoice_experimental import (
-            build_invoice_positions
+            build_invoice_positions,
+            _render_positions_table_html,
         )
 
         load = synthesize_benchmark_load_profile_2025(nominal_peak_kw=250.0)
 
         for mode in [PricingMode.FIXED, PricingMode.DYNAMIC]:
             config = get_stage_1_default_config_2025(pricing_mode=mode, contracted_capacity_kw=250.0)
+            config.dso.rate_transport_peak_kwh = 0.0250
+            config.dso.rate_transport_offpeak_kwh = 0.0250
+            config.supplier.green_certificate_surcharge_kwh = 0.0030
             if mode == PricingMode.FIXED:
                 config.supplier.is_dual_rate = True
             result = calculate_status_quo_master_2025(load=load, config=config)
@@ -367,6 +372,28 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
             self.assertAlmostEqual(inv_ann["subtotal_d"], result.total_levies_net, places=2)
             self.assertAlmostEqual(inv_ann["total_net"], result.total_status_quo_net, places=2)
             self.assertAlmostEqual(inv_ann["total_gross"], result.total_status_quo_gross, places=2)
+
+            # Verify zero artificial rounding positions (.9) exist in any block
+            for block_key in ("block_a", "block_b", "block_c", "block_d"):
+                for p in inv_ann[block_key]:
+                    self.assertFalse(p["pos"].endswith(".9"), f"Artificial rounding row found: {p}")
+
+            # Verify Block A ordering: 1.1 comes first, then 1.2 (and 1.3), then 1.4
+            pos_a_codes = [p["pos"] for p in inv_ann["block_a"]]
+            self.assertEqual(pos_a_codes, sorted(pos_a_codes))
+
+            # Verify Block B has 2.4 and 2.5 volumetric transport positions and kW/mo unit
+            pos_b_codes = [p["pos"] for p in inv_ann["block_b"]]
+            self.assertIn("2.4", pos_b_codes)
+            self.assertIn("2.5", pos_b_codes)
+            for p in inv_ann["block_b"]:
+                if p["pos"] in ("2.2", "2.3"):
+                    self.assertEqual(p["unit"], "kW/mo")
+
+            # Verify HTML renderer never produces 4-space markdown code block indentations
+            html_out = _render_positions_table_html(inv_ann["block_a"], "Subtotal A", inv_ann["subtotal_a"])
+            for line in html_out.splitlines():
+                self.assertFalse(line.startswith("    "), f"HTML line starts with 4+ spaces: {line!r}")
 
             sum_lines = (
                 sum(p["amount_net"] for p in inv_ann["block_a"])
@@ -388,6 +415,132 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
                     + sum(p["amount_net"] for p in inv_m["block_d"])
                 )
                 self.assertAlmostEqual(sum_m_lines, r.total_net, places=2)
+
+    def test_market_role_toggles_and_edemsa_single_utility_preset(self):
+        """Verifies Market Role Toggles (Single-Utility mode graying out Pillars 1 & 3 to 0.00) and EDEMSA Exceso de Potencia."""
+        from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
+            synthesize_benchmark_load_profile_2025
+        )
+        from ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
+            get_rotterdam_stedin_wko_config_2025,
+            get_edemsa_salentein_config_2025,
+        )
+        from ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
+            calculate_status_quo_master_2025
+        )
+        from ui_sandbox.Currentsituation_sandbox.contract.tab_invoice_experimental import (
+            build_invoice_positions,
+        )
+        from ui_sandbox.Currentsituation_sandbox.contract.assumptions_banner import (
+            build_assumptions_register_dict,
+        )
+        from ui_sandbox.Currentsituation_sandbox.contract.invoice_pdf_exporter import (
+            generate_multi_period_invoice_pdf,
+        )
+
+        # 1. Preset A: Rotterdam Stedin WKO (110 kW Limit, EUR, 4 Pillars Enabled)
+        load_rot = synthesize_benchmark_load_profile_2025(nominal_peak_kw=131.4)
+        cfg_rot = get_rotterdam_stedin_wko_config_2025(contracted_capacity_kw=110.0)
+        res_rot = calculate_status_quo_master_2025(load=load_rot, config=cfg_rot)
+        self.assertEqual(cfg_rot.currency_code, "EUR")
+        self.assertGreater(res_rot.total_supplier_net, 0.0)
+        self.assertGreater(res_rot.total_dso_net, 0.0)
+        self.assertGreater(res_rot.total_metering_net, 0.0)
+        self.assertGreater(res_rot.total_levies_net, 0.0)
+
+        # 2. Preset B: EDEMSA Mendoza Single-Utility (1:1 Real Invoice Calibration 02/2026)
+        from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
+            synthesize_edemsa_salentein_load_profile_2025
+        )
+        load_sal = synthesize_edemsa_salentein_load_profile_2025()
+        cfg_sal = get_edemsa_salentein_config_2025(contracted_capacity_kw=430.0)
+        res_sal = calculate_status_quo_master_2025(load=load_sal, config=cfg_sal)
+        self.assertEqual(cfg_sal.currency_code, "ARS")
+        self.assertFalse(cfg_sal.enable_pillar_1_supplier)
+        self.assertFalse(cfg_sal.enable_pillar_3_metering)
+        self.assertEqual(res_sal.total_supplier_net, 0.0)
+        self.assertEqual(res_sal.total_metering_net, 0.0)
+
+        # Verify Month 2 (February) matches the real Bodegas Salentein EDEMSA 02/2026 bill to the exact cent
+        inv_feb = build_invoice_positions(res_sal, cfg_sal, "February 2025")
+        self.assertAlmostEqual(inv_feb["kwh_total"], 163599.0, places=1)
+        self.assertAlmostEqual(inv_feb["kwh_ht"], 33965.0, places=1)
+        self.assertAlmostEqual(inv_feb["kwh_nt"], 34667.0, places=1)
+        self.assertAlmostEqual(inv_feb["kwh_sh"], 94967.0, places=1)
+        self.assertAlmostEqual(inv_feb["p_max"], 691.0, places=1)
+        self.assertAlmostEqual(inv_feb["billed_peak_kw"], 649.0, places=1)
+        self.assertAlmostEqual(inv_feb["excess_kw"], 261.0, places=1)
+        self.assertEqual(inv_feb["subtotal_a"], 0.0)
+        self.assertAlmostEqual(inv_feb["subtotal_b"], 52931298.44, places=2)
+        self.assertEqual(inv_feb["subtotal_c"], 0.0)
+        self.assertAlmostEqual(inv_feb["subtotal_d"], 6624894.98, places=2)
+        self.assertAlmostEqual(inv_feb["total_net"], 59556193.42, places=2)
+        self.assertAlmostEqual(inv_feb["vat_amount"], 14291450.58, places=2)
+        self.assertAlmostEqual(inv_feb["total_gross"], 73847644.00, places=2)
+
+        pos_b_codes = [p["pos"] for p in inv_feb["block_b"]]
+        for expected_code in ("2.1", "2.2", "2.3", "2.4a", "2.4b", "2.4c", "2.6", "2.7"):
+            self.assertIn(expected_code, pos_b_codes, f"EDEMSA bill must include Pos {expected_code}")
+
+        # 3. Multi-Period PDF Invoice Generator test
+        assump = build_assumptions_register_dict(load_series=load_rot, config=cfg_rot, source_filename="Paula3_totaal_clean.csv")
+        pdf_bytes = generate_multi_period_invoice_pdf(
+            result=res_rot,
+            active_config=cfg_rot,
+            periods=["Annual Statement 2025 (Full Year)", "January 2025"],
+            build_positions_fn=build_invoice_positions,
+            site_name="Rotterdam WKO Facility",
+            assumptions_dict=assump
+        )
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-1.4"))
+        self.assertGreater(len(pdf_bytes), 1000)
+
+    def test_bess_baseline_vs_with_bess_bill_comparison_and_pdf(self):
+        """Verifies Side-by-Side 4-Pillar Baseline vs. With-BESS bill comparison and PDF report export."""
+        from ui_sandbox.BESS_sandbox import (
+            baseline_presets as presets,
+            simulate_sandbox_bess_dispatch,
+        )
+        from ui_sandbox.BESS_sandbox.view_bill_comparison import (
+            evaluate_baseline_vs_bess_4pillar_bills,
+            _render_side_by_side_bill_html,
+        )
+        from ui_sandbox.Currentsituation_sandbox.contract.invoice_pdf_exporter import (
+            generate_bess_comparison_report_pdf,
+        )
+
+        preset = presets.get_case3_paula_dutch_site_preset()
+        sim_res = simulate_sandbox_bess_dispatch(
+            bess_config=preset.bess_config,
+            load_df=preset.load_df,
+            grid_limit_kw=preset.grid_limit_kw,
+            step_hours=0.25,
+            power_col="Total_Demand_kW"
+        )
+
+        comp = evaluate_baseline_vs_bess_4pillar_bills(
+            sim_result=sim_res,
+            preset=preset,
+            active_limit_kw=preset.grid_limit_kw,
+            period_choice="Peak Billing Month (Single Month Invoice View)"
+        )
+        self.assertEqual(comp["currency"], "EUR")
+        self.assertLess(comp["physical"]["peak_after_kw"], comp["physical"]["peak_before_kw"])
+        self.assertLess(comp["inv_bess"]["subtotal_b"], comp["inv_base"]["subtotal_b"], "Grid Network DSO bill must decrease with BESS peak shaving")
+
+        html_table = _render_side_by_side_bill_html(comp)
+        for line in html_table.splitlines():
+            self.assertFalse(line.startswith("    "), f"HTML line starts with 4+ spaces: {line!r}")
+
+        pdf_rep = generate_bess_comparison_report_pdf(
+            site_name=preset.title,
+            currency_code=comp["currency"],
+            assumptions_dict={},
+            physical_kpis=comp["physical"],
+            comparison_rows=comp["pdf_comparison_rows"]
+        )
+        self.assertTrue(pdf_rep.startswith(b"%PDF-1.4"))
+        self.assertGreater(len(pdf_rep), 1000)
 
 
 if __name__ == "__main__":

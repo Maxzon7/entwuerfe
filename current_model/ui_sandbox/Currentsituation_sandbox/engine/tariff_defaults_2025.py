@@ -239,6 +239,25 @@ DSO_CATALOGS_2025: Dict[str, Dict[str, Dict[str, Any]]] = {
     "Enexis Netbeheer B.V.": ENEXIS_2025_GRID_TIERS,
     "Liander Netbeheer B.V.": LIANDER_2025_GRID_TIERS,
     "Stedin Netbeheer B.V.": STEDIN_2025_GRID_TIERS,
+    "EDEMSA Mendoza (Single-Utility)": {
+        "T2 RMT (Bodegas Salentein 430 kW)": {
+            "description": "EDEMSA Mendoza Tarifa 2 Grande Demanda Media Tension (Integrated Single-Utility Bill in ARS)",
+            "aansluitdienst_annual": 0.00,
+            "vastrecht_annual": 6169746.60,        # 12 x ARS 514,145.55/mo Cargo Comercialización
+            "rate_contracted_monthly": 40607.0460, # Uso de Red (ARS/kW/mo -> 430 * 40607.0460 = 17,461,029.78)
+            "rate_peak_monthly": 8554.4390,        # Consumo de Potencia Pico (ARS/kW/mo -> 649 * 8554.4390 = 5,551,830.91)
+            "rate_peak_kwh": 68.433566,            # Pico (18-23h: 68.433566 ARS/kWh -> 33,965 * 68.433566 = 2,324,345.77)
+            "rate_offpeak_kwh": 66.101706,         # Valle (23-05h: 66.101706 ARS/kWh -> 34,667 * 66.101706 = 2,291,547.84)
+            "rate_shoulder_kwh": 66.773700,        # Resto (05-18h: 66.773700 ARS/kWh -> 94,967 * 66.773700 = 6,341,297.98)
+            "enable_three_window_tou": True,
+            "bill_peak_demand_on_peak_tou_only": True,
+            "reactive_tariff": 0.0000,
+            "peak_penalty_rate_kw": 40607.0460,    # Exceso de Potencia (ARS 40,607.0460/kW/mo -> 261 * 40607.0460 = 10,598,439.01)
+            "enable_excess_capacity_penalty": True,
+            "regulatory_adjustments_monthly": 7848661.60,  # Net seasonal stabilization & GUDI pass-through (+ARS 7,848,661.60/mo)
+            "typical_contracted_kw": 430.0,
+        }
+    },
 }
 
 
@@ -659,7 +678,13 @@ def get_dso_tariff_from_catalog(
         rate_peak_demand=float(tier.get("rate_peak_monthly", 3.7100)),
         rate_transport_peak_kwh=float(tier.get("rate_peak_kwh", 0.0250)),
         rate_transport_offpeak_kwh=float(tier.get("rate_offpeak_kwh", 0.0250)),
-        adjust_capacity_on_breach=True,
+        rate_transport_shoulder_kwh=float(tier.get("rate_shoulder_kwh", 0.0000)),
+        enable_three_window_tou=bool(tier.get("enable_three_window_tou", False)),
+        adjust_capacity_on_breach=not bool(tier.get("enable_excess_capacity_penalty", False)),
+        peak_penalty_rate_kw=float(tier.get("peak_penalty_rate_kw", 0.2500)),
+        enable_excess_capacity_penalty=bool(tier.get("enable_excess_capacity_penalty", False)),
+        bill_peak_demand_on_peak_tou_only=bool(tier.get("bill_peak_demand_on_peak_tou_only", False)),
+        regulatory_adjustments_monthly=float(tier.get("regulatory_adjustments_monthly", 0.0)),
     )
 
 
@@ -761,5 +786,134 @@ def get_stage_1_default_config_2025(
         discount_rate_pct=5.0,
         energy_escalation_pct=3.0,
         evaluation_horizon_years=15,
+    )
+
+
+def get_rotterdam_stedin_wko_config_2025(contracted_capacity_kw: float = 110.0) -> StatusQuoConfig2025:
+    """
+    Flagship Preset A: Rotterdam / Dutch WKO Site (Stedin Region - 110 kW Limit).
+    Uses official 2025 Stedin Netbeheer 'Trafo MS/LS (51 t/m 150 kW)' tariffs,
+    Vattenfall Fixed Dual Rate (HT/NT), Fudura RLM Metering, and Dutch statutory taxes (EUR).
+    """
+    dso = get_dso_tariff_from_catalog(
+        dso_company="Stedin Netbeheer B.V.",
+        tier_name="Trafo MS/LS (51 t/m 150 kW)",
+        contracted_capacity_kw=contracted_capacity_kw,
+    )
+    supplier = get_supplier_tariff_from_catalog(
+        supplier_name="Vattenfall Zakelijk",
+        product_name="Vast 1 Jaar (Dubbeltarief HT/NT)",
+    )
+    metering = get_default_metering_tariff_2025(meter_company_name="Fudura B.V.")
+    levies = LevyConfig(
+        statutory_levy_rate_kwh=0.0125,
+        annual_tax_reduction=0.0,
+        vat_rate_pct=21.0,
+    )
+    return StatusQuoConfig2025(
+        stage=TariffStage.STAGE_1_DEFAULT,
+        dso=dso,
+        supplier=supplier,
+        metering=metering,
+        levies=levies,
+        discount_rate_pct=5.0,
+        energy_escalation_pct=3.0,
+        evaluation_horizon_years=15,
+        currency_code="EUR",
+        market_mode="unbundled_4_pillar",
+        enable_pillar_1_supplier=True,
+        enable_pillar_2_dso=True,
+        enable_pillar_3_metering=True,
+        enable_pillar_4_taxes=True,
+    )
+
+
+def get_default_status_quo_config_2025(
+    pricing_mode: PricingMode = PricingMode.DYNAMIC,
+    contracted_capacity_kw: float = 250.0,
+) -> StatusQuoConfig2025:
+    """Alias for get_stage_1_default_config_2025."""
+    return get_stage_1_default_config_2025(
+        pricing_mode=pricing_mode,
+        contracted_capacity_kw=contracted_capacity_kw,
+    )
+
+
+def get_dso_tariff_from_catalog_2025(
+    dso_company: str,
+    tier_name: str,
+    contracted_capacity_kw: float = 250.0,
+    cable_surcharge_annual: float = 0.0,
+) -> DSOTariff:
+    """Alias for get_dso_tariff_from_catalog."""
+    return get_dso_tariff_from_catalog(
+        dso_company=dso_company,
+        tier_name=tier_name,
+        contracted_capacity_kw=contracted_capacity_kw,
+        cable_surcharge_annual=cable_surcharge_annual,
+    )
+
+
+def get_edemsa_salentein_config_2025(contracted_capacity_kw: float = 430.0) -> StatusQuoConfig2025:
+    """
+    Flagship Preset B: EDEMSA Mendoza T2 RMT (Bodegas Salentein - 430 kW Limit).
+    Configures Integrated Single-Utility Mode (ARS) where Pillar 1 (Supplier) and
+    Pillar 3 (Metering) are bypassed/grayed out, and all utility energy, capacity,
+    and excess demand charges are evaluated inside Pillar 2 (EDEMSA) + Pillar 4 (Taxes).
+    Calibrated 1:1 to the real Bodegas Salentein EDEMSA 02/2026 invoice:
+      - Subtotal Conceptos Eléctricos (Pillar 2): ARS 52,931,298.44
+      - Provincial/Municipal Levies (Pillar 4): ARS 6,624,894.98 (12.516026% of Electric Concepts)
+      - 27.0% IVA (applied to Electric Concepts): ARS 14,291,450.58
+      - Total Taxes (Pillar 4 + IVA): ARS 20,916,345.56
+      - Total Gross Amount Due (Total a Pagar): ARS 73,847,644.00
+    """
+    dso = DSOTariff(
+        dso_name="EDEMSA Mendoza (Single-Utility)",
+        grid_tier="T2 RMT (Bodegas Salentein 430 kW)",
+        connection_category="T2_RMT",
+        fixed_connection_annual=0.0,
+        fixed_transport_annual=round(514145.55 * 12.0, 2),
+        cable_surcharge_annual=0.0,
+        contracted_capacity_kw=contracted_capacity_kw,
+        rate_contracted_capacity=40607.0460,
+        rate_peak_demand=8554.4390,
+        rate_transport_peak_kwh=68.433566,
+        rate_transport_offpeak_kwh=66.101706,
+        rate_transport_shoulder_kwh=66.773700,
+        enable_three_window_tou=True,
+        adjust_capacity_on_breach=False,
+        max_physical_limit_kw=1000.0,
+        peak_penalty_rate_kw=40607.0460,
+        reactive_power_tariff=0.0,
+        min_power_factor=0.95,
+        reactive_allowance_pct=33.0,
+        enable_excess_capacity_penalty=True,
+        bill_peak_demand_on_peak_tou_only=True,
+        regulatory_adjustments_monthly=7848661.60,
+    )
+    supplier = get_default_supplier_tariff_2025(pricing_mode=PricingMode.FIXED)
+    metering = get_default_metering_tariff_2025()
+    levies = LevyConfig(
+        statutory_levy_rate_kwh=0.0,
+        annual_tax_reduction=0.0,
+        vat_rate_pct=27.0,
+        percentage_levy_rate_pct=12.51602578,
+        vat_applies_to_levies=False,
+    )
+    return StatusQuoConfig2025(
+        stage=TariffStage.STAGE_2_QUOTE,
+        dso=dso,
+        supplier=supplier,
+        metering=metering,
+        levies=levies,
+        discount_rate_pct=8.0,
+        energy_escalation_pct=4.0,
+        evaluation_horizon_years=15,
+        currency_code="ARS",
+        market_mode="integrated_single_utility",
+        enable_pillar_1_supplier=False,
+        enable_pillar_2_dso=True,
+        enable_pillar_3_metering=False,
+        enable_pillar_4_taxes=True,
     )
 

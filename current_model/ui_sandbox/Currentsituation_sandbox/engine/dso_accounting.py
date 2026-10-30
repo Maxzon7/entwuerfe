@@ -50,13 +50,22 @@ def calculate_dso_accounting_2025(
     monthly_results: List[DSOMonthlyResult] = []
     
     # Monthly fixed allocations
-    monthly_fixed_conn = dso_tariff.fixed_connection_annual / 12.0
-    monthly_fixed_trans = dso_tariff.fixed_transport_annual / 12.0
-    monthly_cable = dso_tariff.cable_surcharge_annual / 12.0
+    monthly_fixed_conn = round(dso_tariff.fixed_connection_annual / 12.0, 2)
+    monthly_fixed_trans = round(dso_tariff.fixed_transport_annual / 12.0, 2)
+    monthly_cable = round(dso_tariff.cable_surcharge_annual / 12.0, 2)
+    monthly_reg_adj = round(float(getattr(dso_tariff, "regulatory_adjustments_monthly", 0.0)), 2)
+    is_3win = bool(getattr(dso_tariff, "enable_three_window_tou", False))
+    bill_pico_only = bool(getattr(dso_tariff, "bill_peak_demand_on_peak_tou_only", False))
+    rate_shoulder = float(getattr(dso_tariff, "rate_transport_shoulder_kwh", 0.0))
 
     annual_volumetric_fee = 0.0
+    annual_vol_peak_fee = 0.0
+    annual_vol_offpeak_fee = 0.0
+    annual_vol_shoulder_fee = 0.0
     annual_peak_fee = 0.0
     annual_capacity_fee = 0.0
+    annual_excess_penalty_fee = 0.0
+    annual_reg_adj_fee = 0.0
     breached_months: List[int] = []
 
     for rec in monthly_consumption:
@@ -64,54 +73,83 @@ def calculate_dso_accounting_2025(
         p_peak_m = rec.peak_demand_kw
         p_contract = dso_tariff.contracted_capacity_kw
 
-        # 1. Volumetric Transport Fee (HT vs NT)
-        vol_peak_cost = rec.peak_tou_kwh * dso_tariff.rate_transport_peak_kwh
-        vol_offpeak_cost = rec.offpeak_tou_kwh * dso_tariff.rate_transport_offpeak_kwh
-        volumetric_m = vol_peak_cost + vol_offpeak_cost
-        annual_volumetric_fee += volumetric_m
+        # 1. Volumetric Transport Fee (2-Window HT/NT or 3-Window Pico/Valle/Resto)
+        sh_kwh = float(getattr(rec, "shoulder_tou_kwh", 0.0))
+        if is_3win or sh_kwh > 0.0:
+            vol_peak_cost = round(rec.peak_tou_kwh * dso_tariff.rate_transport_peak_kwh, 2)
+            vol_offpeak_cost = round(rec.offpeak_tou_kwh * dso_tariff.rate_transport_offpeak_kwh, 2)
+            eff_sh_rate = rate_shoulder if rate_shoulder > 0.0 else dso_tariff.rate_transport_peak_kwh
+            vol_shoulder_cost = round(sh_kwh * eff_sh_rate, 2)
+        else:
+            vol_peak_cost = round(rec.peak_tou_kwh * dso_tariff.rate_transport_peak_kwh, 2)
+            vol_offpeak_cost = round(rec.offpeak_tou_kwh * dso_tariff.rate_transport_offpeak_kwh, 2)
+            vol_shoulder_cost = 0.0
 
-        # 2. Peak Demand Fee (kW max * rate)
-        peak_fee_m = p_peak_m * dso_tariff.rate_peak_demand
+        volumetric_m = round(vol_peak_cost + vol_offpeak_cost + vol_shoulder_cost, 2)
+        annual_volumetric_fee += volumetric_m
+        annual_vol_peak_fee += vol_peak_cost
+        annual_vol_offpeak_fee += vol_offpeak_cost
+        annual_vol_shoulder_fee += vol_shoulder_cost
+
+        # 2. Peak Demand Fee (kW max * rate; uses Pico peak when bill_peak_demand_on_peak_tou_only is True)
+        p_pico_m = float(getattr(rec, "peak_tou_demand_kw", 0.0))
+        billed_peak_kw = p_pico_m if (bill_pico_only and p_pico_m > 0.0) else p_peak_m
+        peak_fee_m = round(billed_peak_kw * dso_tariff.rate_peak_demand, 2)
         annual_peak_fee += peak_fee_m
 
-        # 3. Contract Capacity & Breach Logic
+        # 3. Contract Capacity & Breach Logic (Excess Penalty always compares overall max p_peak_m vs p_contract)
         is_breach = (p_peak_m > p_contract + 1e-5)
+        excess_penalty_m = 0.0
         if is_breach:
             breached_months.append(m)
             excess_kw = p_peak_m - p_contract
-            # If adjust_capacity_on_breach is enabled, capacity fee is billed on actual peak
-            billed_kw = p_peak_m if dso_tariff.adjust_capacity_on_breach else p_contract
+            if getattr(dso_tariff, "enable_excess_capacity_penalty", False):
+                billed_kw = p_contract
+                excess_penalty_m = round(excess_kw * float(getattr(dso_tariff, "peak_penalty_rate_kw", 0.0)), 2)
+            else:
+                billed_kw = p_peak_m if dso_tariff.adjust_capacity_on_breach else p_contract
         else:
             excess_kw = 0.0
             billed_kw = p_contract
 
-        capacity_fee_m = billed_kw * dso_tariff.rate_contracted_capacity
+        capacity_fee_m = round(billed_kw * dso_tariff.rate_contracted_capacity, 2)
         annual_capacity_fee += capacity_fee_m
+        annual_excess_penalty_fee += excess_penalty_m
+        annual_reg_adj_fee += monthly_reg_adj
 
-        # 4. Total Net DSO for month m
-        total_dso_net_m = (
+        # 4. Total Net DSO for month m (exact sum of rounded monthly line items)
+        total_dso_net_m = round(
             monthly_fixed_conn +
             monthly_fixed_trans +
             monthly_cable +
             volumetric_m +
             capacity_fee_m +
-            peak_fee_m
+            peak_fee_m +
+            excess_penalty_m +
+            monthly_reg_adj,
+            2
         )
 
         monthly_results.append(
             DSOMonthlyResult(
                 month_index=m,
-                fixed_connection_fee=round(monthly_fixed_conn, 2),
-                fixed_transport_fee=round(monthly_fixed_trans, 2),
-                cable_surcharge=round(monthly_cable, 2),
-                volumetric_transport_fee=round(volumetric_m, 2),
+                fixed_connection_fee=monthly_fixed_conn,
+                fixed_transport_fee=monthly_fixed_trans,
+                cable_surcharge=monthly_cable,
+                volumetric_transport_fee=volumetric_m,
                 measured_peak_demand_kw=round(p_peak_m, 3),
                 billed_capacity_kw=round(billed_kw, 3),
-                contracted_capacity_fee=round(capacity_fee_m, 2),
-                peak_demand_fee=round(peak_fee_m, 2),
+                contracted_capacity_fee=capacity_fee_m,
+                peak_demand_fee=peak_fee_m,
                 is_capacity_breached=is_breach,
                 excess_capacity_kw=round(excess_kw, 3),
-                subtotal_dso_net=round(total_dso_net_m, 2)
+                subtotal_dso_net=total_dso_net_m,
+                excess_penalty_fee=excess_penalty_m,
+                billed_peak_demand_kw=round(billed_peak_kw, 3),
+                volumetric_peak_fee=vol_peak_cost,
+                volumetric_offpeak_fee=vol_offpeak_cost,
+                volumetric_shoulder_fee=vol_shoulder_cost,
+                regulatory_adjustments_fee=monthly_reg_adj,
             )
         )
 
@@ -127,8 +165,13 @@ def calculate_dso_accounting_2025(
         "total_fixed_transport_annual": round(monthly_fixed_trans * 12.0, 2),
         "total_cable_surcharge_annual": round(monthly_cable * 12.0, 2),
         "total_volumetric_transport_annual": round(annual_volumetric_fee, 2),
+        "total_volumetric_peak_annual": round(annual_vol_peak_fee, 2),
+        "total_volumetric_offpeak_annual": round(annual_vol_offpeak_fee, 2),
+        "total_volumetric_shoulder_annual": round(annual_vol_shoulder_fee, 2),
         "total_capacity_fee_annual": round(annual_capacity_fee, 2),
         "total_peak_demand_fee_annual": round(annual_peak_fee, 2),
+        "total_excess_penalty_annual": round(annual_excess_penalty_fee, 2),
+        "total_regulatory_adjustments_annual": round(annual_reg_adj_fee, 2),
         "total_dso_net_annual": round(total_dso_annual_net, 2),
         "has_breaches": (len(breached_months) > 0),
         "breached_months_count": len(breached_months),

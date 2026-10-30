@@ -39,6 +39,7 @@ try:
     from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
+        synthesize_edemsa_salentein_load_profile_2025,
     )
     from ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
         LIANDER_2025_GRID_TIERS,
@@ -49,6 +50,7 @@ except ImportError:
         from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
             normalize_load_profile_2025,
             synthesize_benchmark_load_profile_2025,
+            synthesize_edemsa_salentein_load_profile_2025,
         )
         from current_model.ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
             LIANDER_2025_GRID_TIERS,
@@ -57,6 +59,7 @@ except ImportError:
     except ImportError:
         normalize_load_profile_2025 = None
         synthesize_benchmark_load_profile_2025 = None
+        synthesize_edemsa_salentein_load_profile_2025 = None
         LIANDER_2025_GRID_TIERS = {}
         ENEXIS_2025_GRID_TIERS = {}
 
@@ -290,10 +293,10 @@ def get_case2_enexis_commercial_preset() -> BaselinePreset:
 
 def get_case3_paula_dutch_site_preset() -> BaselinePreset:
     """
-    Case 3: Paula Dutch Site (28-Day WKO / 110 kW Contract Limit).
+    Case 3: Rotterdam / Paula Dutch Site (Stedin 28-Day WKO / 110 kW Contract Limit).
 
     Load: 28 days of 15-minute intervals (2,688 intervals) with 131.4 kW peak demand.
-    Contract limit: 110.0 kW.
+    Contract limit: 110.0 kW (Stedin Netbeheer Rotterdam Trafo MS/LS 51 t/m 150 kW).
     Initial unserved overload: +21.4 kW peak exceedance.
     """
     data_path = os.path.join(CURRENT_DIR, "data", "Paula3_totaal_clean.csv")
@@ -304,10 +307,10 @@ def get_case3_paula_dutch_site_preset() -> BaselinePreset:
         elif "timestamp" in raw_df.columns:
             ts = pd.to_datetime(raw_df["timestamp"], errors="coerce")
         else:
-            ts = pd.date_range("2026-01-01 00:00:00", periods=len(raw_df), freq="15min")
+            ts = pd.date_range("2025-01-01 00:00:00", periods=len(raw_df), freq="15min")
 
         if ts.isna().all():
-            ts = pd.date_range("2026-01-01 00:00:00", periods=len(raw_df), freq="15min")
+            ts = pd.date_range("2025-01-01 00:00:00", periods=len(raw_df), freq="15min")
 
         p_vals = pd.to_numeric(raw_df["Total_Demand_kW"] if "Total_Demand_kW" in raw_df.columns else raw_df.iloc[:, -1], errors="coerce").fillna(0.0)
         load_df = pd.DataFrame({
@@ -318,7 +321,7 @@ def get_case3_paula_dutch_site_preset() -> BaselinePreset:
     else:
         # Fallback synthetic 28-day 131.4 kW profile
         n_steps = 28 * 96
-        ts = pd.date_range("2026-01-01 00:00:00", periods=n_steps, freq="15min")
+        ts = pd.date_range("2025-01-01 00:00:00", periods=n_steps, freq="15min")
         hour = ts.hour + ts.minute / 60.0
         base = 40.0 + 5.0 * np.sin(np.pi * (hour - 3) / 12.0)
         hp = np.where((hour >= 6.0) & (hour <= 18.0), np.sin(np.pi * (hour - 6.0) / 12.0) * 55.0, 10.0)
@@ -330,27 +333,30 @@ def get_case3_paula_dutch_site_preset() -> BaselinePreset:
             "P_Load_kW": p
         })
 
+    # Official 2025 Stedin Netbeheer (Rotterdam) Trafo MS/LS (51 t/m 150 kW) rates:
+    # GTV: EUR 47.22/kW/yr = EUR 3.9350/kW/mo | kW-max: EUR 3.1000/kW/mo
+    # Standing fees: EUR 164.30/yr + EUR 441.00/yr = EUR 605.30/yr = EUR 50.44/mo
     contract_base = Contract(
-        name="Paula WKO Baseline Contract (131.4 kW)",
+        name="Stedin Rotterdam Trafo MS/LS Baseline (110.0 kW Limit / 131.4 kW Peak)",
         currency="EUR",
-        contracted_capacity_kw=131.4,
-        monthly_capacity_tariff=3.50,
-        demand_capacity_tariff=3.50,
+        contracted_capacity_kw=110.0,
+        monthly_capacity_tariff=3.9350,
+        demand_capacity_tariff=3.1000,
         peak_penalty_rate=25.0,
-        default_energy_rate=0.20,
-        base_monthly_fee=75.0,
+        default_energy_rate=0.1400,
+        base_monthly_fee=50.44,
         taxes_and_fees=[{"name": "VAT", "type": "percentage", "value": 21.0}]
     )
 
     contract_bess = Contract(
-        name="Paula WKO With-BESS Contract (110.0 kW Capped)",
+        name="Stedin Rotterdam Trafo MS/LS With-BESS (110.0 kW Capped)",
         currency="EUR",
         contracted_capacity_kw=110.0,
-        monthly_capacity_tariff=3.50,
-        demand_capacity_tariff=3.50,
+        monthly_capacity_tariff=3.9350,
+        demand_capacity_tariff=3.1000,
         peak_penalty_rate=25.0,
-        default_energy_rate=0.20,
-        base_monthly_fee=75.0,
+        default_energy_rate=0.1400,
+        base_monthly_fee=50.44,
         taxes_and_fees=[{"name": "VAT", "type": "percentage", "value": 21.0}]
     )
 
@@ -379,10 +385,10 @@ def get_case3_paula_dutch_site_preset() -> BaselinePreset:
 
     return BaselinePreset(
         key="paula_dutch_wko_site",
-        title="Case 3: Paula Dutch Site (28-Day WKO / 110 kW Contract Limit)",
+        title="Case 3: Rotterdam / Paula Dutch Site (Stedin 28-Day WKO / 110 kW Limit)",
         description=(
-            "Dutch 28-day WKO heat pump facility with 131.4 kW peak demand and a 110.0 kW "
-            "contracted grid capacity limit (+21.4 kW peak overload)."
+            "Rotterdam / Dutch 28-day WKO heat pump facility (Stedin Netbeheer Trafo MS/LS) "
+            "with 131.4 kW peak demand against a 110.0 kW contracted grid capacity limit (+21.4 kW peak overload)."
         ),
         grid_limit_kw=110.0,
         load_df=load_df,
@@ -391,14 +397,123 @@ def get_case3_paula_dutch_site_preset() -> BaselinePreset:
         bess_config=bess_cfg,
         avoided_grid_upgrade_capex=35000.0,
         avoided_monthly_transformer_rent=0.0,
-        notes="Paula's 28-day WKO benchmark for 1:1 Excel validation and deficit quantification."
+        notes="Rotterdam (Stedin Netbeheer) 28-day WKO benchmark for 1:1 Excel validation and 4-Pillar bill comparison."
+    )
+
+
+def get_case4_edemsa_salentein_preset() -> BaselinePreset:
+    """
+    Case 4: EDEMSA Mendoza T2 RMT (Bodegas Salentein - 430 kW Limit vs. 691 kW Peak).
+
+    Single-Utility integrated tariff in ARS:
+      - Cargo Fijo (Standing Charge): ARS 514,145.55/month
+      - Cargo por Uso de Red (Contracted Capacity): ARS 40,607.05/kW/month
+      - Cargo por Consumo de Potencia (Peak Demand): ARS 8,554.44/kW/month
+      - Exceso de Potencia (Overload Penalty > 430 kW): ARS 40,607.05/kW/month
+      - VAT: 27.0%
+    """
+    if synthesize_edemsa_salentein_load_profile_2025:
+        load_obj = synthesize_edemsa_salentein_load_profile_2025()
+        load_df = pd.DataFrame({
+            "timestamp": load_obj.timestamps,
+            "Total_Demand_kW": load_obj.power_kw,
+            "P_Load_kW": load_obj.power_kw
+        })
+    elif synthesize_benchmark_load_profile_2025:
+        load_obj = synthesize_benchmark_load_profile_2025(
+            profile_type="commercial_hvac",
+            nominal_peak_kw=691.0
+        )
+        load_df = pd.DataFrame({
+            "timestamp": load_obj.timestamps,
+            "Total_Demand_kW": load_obj.power_kw,
+            "P_Load_kW": load_obj.power_kw
+        })
+    else:
+        ts = pd.date_range("2025-01-01 00:00:00", periods=35040, freq="15min")
+        base = 180.0 + 70.0 * np.sin(np.linspace(0, 365 * 2 * np.pi, 35040))
+        hour = ts.hour.to_numpy()
+        workday = (ts.dayofweek < 5).astype(float)
+        day_peak = workday * np.where((hour >= 8) & (hour <= 19), 300.0, 0.0)
+        spikes = np.where(np.random.RandomState(77).rand(35040) > 0.985, 141.0, 0.0)
+        p = np.clip(base + day_peak + spikes, 60.0, 691.0)
+        load_df = pd.DataFrame({
+            "timestamp": ts,
+            "Total_Demand_kW": p,
+            "P_Load_kW": p
+        })
+
+    contract_base = Contract(
+        name="EDEMSA T2 RMT Baseline (430 kW Limit / 691 kW Peak)",
+        currency="ARS",
+        contracted_capacity_kw=430.0,
+        monthly_capacity_tariff=40607.05,
+        demand_capacity_tariff=8554.44,
+        peak_penalty_rate=40607.05,
+        default_energy_rate=84.50,
+        base_monthly_fee=514145.55,
+        taxes_and_fees=[{"name": "VAT", "type": "percentage", "value": 27.0}]
+    )
+
+    contract_bess = Contract(
+        name="EDEMSA T2 RMT With-BESS (430 kW Capped - Zero Exceso)",
+        currency="ARS",
+        contracted_capacity_kw=430.0,
+        monthly_capacity_tariff=40607.05,
+        demand_capacity_tariff=8554.44,
+        peak_penalty_rate=40607.05,
+        default_energy_rate=84.50,
+        base_monthly_fee=514145.55,
+        taxes_and_fees=[{"name": "VAT", "type": "percentage", "value": 27.0}]
+    )
+
+    bess_cfg = BESSConfig(
+        capacity_kwh=600.0,
+        unit_count=6,
+        unit_capacity_kwh=100.0,
+        battery_chemistry="LFP (Lithium Iron Phosphate - Standard)",
+        max_charge_power_kw=300.0,
+        max_discharge_power_kw=300.0,
+        round_trip_efficiency_pct=90.0,
+        soc_min_pct=10.0,
+        soc_max_pct=95.0,
+        initial_soc_pct=90.0,
+        max_dod_pct=85.0,
+        dispatch_strategy="peak_shaving",
+        peak_shaving_threshold_kw=430.0,
+        allow_grid_charging=True,
+        currency="ARS",
+        cost_per_kwh=350000.0,
+        fixed_installation_cost=8000000.0,
+        annual_om_pct=1.5,
+        cell_replacement_year=10,
+        cell_replacement_cost_pct=50.0
+    )
+
+    return BaselinePreset(
+        key="edemsa_salentein_t2_rmt",
+        title="Case 4: EDEMSA Mendoza T2 RMT (Bodegas Salentein - 430 kW Limit)",
+        description=(
+            "Argentine Single-Utility (EDEMSA T2 RMT) winery facility with 691.0 kW peak demand "
+            "against a 430.0 kW contracted limit (+261.0 kW Exceso de Potencia @ ARS 40,607.05/kW/mo)."
+        ),
+        grid_limit_kw=430.0,
+        load_df=load_df,
+        contract_baseline=contract_base,
+        contract_bess=contract_bess,
+        bess_config=bess_cfg,
+        avoided_grid_upgrade_capex=0.0,
+        avoided_monthly_transformer_rent=0.0,
+        notes="Integrated Single-Utility EDEMSA T2 RMT benchmark with Exceso de Potencia elimination."
     )
 
 
 def load_preset_by_key(preset_key: str) -> BaselinePreset:
     """Returns the requested preset instance."""
     p_lower = preset_key.lower()
-    if "paula" in p_lower or "case 3" in p_lower or "wko" in p_lower:
+    if "edemsa" in p_lower or "salentein" in p_lower or "case 4" in p_lower:
+        return get_case4_edemsa_salentein_preset()
+    if "paula" in p_lower or "rotterdam" in p_lower or "case 3" in p_lower or "wko" in p_lower:
         return get_case3_paula_dutch_site_preset()
     if "enexis" in p_lower or "case 2" in p_lower:
         return get_case2_enexis_commercial_preset()
