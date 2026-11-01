@@ -69,8 +69,9 @@ def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
         title=dict(
             text="<b>Cost Component Distribution</b>",
             font=dict(size=14, color="#F8FAFC"),
-            x=0.05,
-            y=0.96
+            x=0.01,
+            y=0.98,
+            xanchor="left",
         ),
         legend=dict(
             orientation="h",
@@ -80,7 +81,7 @@ def create_cost_donut_figure(breakdown: FinancialCostBreakdown) -> go.Figure:
             x=0.5,
             font=dict(size=11)
         ),
-        margin=dict(l=10, r=10, t=35, b=60),
+        margin=dict(l=15, r=15, t=55, b=60),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
         height=370
@@ -199,7 +200,10 @@ def create_monthly_payment_series_figure(
         barmode="stack",
         title=dict(
             text="<b>Monthly Payment Schedule across Duration</b>",
-            font=dict(size=15, color="#F8FAFC")
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.01,
+            y=0.98,
+            xanchor="left",
         ),
         xaxis=dict(
             title="Billing Period",
@@ -213,11 +217,11 @@ def create_monthly_payment_series_figure(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
+            y=1.10,
+            xanchor="left",
+            x=0.01
         ),
-        margin=dict(l=40, r=20, t=60, b=40),
+        margin=dict(l=40, r=20, t=90, b=40),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
         height=380
@@ -339,7 +343,10 @@ def create_tou_schedule_diurnal_figure(
         template="plotly_dark",
         title=dict(
             text="<b>Diurnal 24-Hour Load Profile & Time-of-Use (TOU) Windows</b>",
-            font=dict(size=15, color="#F8FAFC")
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.01,
+            y=0.98,
+            xanchor="left",
         ),
         xaxis=dict(
             title="Time of Day (HH:MM)",
@@ -356,14 +363,14 @@ def create_tou_schedule_diurnal_figure(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
+            y=1.10,
+            xanchor="left",
+            x=0.01
         ),
-        margin=dict(l=40, r=20, t=60, b=40),
+        margin=dict(l=40, r=20, t=90, b=40),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
-        height=350,
+        height=360,
         hovermode="x unified"
     )
 
@@ -482,7 +489,10 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
         template="plotly_dark",
         title=dict(
             text=f"<b>15-Year Long-Term Cost Structure & Lifecycle Projection ({years[0]} – {years[-1]})</b>",
-            font=dict(size=15, color="#F8FAFC")
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.01,
+            y=0.98,
+            xanchor="left",
         ),
         barmode="stack",
         xaxis=dict(
@@ -508,11 +518,11 @@ def create_15_year_lifecycle_cost_figure(result: Any, start_year: int = 2025) ->
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5
+            y=1.10,
+            xanchor="left",
+            x=0.01
         ),
-        margin=dict(l=50, r=60, t=80, b=40),
+        margin=dict(l=50, r=60, t=90, b=40),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
         height=450,
@@ -557,8 +567,9 @@ def create_supplier_benchmark_figure(benchmark_costs: Dict[str, float], currency
         title=dict(
             text="<b>Pure Supplier Cost Benchmark (3 Pricing Models)</b>",
             font=dict(size=14, color="#F8FAFC"),
-            x=0.02,
-            y=0.95
+            x=0.01,
+            y=0.98,
+            xanchor="left",
         ),
         xaxis=dict(
             title=f"Total Supplier Cost (Net {currency})",
@@ -569,7 +580,7 @@ def create_supplier_benchmark_figure(benchmark_costs: Dict[str, float], currency
             autorange="reversed",
             tickfont=dict(size=12)
         ),
-        margin=dict(l=20, r=20, t=45, b=35),
+        margin=dict(l=20, r=20, t=55, b=35),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
         height=260,
@@ -623,8 +634,9 @@ def create_dynamic_price_consumption_figure(
         title=dict(
             text=f"<b>Dynamic Correlation: Power Demand (kW) vs. EPEX Spot Price ({currency}/MWh)</b> {title_suffix}",
             font=dict(size=14, color="#F8FAFC"),
-            x=0.02,
-            y=0.96
+            x=0.01,
+            y=0.98,
+            xanchor="left",
         ),
         xaxis=dict(
             title="Date / Time (Europe/Amsterdam)",
@@ -649,14 +661,14 @@ def create_dynamic_price_consumption_figure(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5
+            y=1.10,
+            xanchor="left",
+            x=0.01
         ),
-        margin=dict(l=40, r=50, t=55, b=40),
+        margin=dict(l=40, r=50, t=90, b=40),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
-        height=320,
+        height=340,
         hovermode="x unified"
     )
 
@@ -727,8 +739,9 @@ def create_dso_monthly_peak_figure(
         title=dict(
             text="<b>Monthly Peak Demand vs. Reserved Grid Capacity</b>",
             font=dict(size=14, color="#F8FAFC"),
-            x=0.02,
-            y=0.96
+            x=0.01,
+            y=0.98,
+            xanchor="left",
         ),
         xaxis=dict(
             title="Billing Month",
@@ -742,15 +755,233 @@ def create_dso_monthly_peak_figure(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5
+            y=1.10,
+            xanchor="left",
+            x=0.01
         ),
-        margin=dict(l=40, r=30, t=55, b=40),
+        margin=dict(l=40, r=30, t=90, b=40),
         plot_bgcolor="#0B0F19",
         paper_bgcolor="#0B0F19",
-        height=320,
+        height=340,
         hovermode="closest"
+    )
+
+    return fig
+
+
+def create_dso_monthly_cost_bar_figure(
+    dso_monthly_results: List[Any],
+    currency: str = "EUR",
+    is_enabled: bool = True,
+) -> go.Figure:
+    """
+    Constructs an interactive 12-month stacked bar chart displaying the monthly progression
+    and breakdown of DSO network charges (Standing Fee, Contracted Capacity, Peak Demand,
+    Volumetric Transport/Energy, Excess Capacity Penalty, and Regulatory Adjustments).
+    """
+    month_names = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ]
+    n = len(dso_monthly_results)
+    months = month_names[:n]
+    mult = 1.0 if is_enabled else 0.0
+
+    standing_fees = [
+        round((getattr(r, "fixed_connection_fee", 0.0) + getattr(r, "fixed_transport_fee", 0.0) + getattr(r, "cable_surcharge", 0.0)) * mult, 2)
+        for r in dso_monthly_results
+    ]
+    capacity_fees = [round(getattr(r, "contracted_capacity_fee", 0.0) * mult, 2) for r in dso_monthly_results]
+    peak_fees = [round(getattr(r, "peak_demand_fee", 0.0) * mult, 2) for r in dso_monthly_results]
+    transport_fees = [round(getattr(r, "volumetric_transport_fee", 0.0) * mult, 2) for r in dso_monthly_results]
+    excess_penalties = [round(getattr(r, "excess_penalty_fee", 0.0) * mult, 2) for r in dso_monthly_results]
+    reg_adjustments = [round(getattr(r, "regulatory_adjustments_fee", 0.0) * mult, 2) for r in dso_monthly_results]
+    subtotal_net = [round(getattr(r, "subtotal_dso_net", 0.0) * mult, 2) for r in dso_monthly_results]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=standing_fees,
+            name="Standing Fee",
+            marker_color="#8B5CF6",
+            hovertemplate=f"<b>Standing Fee</b>: {currency} %{{y:,.2f}}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=capacity_fees,
+            name="Contracted Capacity",
+            marker_color="#F59E0B",
+            hovertemplate=f"<b>Contracted Capacity</b>: {currency} %{{y:,.2f}}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=peak_fees,
+            name="Peak Demand Fee",
+            marker_color="#FB923C",
+            hovertemplate=f"<b>Peak Demand Fee</b>: {currency} %{{y:,.2f}}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=transport_fees,
+            name="Transport / Energy",
+            marker_color="#06B6D4",
+            hovertemplate=f"<b>Transport / Energy</b>: {currency} %{{y:,.2f}}<extra></extra>",
+        )
+    )
+
+    if any(p > 0.0 for p in excess_penalties):
+        fig.add_trace(
+            go.Bar(
+                x=months,
+                y=excess_penalties,
+                name="Excess Penalty",
+                marker_color="#EF4444",
+                hovertemplate=f"<b>Excess Penalty</b>: {currency} %{{y:,.2f}}<extra></extra>",
+            )
+        )
+
+    if any(abs(a) > 0.005 for a in reg_adjustments):
+        fig.add_trace(
+            go.Bar(
+                x=months,
+                y=reg_adjustments,
+                name="Regulatory Adj.",
+                marker_color="#10B981",
+                hovertemplate=f"<b>Regulatory Adj.</b>: {currency} %{{y:,.2f}}<extra></extra>",
+            )
+        )
+
+    fig.add_trace(
+        go.Scatter(
+            x=months,
+            y=subtotal_net,
+            mode="lines+markers",
+            name="Subtotal DSO Net",
+            line=dict(color="#FFFFFF", width=2.2),
+            marker=dict(size=6, color="#FFFFFF"),
+            hovertemplate=f"<b>Subtotal DSO Net</b>: {currency} %{{y:,.2f}}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        barmode="relative",
+        title=dict(
+            text="<b>Monthly Grid Network (DSO) Cost Progression</b>",
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.01,
+            y=0.98,
+            xanchor="left",
+        ),
+        xaxis=dict(
+            title="Billing Month",
+            gridcolor="#1E293B",
+        ),
+        yaxis=dict(
+            title=f"Monthly DSO Cost ({currency})",
+            gridcolor="#1E293B",
+            zerolinecolor="#334155",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.10,
+            xanchor="left",
+            x=0.01,
+            font=dict(size=10.5),
+        ),
+        margin=dict(l=45, r=20, t=90, b=40),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=390,
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_dso_cost_donut_figure(
+    dso_summary: Dict[str, Any],
+    currency: str = "EUR",
+    is_enabled: bool = True,
+) -> go.Figure:
+    """
+    Constructs a donut chart showing the annual cost component share of the DSO network bill.
+    """
+    mult = 1.0 if is_enabled else 0.0
+    standing_val = round(
+        (float(dso_summary.get("total_fixed_connection_annual", 0.0)) + float(dso_summary.get("total_fixed_transport_annual", 0.0))) * mult,
+        2,
+    )
+    cap_val = round(float(dso_summary.get("total_capacity_fee_annual", 0.0)) * mult, 2)
+    peak_val = round(float(dso_summary.get("total_peak_demand_fee_annual", 0.0)) * mult, 2)
+    trans_val = round(float(dso_summary.get("total_volumetric_fee_annual", 0.0)) * mult, 2)
+    pen_val = round(float(dso_summary.get("total_excess_penalty_annual", 0.0)) * mult, 2)
+    reg_val = round(max(0.0, float(dso_summary.get("total_regulatory_adjustments_annual", 0.0))) * mult, 2)
+
+    raw_items = [
+        ("Standing Fees", standing_val, "#8B5CF6"),
+        ("Contracted Capacity", cap_val, "#F59E0B"),
+        ("Peak Demand Fee", peak_val, "#FB923C"),
+        ("Transport / Energy", trans_val, "#06B6D4"),
+        ("Excess Penalty", pen_val, "#EF4444"),
+        ("Regulatory Adj.", reg_val, "#10B981"),
+    ]
+    active_items = [(lbl, val, col) for lbl, val, col in raw_items if val > 0.0]
+
+    if not active_items:
+        labels = ["No DSO Cost Data"]
+        values = [1.0]
+        colors = ["#64748B"]
+    else:
+        labels = [x[0] for x in active_items]
+        values = [x[1] for x in active_items]
+        colors = [x[2] for x in active_items]
+
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.58,
+                textinfo="percent",
+                textposition="inside",
+                insidetextorientation="horizontal",
+                marker=dict(colors=colors, line=dict(color="#0B0F19", width=2)),
+                hovertemplate=f"<b>%{{label}}</b><br>Annual: {currency} %{{value:,.2f}}<br>Share: %{{percent}}<extra></extra>",
+            )
+        ]
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(
+            text="<b>DSO Network Cost Component Share (Annual)</b>",
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.01,
+            y=0.98,
+            xanchor="left",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.05,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=11),
+        ),
+        margin=dict(l=15, r=15, t=55, b=60),
+        plot_bgcolor="#0B0F19",
+        paper_bgcolor="#0B0F19",
+        height=340,
     )
 
     return fig

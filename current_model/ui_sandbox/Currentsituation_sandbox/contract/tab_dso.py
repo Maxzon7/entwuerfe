@@ -40,6 +40,8 @@ try:
     )
     from ui_sandbox.Currentsituation_sandbox.contract.charts import (
         create_dso_monthly_peak_figure,
+        create_dso_monthly_cost_bar_figure,
+        create_dso_cost_donut_figure,
     )
 except ImportError:
     from current_model.ui_sandbox.Currentsituation_sandbox.engine.config_and_models import (
@@ -57,6 +59,8 @@ except ImportError:
     )
     from current_model.ui_sandbox.Currentsituation_sandbox.contract.charts import (
         create_dso_monthly_peak_figure,
+        create_dso_monthly_cost_bar_figure,
+        create_dso_cost_donut_figure,
     )
 
 
@@ -81,8 +85,8 @@ def _render_sub_ledger_html(
             f'<tr style="background-color: {bg}; border-bottom: 1px solid #334155;">'
             f'<td style="padding: 8px 10px; color: #f1f5f9; font-size: 0.85rem; font-weight: 500;">{r["item"]}</td>'
             f'<td style="padding: 8px 10px; color: #cbd5e1; font-size: 0.82rem; font-family: monospace;">{calc_str}</td>'
-            f'<td style="padding: 8px 10px; text-align: right; color: #e2e8f0; font-size: 0.85rem;">{currency_code} {mo_val}</td>'
-            f'<td style="padding: 8px 10px; text-align: right; color: #f8fafc; font-weight: 600; font-size: 0.86rem;">{currency_code} {ann_val}</td>'
+            f'<td style="padding: 8px 10px; text-align: right; color: #e2e8f0; font-size: 0.85rem; white-space: nowrap;">{currency_code} {mo_val}</td>'
+            f'<td style="padding: 8px 10px; text-align: right; color: #f8fafc; font-weight: 600; font-size: 0.86rem; white-space: nowrap;">{currency_code} {ann_val}</td>'
             f'</tr>'
         )
     body_rows = "\n".join(rows_html_list)
@@ -103,18 +107,18 @@ def _render_sub_ledger_html(
         f'<table style="width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">\n'
         f'<thead>\n'
         f'<tr style="background-color: #090d16; border-bottom: 1px solid #475569; color: #94a3b8; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em;">'
-        f'<th style="padding: 8px 10px; text-align: left; width: 34%;">Line Item</th>'
-        f'<th style="padding: 8px 10px; text-align: left; width: 34%;">Calculation (Quantity &times; Rate)</th>'
-        f'<th style="padding: 8px 10px; text-align: right; width: 16%;">Monthly ({currency_code})</th>'
-        f'<th style="padding: 8px 10px; text-align: right; width: 16%;">Annual ({currency_code})</th>'
+        f'<th style="padding: 8px 10px; text-align: left; width: 32%; white-space: nowrap;">Line Item</th>'
+        f'<th style="padding: 8px 10px; text-align: left; width: 32%; white-space: nowrap;">Calculation (Quantity &times; Rate)</th>'
+        f'<th style="padding: 8px 10px; text-align: right; width: 18%; white-space: nowrap;">Monthly ({currency_code})</th>'
+        f'<th style="padding: 8px 10px; text-align: right; width: 18%; white-space: nowrap;">Annual ({currency_code})</th>'
         f'</tr>\n'
         f'</thead>\n'
         f'<tbody>\n'
         f'{body_rows}\n'
         f'<tr style="background-color: #0b1329; border-top: 2px solid {accent_color}; font-weight: 700;">'
-        f'<td colspan="2" style="padding: 10px 10px; text-align: right; color: {accent_color}; font-size: 0.86rem; text-transform: uppercase;">{subtotal_label}</td>'
-        f'<td style="padding: 10px 10px; text-align: right; color: {accent_color}; font-size: 0.90rem;">{currency_code} {sub_mo:,.2f}</td>'
-        f'<td style="padding: 10px 10px; text-align: right; color: #ffffff; font-size: 0.96rem;">{currency_code} {sub_ann:,.2f}</td>'
+        f'<td colspan="2" style="padding: 10px 10px; text-align: right; color: {accent_color}; font-size: 0.86rem; text-transform: uppercase; white-space: nowrap;">{subtotal_label}</td>'
+        f'<td style="padding: 10px 10px; text-align: right; color: {accent_color}; font-size: 0.90rem; white-space: nowrap;">{currency_code} {sub_mo:,.2f}</td>'
+        f'<td style="padding: 10px 10px; text-align: right; color: #ffffff; font-size: 0.96rem; white-space: nowrap;">{currency_code} {sub_ann:,.2f}</td>'
         f'</tr>\n'
         f'</tbody>\n'
         f'</table>\n'
@@ -297,13 +301,13 @@ def render_dso_tab(
                     disabled=not is_enabled,
                 )
                 demand_tariff = st.number_input(
-                    f"Measured Monthly Peak Rate ({currency_code}/kW/month):",
+                    f"Peak-Hours Demand Rate (Pico/HT) ({currency_code}/kW/month):",
                     min_value=0.0,
                     value=float(preset_data.get("rate_peak_monthly", 3.7100)),
                     step=0.01,
                     format="%.4f",
                     key=f"{key_prefix}_dso_rate_peak_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help=f"Monthly fee billed per highest 15-minute peak demand recorded in that month ({currency_code}/kW/month)",
+                    help=f"Monthly fee billed per highest 15-minute peak demand recorded in that month or Pico window ({currency_code}/kW/month)",
                     disabled=not is_enabled,
                 )
                 max_physical_kw = st.number_input(
@@ -340,8 +344,52 @@ def render_dso_tab(
             default_enable_excess = bool(preset_data.get("enable_excess_capacity_penalty", False))
             default_pico_only = bool(preset_data.get("bill_peak_demand_on_peak_tou_only", False))
             default_reg_adj = float(preset_data.get("regulatory_adjustments_monthly", 0.0))
-            with st.expander(":material/settings: Reactive Power, Pass-Through Adjustments & Capacity Breach Rules", expanded=default_enable_excess):
-                q1, q2, q3 = st.columns(3)
+
+            st.markdown("###### C. Capacity Breach, Pass-Through Adjustments & Billing Rules")
+            c_pen, c_adj = st.columns(2)
+            with c_pen:
+                penalty_rate = st.number_input(
+                    f"Exceedance / Exceso de Potencia Penalty Rate ({currency_code}/kW/month):",
+                    min_value=0.0,
+                    value=float(preset_data.get("peak_penalty_rate_kw", 0.2500)),
+                    step=0.05,
+                    format="%.4f",
+                    key=f"{key_prefix}_dso_penalty_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help=f"Penalty rate billed per kW of peak demand exceeding contracted capacity ({currency_code}/kW/month)",
+                    disabled=not is_enabled,
+                )
+            with c_adj:
+                reg_adj_monthly = st.number_input(
+                    f"Regulatory & Seasonal Pass-Through Adjustments ({currency_code}/month):",
+                    value=default_reg_adj,
+                    step=100.0,
+                    format="%.2f",
+                    key=f"{key_prefix}_dso_reg_adj_{selected_dso_company}_{selected_tier}_v{form_version}",
+                    help=f"Monthly statutory pass-through adjustments (e.g., EDEMSA GUDI / seasonal stabilization net pass-through in {currency_code}/month)",
+                    disabled=not is_enabled,
+                )
+
+            adjust_breach = st.checkbox(
+                "Adjust contracted capacity billing to measured peak during breach months (NL Rule)",
+                value=not default_enable_excess,
+                key=f"{key_prefix}_dso_adjust_breach_{selected_dso_company}_{selected_tier}",
+                disabled=not is_enabled,
+            )
+            enable_excess_penalty = st.checkbox(
+                "Bill explicit Excess Capacity Penalty (Exceso de Potencia = Excess kW × Penalty Rate)",
+                value=default_enable_excess,
+                key=f"{key_prefix}_dso_excess_pen_{selected_dso_company}_{selected_tier}",
+                disabled=not is_enabled,
+            )
+            bill_pico_only = st.checkbox(
+                "Bill Peak Demand Fee (Pos 2.3) strictly on Peak/Pico TOU window demand (EDEMSA T2 Rule)",
+                value=default_pico_only,
+                key=f"{key_prefix}_dso_pico_only_{selected_dso_company}_{selected_tier}",
+                disabled=not is_enabled,
+            )
+
+            with st.expander(":material/settings: Reactive Power Settings (Optional)", expanded=False):
+                q1, q2 = st.columns(2)
                 with q1:
                     reactive_tariff = st.number_input(
                         f"Reactive Power Rate ({currency_code}/kVARh):",
@@ -363,45 +411,6 @@ def render_dso_tab(
                         key=f"{key_prefix}_dso_cosphi_{selected_dso_company}_{selected_tier}_v{form_version}",
                         disabled=not is_enabled,
                     )
-                with q3:
-                    penalty_rate = st.number_input(
-                        f"Exceedance Penalty ({currency_code}/kW/mo):",
-                        min_value=0.0,
-                        value=float(preset_data.get("peak_penalty_rate_kw", 0.2500)),
-                        step=0.05,
-                        format="%.4f",
-                        key=f"{key_prefix}_dso_penalty_{selected_dso_company}_{selected_tier}_v{form_version}",
-                        disabled=not is_enabled,
-                    )
-
-                reg_adj_monthly = st.number_input(
-                    f"Regulatory & Seasonal Pass-Through Adjustments ({currency_code}/month):",
-                    value=default_reg_adj,
-                    step=100.0,
-                    format="%.2f",
-                    key=f"{key_prefix}_dso_reg_adj_{selected_dso_company}_{selected_tier}_v{form_version}",
-                    help=f"Monthly statutory pass-through adjustments (e.g., EDEMSA GUDI / seasonal stabilization net pass-through in {currency_code}/month)",
-                    disabled=not is_enabled,
-                )
-
-                adjust_breach = st.checkbox(
-                    "Adjust contracted capacity billing to measured peak during breach months (NL Rule)",
-                    value=not default_enable_excess,
-                    key=f"{key_prefix}_dso_adjust_breach_{selected_dso_company}_{selected_tier}",
-                    disabled=not is_enabled,
-                )
-                enable_excess_penalty = st.checkbox(
-                    "Bill explicit Excess Capacity Penalty (Exceso de Potencia = Excess kW × Penalty Rate)",
-                    value=default_enable_excess,
-                    key=f"{key_prefix}_dso_excess_pen_{selected_dso_company}_{selected_tier}",
-                    disabled=not is_enabled,
-                )
-                bill_pico_only = st.checkbox(
-                    "Bill Peak Demand Fee (Pos 2.3) strictly on Peak/Pico TOU window demand (EDEMSA T2 Rule)",
-                    value=default_pico_only,
-                    key=f"{key_prefix}_dso_pico_only_{selected_dso_company}_{selected_tier}",
-                    disabled=not is_enabled,
-                )
 
             submitted_dso = st.form_submit_button(
                 "Apply Grid Network Tariff",
@@ -611,37 +620,59 @@ def render_dso_tab(
 
     # ----------------------------------------------------------------------------------
     # Zone C (Bottom Full Width): 3. Monthly Breakdown & Visual Diagnostics
+    #   - Main Visible Level: 2-Column Side-by-Side (Left: DSO Cost Stacked Bar | Right: 12-Month DSO Table)
+    #   - Expander Below: Detailed Visual Diagnostics (DSO Cost Share Donut & Peak vs. Contracted Capacity)
     # ----------------------------------------------------------------------------------
     st.markdown("---")
-    with st.expander(":material/analytics: 3. Monthly Breakdown & Visual Diagnostics (Grid Network DSO)", expanded=is_enabled):
-        col_c_chart, col_c_table = st.columns([1.1, 1.2], gap="large")
-        with col_c_chart:
+    st.markdown("##### :material/analytics: 3. Monthly Grid Network (DSO) Cost Progression & Statement")
+
+    col_c_chart, col_c_table = st.columns([1.15, 1.25], gap="large")
+    with col_c_chart:
+        fig_dso_bar = create_dso_monthly_cost_bar_figure(
+            dso_monthly_results=dso_monthly_results,
+            currency=currency_code,
+            is_enabled=is_enabled,
+        )
+        st.plotly_chart(fig_dso_bar, use_container_width=True, key=f"{key_prefix}_dso_zone_c_cost_bar_chart")
+
+    with col_c_table:
+        st.markdown("###### 12-Month Grid Network (DSO) Statement")
+        month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        dso_rows = []
+        for r in dso_monthly_results:
+            m_label = month_names[r.month_index - 1]
+            mult = 1.0 if is_enabled else 0.0
+            row_dict: Dict[str, Any] = {
+                "Month": m_label,
+                "Measured Peak (kW)": f"{r.measured_peak_demand_kw:,.1f}",
+                "Billed Cap (kW)": f"{r.billed_capacity_kw:,.1f}",
+                f"Standing ({currency_code})": f"{(r.fixed_connection_fee + r.fixed_transport_fee) * mult:,.2f}",
+                f"Capacity ({currency_code})": f"{r.contracted_capacity_fee * mult:,.2f}",
+                f"Peak Fee ({currency_code})": f"{r.peak_demand_fee * mult:,.2f}",
+                f"Transport ({currency_code})": f"{r.volumetric_transport_fee * mult:,.2f}",
+            }
+            if enable_excess_penalty or excess_pen_ann > 0.0:
+                row_dict[f"Excess Penalty ({currency_code})"] = f"{r.excess_capacity_kw * penalty_rate * mult:,.2f}"
+            if abs(reg_adj_ann) > 0.005:
+                row_dict[f"Adjustments ({currency_code})"] = f"{getattr(r, 'regulatory_adjustments_fee', 0.0) * mult:,.2f}"
+            row_dict[f"Subtotal Net ({currency_code})"] = f"{r.subtotal_dso_net * mult:,.2f}"
+            dso_rows.append(row_dict)
+        st.dataframe(pd.DataFrame(dso_rows), use_container_width=True, hide_index=True)
+
+    with st.expander(":material/pie_chart: Detailed Visual Diagnostics (DSO Cost Share Donut & Peak vs. Contracted Capacity)", expanded=False):
+        col_exp_donut, col_exp_peak = st.columns(2, gap="large")
+        with col_exp_donut:
+            fig_dso_donut = create_dso_cost_donut_figure(
+                dso_summary=dso_summary,
+                currency=currency_code,
+                is_enabled=is_enabled,
+            )
+            st.plotly_chart(fig_dso_donut, use_container_width=True, key=f"{key_prefix}_dso_zone_c_donut_chart")
+        with col_exp_peak:
             fig_peak = create_dso_monthly_peak_figure(
                 dso_monthly_results=dso_monthly_results,
                 contracted_capacity_kw=contracted_kw
             )
             st.plotly_chart(fig_peak, use_container_width=True, key=f"{key_prefix}_dso_zone_c_peak_chart")
-
-        with col_c_table:
-            st.markdown("###### 12-Month Grid Network (DSO) Statement")
-            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-            dso_rows = []
-            for r in dso_monthly_results:
-                m_label = month_names[r.month_index - 1]
-                mult = 1.0 if is_enabled else 0.0
-                row_dict: Dict[str, Any] = {
-                    "Month": m_label,
-                    "Measured Peak (kW)": f"{r.measured_peak_demand_kw:,.1f}",
-                    "Billed Cap (kW)": f"{r.billed_capacity_kw:,.1f}",
-                    f"Standing ({currency_code})": f"{(r.fixed_connection_fee + r.fixed_transport_fee) * mult:,.2f}",
-                    f"Capacity ({currency_code})": f"{r.contracted_capacity_fee * mult:,.2f}",
-                    f"Peak Fee ({currency_code})": f"{r.peak_demand_fee * mult:,.2f}",
-                    f"Transport ({currency_code})": f"{r.volumetric_transport_fee * mult:,.2f}",
-                }
-                if enable_excess_penalty or excess_pen_ann > 0.0:
-                    row_dict[f"Excess Penalty ({currency_code})"] = f"{r.excess_capacity_kw * penalty_rate * mult:,.2f}"
-                row_dict[f"Subtotal Net ({currency_code})"] = f"{r.subtotal_dso_net * mult:,.2f}"
-                dso_rows.append(row_dict)
-            st.dataframe(pd.DataFrame(dso_rows), use_container_width=True, hide_index=True)
 
     return dso_tariff

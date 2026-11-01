@@ -43,6 +43,13 @@ try:
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
         synthesize_edemsa_salentein_load_profile_2025,
+        extract_monthly_consumption_records,
+    )
+    from ui_sandbox.Currentsituation_sandbox.engine.dso_accounting import (
+        calculate_dso_accounting_2025,
+    )
+    from ui_sandbox.Currentsituation_sandbox.engine.commercial_accounting import (
+        calculate_commercial_accounting_2025,
     )
     from ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
         calculate_status_quo_master_2025,
@@ -73,6 +80,13 @@ except ImportError:
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
         synthesize_edemsa_salentein_load_profile_2025,
+        extract_monthly_consumption_records,
+    )
+    from current_model.ui_sandbox.Currentsituation_sandbox.engine.dso_accounting import (
+        calculate_dso_accounting_2025,
+    )
+    from current_model.ui_sandbox.Currentsituation_sandbox.engine.commercial_accounting import (
+        calculate_commercial_accounting_2025,
     )
     from current_model.ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
         calculate_status_quo_master_2025,
@@ -317,114 +331,125 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
     - Explicit Simulation Assumptions Register Banner
     - 5 dedicated sub-tabs delegated to modular files (disabled pillars are visually grayed out)
     """
-    # --- Top Control Bar: Reference Presets & Market Structure Mode ---
-    with st.container(border=True):
-        st.markdown("##### :material/tune: Market Structure Mode & Reference Benchmark Quick-Loader")
-        ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4 = st.columns([2.4, 1.0, 2.2, 0.9])
+    # --- Top Control Bar: Clean Separation Between General Market Settings & Demo Presets ---
+    col_top_market, col_top_preset = st.columns([1.35, 1.0], gap="medium")
 
-        with ctrl_c1:
-            preset_options = [
-                "Standard Enexis/Liander Commercial (250 kW Peak / 250 kW Limit)",
-                "Preset A: Rotterdam / Dutch WKO Site (Stedin Region - 110 kW Limit)",
-                "Preset B: EDEMSA Mendoza T2 RMT (Bodegas Salentein - 430 kW Limit)"
-            ]
-            selected_preset = st.selectbox(
-                "Reference Benchmark Preset",
-                options=preset_options,
-                index=0,
-                key=f"{key_prefix}_ref_preset_sel",
-                help="Select a verified utility benchmark (auto-applies on change, or click 'Load Preset' to reset all fields)."
-            )
-            last_applied_key = f"{key_prefix}_last_applied_ref_preset"
-            if last_applied_key not in st.session_state:
-                st.session_state[last_applied_key] = selected_preset
-            elif st.session_state[last_applied_key] != selected_preset:
-                st.session_state[last_applied_key] = selected_preset
-                _apply_reference_preset(selected_preset, key_prefix=key_prefix)
-                st.rerun()
+    with col_top_market:
+        with st.container(border=True):
+            st.markdown("##### :material/tune: General Market Structure & Currency Settings")
+            ctrl_m1, ctrl_m2 = st.columns([2.6, 1.0])
+            with ctrl_m1:
+                market_mode_options = [
+                    "Unbundled 4-Pillar Market (Netherlands / EU)",
+                    "Integrated Single-Utility Bill (Argentina EDEMSA / Bundled DSO)",
+                    "Custom Pillar Configuration"
+                ]
+                current_mode = st.session_state.get(f"{key_prefix}_market_mode", market_mode_options[0])
+                mode_idx = market_mode_options.index(current_mode) if current_mode in market_mode_options else 0
+                market_mode_label = st.selectbox(
+                    "Market Structure Mode (Tab Gray-Out Control)",
+                    options=market_mode_options,
+                    index=mode_idx,
+                    key=f"{key_prefix}_market_mode",
+                    help=(
+                        "Unbundled 4-Pillar: Separate Retailer, DSO, Metering, and Tax pillars. "
+                        "Integrated Single-Utility: Grays out Retailer & Metering tabs (set to 0.00) while keeping them visible."
+                    )
+                )
 
-        with ctrl_c2:
-            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            if st.button(":material/download_done: Load Preset", use_container_width=True, key=f"{key_prefix}_btn_load_preset"):
-                st.session_state[f"{key_prefix}_last_applied_ref_preset"] = selected_preset
-                _apply_reference_preset(selected_preset, key_prefix=key_prefix)
-                st.rerun()
+            with ctrl_m2:
+                curr_options = ["EUR", "ARS", "USD"]
+                cur_curr = st.session_state.get(f"{key_prefix}_currency_code", "EUR")
+                curr_idx = curr_options.index(cur_curr) if cur_curr in curr_options else 0
+                currency_code = st.selectbox(
+                    "Currency",
+                    options=curr_options,
+                    index=curr_idx,
+                    key=f"{key_prefix}_currency_code"
+                )
 
-        with ctrl_c3:
-            market_mode_options = [
-                "Unbundled 4-Pillar Market (Netherlands / EU)",
-                "Integrated Single-Utility Bill (Argentina EDEMSA / Bundled DSO)",
-                "Custom Pillar Configuration"
-            ]
-            current_mode = st.session_state.get(f"{key_prefix}_market_mode", market_mode_options[0])
-            mode_idx = market_mode_options.index(current_mode) if current_mode in market_mode_options else 0
-            market_mode_label = st.selectbox(
-                "Market Structure Mode (Tab Gray-Out Control)",
-                options=market_mode_options,
-                index=mode_idx,
-                key=f"{key_prefix}_market_mode",
-                help=(
-                    "Unbundled 4-Pillar: Separate Retailer, DSO, Metering, and Tax pillars. "
-                    "Integrated Single-Utility: Grays out Retailer & Metering tabs (set to 0.00) while keeping them visible."
+            # Resolve pillar enablement flags
+            if "Integrated Single-Utility" in market_mode_label:
+                market_mode_code = "single_utility"
+                en_p2_dso = True
+                en_p1_supplier = False
+                en_p3_metering = False
+                en_p4_taxes = True
+                st.caption(
+                    ":material/layers_clear: **Integrated Single-Utility Mode Active:** "
+                    "Tab 2 (*Energy Supply Retailer*) and Pillar 3 (*Metering*) remain visible in the tab bar below "
+                    "but are **grayed out (`[BYPASSED]`)** and evaluate to `0.00`."
                 )
-            )
+            elif "Custom" in market_mode_label:
+                market_mode_code = "custom"
+                chk1, chk2, chk3, chk4 = st.columns(4)
+                with chk1:
+                    en_p2_dso = st.checkbox(
+                        "Pillar 2: DSO",
+                        value=bool(st.session_state.get(f"{key_prefix}_en_p2", True)),
+                        key=f"{key_prefix}_en_p2"
+                    )
+                with chk2:
+                    en_p1_supplier = st.checkbox(
+                        "Pillar 1: Supply",
+                        value=bool(st.session_state.get(f"{key_prefix}_en_p1", True)),
+                        key=f"{key_prefix}_en_p1"
+                    )
+                with chk3:
+                    en_p3_metering = st.checkbox(
+                        "Pillar 3: Metering",
+                        value=bool(st.session_state.get(f"{key_prefix}_en_p3", True)),
+                        key=f"{key_prefix}_en_p3"
+                    )
+                with chk4:
+                    en_p4_taxes = st.checkbox(
+                        "Pillar 4: Taxes",
+                        value=bool(st.session_state.get(f"{key_prefix}_en_p4", True)),
+                        key=f"{key_prefix}_en_p4"
+                    )
+            else:
+                market_mode_code = "unbundled_4_pillar"
+                en_p2_dso = True
+                en_p1_supplier = True
+                en_p3_metering = True
+                en_p4_taxes = True
+                st.caption(
+                    ":material/check_circle: **Unbundled 4-Pillar Mode Active:** "
+                    "All 4 cost pillars (Retailer, Grid Operator DSO, Certified Metering, and Statutory Taxes) are active."
+                )
 
-        with ctrl_c4:
-            curr_options = ["EUR", "ARS", "USD"]
-            cur_curr = st.session_state.get(f"{key_prefix}_currency_code", "EUR")
-            curr_idx = curr_options.index(cur_curr) if cur_curr in curr_options else 0
-            currency_code = st.selectbox(
-                "Currency",
-                options=curr_options,
-                index=curr_idx,
-                key=f"{key_prefix}_currency_code"
-            )
+    with col_top_preset:
+        with st.container(border=True):
+            st.markdown("##### :material/Science: Reference Benchmark Quick-Loader (Demo Presets)")
+            ctrl_p1, ctrl_p2 = st.columns([2.2, 1.0])
+            with ctrl_p1:
+                preset_options = [
+                    "Standard Enexis/Liander Commercial (250 kW Peak / 250 kW Limit)",
+                    "Preset A: Rotterdam / Dutch WKO Site (Stedin Region - 110 kW Limit)",
+                    "Preset B: EDEMSA Mendoza T2 RMT (Bodegas Salentein - 430 kW Limit)"
+                ]
+                selected_preset = st.selectbox(
+                    "Internal Reference Benchmark Preset",
+                    options=preset_options,
+                    index=0,
+                    key=f"{key_prefix}_ref_preset_sel",
+                    help="Select a verified utility benchmark (auto-applies on change, or click 'Load Preset' to reset all fields)."
+                )
+                last_applied_key = f"{key_prefix}_last_applied_ref_preset"
+                if last_applied_key not in st.session_state:
+                    st.session_state[last_applied_key] = selected_preset
+                elif st.session_state[last_applied_key] != selected_preset:
+                    st.session_state[last_applied_key] = selected_preset
+                    _apply_reference_preset(selected_preset, key_prefix=key_prefix)
+                    st.rerun()
 
-        # Resolve pillar enablement flags
-        if "Integrated Single-Utility" in market_mode_label:
-            market_mode_code = "single_utility"
-            en_p2_dso = True
-            en_p1_supplier = False
-            en_p3_metering = False
-            en_p4_taxes = True
-            st.caption(
-                ":material/layers_clear: **Integrated Single-Utility Mode Active:** "
-                "Tab 2 (*Energy Supply Retailer*) and Pillar 3 (*Metering*) remain visible in the tab bar below "
-                "but are **grayed out (`[BYPASSED]`)** and evaluate to `0.00` so all bundled charges are billed via the Utility/DSO."
-            )
-        elif "Custom" in market_mode_label:
-            market_mode_code = "custom"
-            chk1, chk2, chk3, chk4 = st.columns(4)
-            with chk1:
-                en_p2_dso = st.checkbox(
-                    "Enable Pillar 2: Grid Network (DSO)",
-                    value=bool(st.session_state.get(f"{key_prefix}_en_p2", True)),
-                    key=f"{key_prefix}_en_p2"
-                )
-            with chk2:
-                en_p1_supplier = st.checkbox(
-                    "Enable Pillar 1: Energy Supply (Retailer)",
-                    value=bool(st.session_state.get(f"{key_prefix}_en_p1", True)),
-                    key=f"{key_prefix}_en_p1"
-                )
-            with chk3:
-                en_p3_metering = st.checkbox(
-                    "Enable Pillar 3: Metering & Telemetry",
-                    value=bool(st.session_state.get(f"{key_prefix}_en_p3", True)),
-                    key=f"{key_prefix}_en_p3"
-                )
-            with chk4:
-                en_p4_taxes = st.checkbox(
-                    "Enable Pillar 4: Statutory Taxes",
-                    value=bool(st.session_state.get(f"{key_prefix}_en_p4", True)),
-                    key=f"{key_prefix}_en_p4"
-                )
-        else:
-            market_mode_code = "unbundled_4_pillar"
-            en_p2_dso = True
-            en_p1_supplier = True
-            en_p3_metering = True
-            en_p4_taxes = True
+            with ctrl_p2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                if st.button(":material/download_done: Load Preset", use_container_width=True, key=f"{key_prefix}_btn_load_preset"):
+                    st.session_state[f"{key_prefix}_last_applied_ref_preset"] = selected_preset
+                    _apply_reference_preset(selected_preset, key_prefix=key_prefix)
+                    st.rerun()
+            st.caption(":material/info: *Loads calibrated utility tariffs, currency, and reference load profiles.*")
 
     load_series, source_label = _find_or_create_load_series_2025()
 
@@ -475,13 +500,37 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             currency_code=currency_code
         )
 
+    # Pre-compute monthly net arrays for Pillar 2 (DSO) and Pillar 1 (Supplier) so Tab 3 computes percentage levies live
+    monthly_cons_pre = extract_monthly_consumption_records(load_series)
+    if en_p2_dso:
+        dso_res_pre, _ = calculate_dso_accounting_2025(
+            load=load_series,
+            monthly_consumption=monthly_cons_pre,
+            dso_tariff=dso_tariff,
+        )
+        dso_monthly_net_pre = [round(r.subtotal_dso_net, 2) for r in dso_res_pre]
+    else:
+        dso_monthly_net_pre = [0.0] * len(monthly_cons_pre)
+
+    if en_p1_supplier:
+        comm_res_pre, _ = calculate_commercial_accounting_2025(
+            load=load_series,
+            monthly_consumption=monthly_cons_pre,
+            supplier_tariff=supplier_tariff,
+        )
+        supplier_monthly_net_pre = [round(r.supplier_base_fee + r.supplier_energy_cost, 2) for r in comm_res_pre]
+    else:
+        supplier_monthly_net_pre = [0.0] * len(monthly_cons_pre)
+
     with actor_tabs[2]:
         metering_tariff, levy_config, discount_rate, escalation_rate = render_metering_tab(
             load_series=load_series,
             key_prefix=key_prefix,
             enable_p3_metering=en_p3_metering,
             enable_p4_taxes=en_p4_taxes,
-            currency_code=currency_code
+            currency_code=currency_code,
+            dso_monthly_net=dso_monthly_net_pre,
+            supplier_monthly_net=supplier_monthly_net_pre,
         )
 
     active_config = StatusQuoConfig2025(

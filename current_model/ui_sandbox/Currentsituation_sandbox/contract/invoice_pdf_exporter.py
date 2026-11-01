@@ -227,24 +227,33 @@ def _render_single_invoice_page(
     vat_pct = active_config.levies.vat_rate_pct
 
     # Top Header Banner
+    period_range_str = inv_data.get("period_date_range", f"{inv_data['period_label']} ({inv_data['period_days']} days)")
     pdf.draw_rect(36, 810, 523, 44, fill_rgb=(0.06, 0.09, 0.16))
     pdf.draw_text(48, 792, "COMMERCIAL ELECTRICITY BILL & 4-PILLAR STATEMENT", size=11.5, bold=True, rgb=(0.97, 0.98, 1.0))
     pdf.draw_text(
         48,
         776,
-        f"Invoice No: {inv_data['inv_number']}  |  Period: {inv_data['period_label']} ({inv_data['period_days']} days)  |  Currency: {curr}",
-        size=8.5,
+        f"Invoice No: {inv_data['inv_number']}  |  Period: {inv_data['period_label']} ({period_range_str})  |  Currency: {curr}",
+        size=8.2,
         rgb=(0.56, 0.64, 0.72),
+        max_chars=112,
     )
     pdf.y = 754.0
 
-    # Master Data & Physical KPI Box (64pt height, 4 lines per column, strict non-overlapping x boundaries)
-    pdf.draw_rect(36, pdf.y, 523, 64, fill_rgb=(0.95, 0.97, 0.99), stroke_rgb=(0.80, 0.84, 0.88))
-    pdf.draw_text(44, pdf.y - 13, f"Facility / Site: {site_name}", size=8.0, bold=True, max_chars=52)
+    # Master Data & Physical KPI Box (74pt height, 5 clean lines per column, strict non-overlapping x boundaries)
+    clean_site = str(site_name).replace("Paula3_totaal_clean.csv", "Rotterdam / Dutch WKO Facility")
+    meter_lbl = (
+        f"{active_config.metering.meter_company_name} ({active_config.metering.service_package_name})"
+        if en_p3
+        else "Bundled in Utility [BYPASSED]"
+    )
+    pdf.draw_rect(36, pdf.y, 523, 74, fill_rgb=(0.95, 0.97, 0.99), stroke_rgb=(0.80, 0.84, 0.88))
+    pdf.draw_text(44, pdf.y - 13, f"Facility / Site: {clean_site}", size=8.0, bold=True, max_chars=52)
     pdf.draw_text(44, pdf.y - 26, f"Grid / Utility (P2): {active_config.dso.dso_name}", size=7.8, max_chars=52)
     pdf.draw_text(44, pdf.y - 39, f"Tariff Tier: {active_config.dso.grid_tier}", size=7.8, max_chars=52)
     supp_lbl = f"{active_config.supplier.supplier_name} ({active_config.supplier.pricing_mode.value.upper()})" if en_p1 else "Bundled in Utility [BYPASSED]"
     pdf.draw_text(44, pdf.y - 52, f"Energy Retailer (P1): {supp_lbl}", size=7.8, max_chars=52)
+    pdf.draw_text(44, pdf.y - 65, f"Metering (P3): {meter_lbl}", size=7.8, max_chars=52)
 
     billed_peak_val = float(inv_data.get("billed_peak_kw", inv_data["p_max"]))
     tou_split_lbl = inv_data.get("tou_split_summary") or f"HT {inv_data['ht_pct']:.1f}% / NT {inv_data['nt_pct']:.1f}%"
@@ -253,7 +262,8 @@ def _render_single_invoice_page(
     breach_txt = f"BREACH (+{inv_data['excess_kw']:,.1f} kW)" if inv_data["is_breached"] else "WITHIN CONTRACT LIMIT"
     pdf.draw_text(315, pdf.y - 39, f"Contracted Limit: {inv_data['contracted_kw']:,.1f} kW | Status: {breach_txt}", size=7.8, max_chars=54)
     pdf.draw_text(315, pdf.y - 52, f"Utilization: {inv_data['utilization_hours']:,.0f} hrs | Effective Net: {curr} {inv_data['effective_rate_net']:.4f}/kWh", size=7.8, max_chars=54)
-    pdf.y -= 72.0
+    pdf.draw_text(315, pdf.y - 65, f"Billing Dates: {period_range_str}", size=7.8, max_chars=54)
+    pdf.y -= 82.0
 
     # Compact Assumptions Summary Bar (if provided)
     if assumptions_dict:

@@ -17,7 +17,7 @@ Implements the standardized 3-Zone layout for Certified Metering & Statutory Tax
 ========================================================================================
 """
 
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 import streamlit as st
 import pandas as pd
 
@@ -55,11 +55,14 @@ def render_metering_tab(
     enable_p3_metering: bool = True,
     enable_p4_taxes: bool = True,
     currency_code: str = "EUR",
+    dso_monthly_net: Optional[List[float]] = None,
+    supplier_monthly_net: Optional[List[float]] = None,
 ) -> Tuple[MeteringTariff, LevyConfig, float, float]:
     """
     Renders Sub-Tab 3: Pillars 3 & 4 - Metering & Statutory Taxes using the standardized
     3-Zone layout and returns (MeteringTariff, LevyConfig, discount_rate_pct, escalation_rate_pct).
-    Supports independent gray-out of Pillar 3 (Metering) and Pillar 4 (Statutory Taxes).
+    Supports independent gray-out of Pillar 3 (Metering) and Pillar 4 (Statutory Taxes),
+    and computes Provincial / Municipal Percentage Levies live against Pillars 1 & 2 net concepts.
     """
     both_disabled = (not enable_p3_metering and not enable_p4_taxes)
     status_tag = ""
@@ -117,7 +120,10 @@ def render_metering_tab(
                     disabled=not enable_p3_metering,
                 )
                 pkg_data = pkg_dict[selected_pkg]
-                st.caption(f":material/info: *{pkg_data.get('description', '')}*")
+                if enable_p3_metering:
+                    st.caption(f":material/info: *{pkg_data.get('description', '')}*")
+                else:
+                    st.caption(":material/layers_clear: *Bundled in Utility (Single-Utility Mode — Pillar 3 bypassed at 0.00).*")
             else:
                 selected_pkg = "Custom Telemetry Package"
                 pkg_data = {"annual_flat_fee": 900.00, "description": "Custom interval metering & telemetry"}
@@ -231,12 +237,15 @@ def render_metering_tab(
             st.success("Metering & Statutory Tax configuration updated.", icon=":material/check_circle:")
 
     meter_annual = round(meter_monthly * 12.0, 2)
+    eff_meter_company = selected_meter_name if enable_p3_metering else "Bundled in Utility"
+    eff_meter_pkg = selected_pkg if enable_p3_metering else "Single-Utility Mode (Bundled)"
+    eff_meter_desc = pkg_data.get("description", "") if enable_p3_metering else "Metering bundled into Single-Utility Grid Bill (Pillar 2)"
 
     metering_tariff = MeteringTariff(
-        meter_company_name=selected_meter_name,
-        service_package_name=selected_pkg,
+        meter_company_name=eff_meter_company,
+        service_package_name=eff_meter_pkg,
         annual_flat_fee=meter_annual,
-        description=pkg_data.get("description", ""),
+        description=eff_meter_desc,
     )
     levy_config = LevyConfig(
         statutory_levy_rate_kwh=levy_rate,
@@ -257,12 +266,34 @@ def render_metering_tab(
 
     monthly_credit = tax_reduction / 12.0
     gross_tax_ann = round(total_kwh * levy_rate, 2) if enable_p4_taxes else 0.0
-    net_levies_monthly = [
+    vol_levies_monthly = [
         max(0.0, round((c.total_kwh * levy_rate) - monthly_credit, 2)) if enable_p4_taxes else 0.0
         for c in monthly_cons
     ]
+    vol_levies_ann = round(sum(vol_levies_monthly), 2)
+    effective_credit_ann = round(gross_tax_ann - vol_levies_ann, 2) if enable_p4_taxes else 0.0
+
+    # Live calculation of Provincial / Municipal Percentage Levies against Net Electric Concepts
+    pct_levies_monthly: List[float] = []
+    electric_concepts_monthly: List[float] = []
+    for idx in range(len(monthly_cons)):
+        dso_m = float(dso_monthly_net[idx]) if (dso_monthly_net and idx < len(dso_monthly_net)) else 0.0
+        supp_m = float(supplier_monthly_net[idx]) if (supplier_monthly_net and idx < len(supplier_monthly_net)) else 0.0
+        elec_base_m = round(dso_m + supp_m + eff_meter_mo, 2)
+        electric_concepts_monthly.append(elec_base_m)
+        if enable_p4_taxes and pct_levy_rate > 0.0:
+            pct_levies_monthly.append(round(elec_base_m * (pct_levy_rate / 100.0), 2))
+        else:
+            pct_levies_monthly.append(0.0)
+
+    electric_concepts_ann = round(sum(electric_concepts_monthly), 2)
+    pct_levies_ann = round(sum(pct_levies_monthly), 2)
+    pct_levies_mo = round(pct_levies_ann / 12.0, 2)
+
+    net_levies_monthly = [
+        round(v_m + p_m, 2) for v_m, p_m in zip(vol_levies_monthly, pct_levies_monthly)
+    ]
     net_levies_ann = round(sum(net_levies_monthly), 2)
-    effective_credit_ann = round(gross_tax_ann - net_levies_ann, 2) if enable_p4_taxes else 0.0
 
     subtotal_mt_ann = round(eff_meter_ann + net_levies_ann, 2)
     subtotal_mt_mo = round(subtotal_mt_ann / 12.0, 2)
@@ -272,11 +303,21 @@ def render_metering_tab(
 
         p3_calc_tag = "" if enable_p3_metering else " [BYPASSED]"
         p4_calc_tag = "" if enable_p4_taxes else " [BYPASSED]"
+        meter_item_label = (
+            f"3.1 Fixed Standing Fee — Metering ({selected_meter_name})"
+            if enable_p3_metering
+            else "3.1 Fixed Standing Fee — Metering (Bundled in Utility)"
+        )
+        meter_calc_str = (
+            f"12 mos × {currency_code} {meter_monthly:,.2f}/mo"
+            if enable_p3_metering
+            else f"Bundled in Single-Utility Bill ({currency_code} 0.00/mo){p3_calc_tag}"
+        )
 
         ledger_rows: List[Dict[str, str]] = [
             {
-                "item": f"3.1 Fixed Standing Fee — Metering ({selected_meter_name})",
-                "calc": f"12 mos × {currency_code} {meter_monthly:,.2f}/mo{p3_calc_tag}",
+                "item": meter_item_label,
+                "calc": meter_calc_str,
                 "monthly": f"{eff_meter_mo:,.2f}",
                 "annual": f"{eff_meter_ann:,.2f}",
             },
@@ -291,9 +332,9 @@ def render_metering_tab(
         if pct_levy_rate > 0.0:
             ledger_rows.append({
                 "item": "4.1b Provincial / Municipal Percentage Levies",
-                "calc": f"{pct_levy_rate:.6f}% × Net Electric Concepts{p4_calc_tag}",
-                "monthly": "See Master Bill",
-                "annual": "See Master Bill",
+                "calc": f"{pct_levy_rate:.6f}% × {currency_code} {electric_concepts_ann:,.2f}{p4_calc_tag}",
+                "monthly": f"{pct_levies_mo:,.2f}",
+                "annual": f"{pct_levies_ann:,.2f}",
             })
 
         if effective_credit_ann > 0.0:
@@ -320,7 +361,7 @@ def render_metering_tab(
 
         st.info(
             f":material/account_balance: **Pillar 3 (Metering Net):** {currency_code} {eff_meter_ann:,.2f}/yr ({currency_code} {eff_meter_mo:,.2f}/mo) | "
-            f"**Pillar 4 (Statutory Taxes Net):** {currency_code} {net_levies_ann:,.2f}/yr | "
+            f"**Pillar 4 (Statutory Taxes Net):** {currency_code} {net_levies_ann:,.2f}/yr ({currency_code} {net_levies_ann / 12.0:,.2f}/mo) | "
             f"**Applicable VAT:** {vat_rate:.1f}%.",
             icon=":material/info:"
         )

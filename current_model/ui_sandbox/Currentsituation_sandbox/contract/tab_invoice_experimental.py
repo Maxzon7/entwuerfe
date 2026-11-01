@@ -100,6 +100,7 @@ def build_invoice_positions(
         comm_res = target_rec.commercial
         period_days = cons.days_count
         period_label = f"{target_rec.month_name} 2025"
+        period_date_range = f"2025-{target_rec.month_index:02d}-01 to 2025-{target_rec.month_index:02d}-{cons.days_count:02d} ({cons.days_count} days)"
         inv_number = f"INV-2025-{target_rec.month_index:02d}"
         months_count = 1
         month_idx = target_rec.month_index
@@ -122,6 +123,7 @@ def build_invoice_positions(
     else:
         period_days = 365
         period_label = "Full Year 2025 (Jan 01 – Dec 31, 2025)"
+        period_date_range = "2025-01-01 to 2025-12-31 (365 days)"
         inv_number = "INV-2025-ANNUAL"
         months_count = 12
         month_idx = None
@@ -614,6 +616,7 @@ def build_invoice_positions(
 
     return {
         "period_label": period_label,
+        "period_date_range": period_date_range,
         "inv_number": inv_number,
         "period_days": period_days,
         "is_single_month": is_single_month,
@@ -1164,17 +1167,23 @@ def render_invoice_experimental_tab(
         with tab_p3:
             st.markdown("###### 12-Month Certified Metering & Telemetry Payment Schedule")
             p3_schedule = []
+            p3_prov_lbl = (
+                f"{active_config.metering.meter_company_name} - {active_config.metering.service_package_name}"
+                if en_p3
+                else "Bundled in Utility (Single-Utility Mode)"
+            )
+            p3_prov_yr = active_config.metering.meter_company_name if en_p3 else "Bundled in Utility"
             for r in result.monthly_records:
                 p3_schedule.append({
                     "Month": r.month_name,
-                    "Provider & Package": f"{active_config.metering.meter_company_name} - {active_config.metering.service_package_name}",
+                    "Provider & Package": p3_prov_lbl,
                     "Telemetry Interval": "15-min RLM",
                     f"Monthly Metering Fee ({curr})": f"{curr} {r.commercial.metering_fee:,.2f}",
                     f"Subtotal Metering Net ({curr})": f"{curr} {r.commercial.metering_fee:,.2f}"
                 })
             p3_schedule.append({
                 "Month": "FULL YEAR 2025",
-                "Provider & Package": f"{active_config.metering.meter_company_name}",
+                "Provider & Package": p3_prov_yr,
                 "Telemetry Interval": "12 Billing Months",
                 f"Monthly Metering Fee ({curr})": f"{curr} {result.total_metering_net / 12.0:,.2f} / mo",
                 f"Subtotal Metering Net ({curr})": f"{curr} {result.total_metering_net:,.2f}"
