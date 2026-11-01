@@ -38,6 +38,8 @@ try:
         StatusQuoConfig2025,
         LoadSeries2025,
         StatusQuoAnnualResult,
+        MeteringTariff,
+        LevyConfig,
     )
     from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
         normalize_load_profile_2025,
@@ -75,6 +77,8 @@ except ImportError:
         StatusQuoConfig2025,
         LoadSeries2025,
         StatusQuoAnnualResult,
+        MeteringTariff,
+        LevyConfig,
     )
     from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
         normalize_load_profile_2025,
@@ -420,7 +424,7 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
     with col_top_preset:
         with st.container(border=True):
-            st.markdown("##### :material/Science: Reference Benchmark Quick-Loader (Demo Presets)")
+            st.markdown("##### :material/science: Reference Benchmark Quick-Loader (Demo Presets)")
             ctrl_p1, ctrl_p2 = st.columns([2.2, 1.0])
             with ctrl_p1:
                 preset_options = [
@@ -517,6 +521,8 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
             load=load_series,
             monthly_consumption=monthly_cons_pre,
             supplier_tariff=supplier_tariff,
+            metering_tariff=MeteringTariff(annual_flat_fee=0.0),
+            levy_config=LevyConfig(statutory_levy_rate_kwh=0.0, annual_tax_reduction=0.0),
         )
         supplier_monthly_net_pre = [round(r.supplier_base_fee + r.supplier_energy_cost, 2) for r in comm_res_pre]
     else:

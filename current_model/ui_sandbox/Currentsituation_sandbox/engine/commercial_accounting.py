@@ -93,8 +93,8 @@ def calculate_commercial_accounting_2025(
     load: LoadSeries2025,
     monthly_consumption: List[MonthlyConsumptionRecord],
     supplier_tariff: SupplierTariff,
-    metering_tariff: MeteringTariff,
-    levy_config: LevyConfig
+    metering_tariff: Optional[MeteringTariff] = None,
+    levy_config: Optional[LevyConfig] = None
 ) -> Tuple[List[CommercialMonthlyResult], Dict[str, Any]]:
     """
     Executes the pure mathematical commercial accounting pipeline for reference year 2025.
@@ -104,6 +104,11 @@ def calculate_commercial_accounting_2025(
         - List of 12 CommercialMonthlyResult records
         - Commercial summary & diagnostic dictionary
     """
+    if metering_tariff is None:
+        metering_tariff = MeteringTariff(annual_flat_fee=0.0)
+    if levy_config is None:
+        levy_config = LevyConfig(statutory_levy_rate_kwh=0.0, annual_tax_reduction=0.0)
+
     monthly_results: List[CommercialMonthlyResult] = []
 
     # Monthly fixed allocations

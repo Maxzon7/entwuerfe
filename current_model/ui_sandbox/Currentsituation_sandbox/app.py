@@ -48,9 +48,10 @@ try:
     import ui_sandbox.Currentsituation_sandbox.contract.tab_metering as _tab_meter
     import ui_sandbox.Currentsituation_sandbox.contract.tab_overview as _tab_ov
     import ui_sandbox.Currentsituation_sandbox.contract.tab_invoice_experimental as _tab_inv
+    import ui_sandbox.Currentsituation_sandbox.engine.commercial_accounting as _comm_acc
     import ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
     import ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
-    for _mod in (_con_charts, _assump_ban, _pdf_exp, _tab_dso, _tab_supp, _tab_meter, _tab_ov, _tab_inv, _con_view, _c_view):
+    for _mod in (_comm_acc, _con_charts, _assump_ban, _pdf_exp, _tab_dso, _tab_supp, _tab_meter, _tab_ov, _tab_inv, _con_view, _c_view):
         importlib.reload(_mod)
     render_tab1_consumption = _c_view.render_tab1_consumption
     render_tab2_base_contract = _con_view.render_tab2_base_contract
@@ -64,9 +65,10 @@ except Exception:
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_metering as _tab_meter
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_overview as _tab_ov
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.tab_invoice_experimental as _tab_inv
+        import current_model.ui_sandbox.Currentsituation_sandbox.engine.commercial_accounting as _comm_acc
         import current_model.ui_sandbox.Currentsituation_sandbox.consumption.view as _c_view
         import current_model.ui_sandbox.Currentsituation_sandbox.contract.view as _con_view
-        for _mod in (_con_charts, _assump_ban, _pdf_exp, _tab_dso, _tab_supp, _tab_meter, _tab_ov, _tab_inv, _con_view, _c_view):
+        for _mod in (_comm_acc, _con_charts, _assump_ban, _pdf_exp, _tab_dso, _tab_supp, _tab_meter, _tab_ov, _tab_inv, _con_view, _c_view):
             importlib.reload(_mod)
         render_tab1_consumption = _c_view.render_tab1_consumption
         render_tab2_base_contract = _con_view.render_tab2_base_contract
