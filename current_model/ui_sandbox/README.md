@@ -61,7 +61,8 @@ current_model/ui_sandbox/
 │
 └── Generator_sandbox/                          # [Scenario 6] Peaking Generator & Grid Congestion Sandbox
     ├── __init__.py
-    └── app.py                                  # Standalone 4-Tab app (Willans fuel curve, 4-Pillar bill vs fuel, Purchase vs Rental)
+    ├── generator_sandbox_engine.py             # 35,040-step Willans fuel curve, "The Perfect Generator" unconstrained dimensioning, sweep & Plotly suite
+    └── app.py                                  # Standalone 3-Tab app (Load Baseline, Sizing & Consolidated Visual Dispatch Suite, Ideal Peaker Optimizer)
 ```
 
 ---
@@ -124,4 +125,43 @@ The Solar PV Sandbox replicates the exact UI layout and proven calculation compo
     * Interactive **Hockey-Stick Pareto Tradeoff Curve** mapping daylight coverage % vs. installed kWp and SCR %.
   * **4. Developer & Future Master Integration Data Contract:**
     * Stores 35,040-step $P_{\text{Residual}}(t) = \max(0, P_{\text{Load}}(t) - P_{\text{Direct}}(t))$ into `st.session_state["solar_standalone_result"]`.
+    * One-click JSON download button for Phase 2 multi-scenario billing integration.
+
+---
+
+## :material/local_gas_station: Scenario 6: Standalone Generator & Grid Congestion Sandbox (`ui_sandbox/Generator_sandbox/`)
+
+The Generator Sandbox replicates the exact UI layout and proven calculation components of the main program ([`ui/tab_generator/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab_generator/view.py)) into an isolated, standalone workbench equipped with **"The Perfect Generator"** dimensioning diagnostic:
+
+* **Header Action Controls:** Quick `Load Example Case (Liander 400 kW Grid Congestion Benchmark)` and `Reset / Clear Generator` action buttons.
+* **Tab 1: Facility Load & Consumption Profile (1:1 from Currentsituation_sandbox / Main App):**
+  * Ingestion switch between real CSV meter data (with delimiter sniffer & timestamp mapper) and synthetic 24h/365d simulation.
+  * Interactive 35,040-step 15-minute load profile chart, annual Load Duration Curve (LDC), and 4 Base KPIs.
+* **Tab 2: Standalone Generator Sizing & Fuel Economics (1:1 with Main Program UI):**
+  * **1. Interactive Grid Limit Controller (outside form for instant live reactivity):** Numerical input with ±25 kW steppers and quick presets (`80% Peak`, `50% Peak`, `Default 400 kW`).
+  * **2. Diagnostic Status Cards:** `Facility Peak Demand (kW)`, `Contracted Grid Limit (kW)`, `Overload Status (+kW Overload / Within Limit)`, and `Configured Capacity (kW)`.
+  * **3. Generator Technical & Commercial Sizing Form (`st.form` template for Master Program):**
+    * Model Presets (`100 kW Mobile Diesel Peaker`, `250 kW Heavy Industrial Diesel`, `500 kW Containerized Natural Gas CHP`, `Custom`).
+    * Technical parameters: Continuous rated power (kW), operational dispatch strategy (`Peak Shaving Assist` vs. `Full Residual Backup`), dispatch trigger threshold (kW), fuel type (`Diesel`, `Natural Gas`, `HVO/Biofuel`), fuel price, maintenance cost/hour, and minimum loading ratio slider (0-50% to prevent wet-stacking).
+    * Commercial parameters: Acquisition model (`Rental / Monthly Lease` vs. `Capital Purchase (CAPEX)`), turnkey CAPEX or monthly equipment lease fee.
+  * **4. Executive KPI Results Cards:** `Shaved Peak Demand (kW)`, `Generator Runtime (hrs & starts)`, `Fuel Consumption (L or m³ & OPEX)`, and `Net Annual Impact (EUR/a)`.
+  * **5. Consolidated Visual Dispatch & Financial Analysis Suite (4 Sub-Tabs):**
+    * `:material/timeline: 15-Minute Dispatch Timeseries`: 35,040-step profile with interactive filter buttons (`7D`, `1M`, `3M`, `All`), range slider, generator active power area, residual grid import line, and red dashed grid limit line.
+    * `:material/bar_chart: Monthly Generation & Fuel Breakdown`: 12-month dual-axis chart (Generator MWh on primary axis, fuel units on secondary axis).
+    * `:material/schema: Energy Flow (Sankey)`: High-level energy flow diagram tracing Grid Import and Generator Output into Facility Demand.
+    * `:material/payments: Commercial Zahlungsreihe & Amortization`: Cumulative payment trajectory comparing Status Quo vs. With Generator and detailed monthly ledger table.
+* **Tab 3: Ideal Peaker Dimensioning & Sizing Optimizer ("The Perfect Generator"):**
+  * **1. Active Generator Dispatch vs. Grid Congestion:** 8 coupled performance cards (`Shaved Peak Demand`, `Avoided Overload Hours %`, `Generator Generation MWh`, `Fuel Consumption`, `Operating Hours & Starts`, `Total Operating Cost`, `Avoided Overload Energy MWh`, `Residual Grid Purchase MWh`).
+  * **2. "The Perfect Generator" Diagnostic Blueprint (Unconstrained Sizing Analysis):**
+    * Inspired by the unconstrained BESS diagnostics, evaluates theoretical unconstrained generator dispatch to completely eliminate all grid breaches.
+    * 4 Diagnostic KPI Cards: `Peak Grid Overload (kW)`, `Annual Overload Energy (MWh/a)`, `Longest Continuous Run (hrs)`, `Safe Tank Autonomy (L or m³: worst run + 48h emergency reserve)`.
+    * Wet-Stacking Risk Warning: Identifies if engine loading drops below 25% nameplate capacity.
+    * 3 Sizing Tiers with 1-Click Synchronization to Tab 2 Form:
+      * **Tier 1: 100% Zero-Breach Champion:** Continuous rated capacity guaranteeing zero overload with 10% safety margin.
+      * **Tier 2: 80% Economic Sweet Spot:** Capping 80% of peak breach with optimal CAPEX/fuel balance.
+      * **Tier 3: 50% Peak-Assist Model:** Handles top 50% peaks, ideal for pairing with BESS or demand response.
+  * **3. Parametric Capacity Sweep & Sizing Tradeoff Curve:**
+    * Interactive sweep curve visualizing Avoided Overload % vs. Generator Rated kW vs. Fuel Consumption.
+  * **4. Developer & Master Integration Data Contract:**
+    * Stores 35,040-step $P_{\text{Residual}}(t) = \max(0, P_{\text{Load}}(t) - P_{\text{Gen}}(t))$ into `st.session_state["generator_standalone_result"]`.
     * One-click JSON download button for Phase 2 multi-scenario billing integration.

@@ -60,7 +60,7 @@ class TestUISandboxIsolation(unittest.TestCase):
             ("NewContract_sandbox", ["__init__.py", "app.py"]),
             ("Solar_sandbox", ["__init__.py", "solar_sandbox_engine.py", "app.py"]),
             ("SolarBESS_sandbox", ["__init__.py", "app.py"]),
-            ("Generator_sandbox", ["__init__.py", "app.py"]),
+            ("Generator_sandbox", ["__init__.py", "generator_sandbox_engine.py", "app.py"]),
         ]:
             d_path = os.path.join(self.sandbox_dir, sub_dir)
             self.assertTrue(os.path.isdir(d_path), f"ui_sandbox/{sub_dir} directory must exist")
@@ -557,6 +557,60 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
         )
         self.assertTrue(pdf_rep.startswith(b"%PDF-1.4"))
         self.assertGreater(len(pdf_rep), 1000)
+
+    def test_ideal_generator_dimensioning_and_sandbox_engine(self):
+        """Verifies 'The Perfect Generator' unconstrained dimensioning and generator sandbox engine."""
+        import numpy as np
+        from ui_sandbox.Generator_sandbox.generator_sandbox_engine import (
+            IdealGeneratorSizingResult,
+            compute_ideal_generator_dimensioning,
+            compute_generator_sizing_sweep,
+        )
+        from models.generator import GeneratorConfig
+
+        # Create synthetic 24h overload profile (96 intervals)
+        base_load = np.full(96, 200.0)
+        # Spike of 600 kW for 8 intervals (2 hours)
+        base_load[40:48] = 600.0
+        grid_limit = 400.0
+
+        res: IdealGeneratorSizingResult = compute_ideal_generator_dimensioning(
+            load_kw=base_load,
+            grid_limit_kw=grid_limit,
+            step_hours=0.25,
+            fuel_type="Diesel",
+            fuel_price_per_unit=1.45,
+            min_load_pct=25.0,
+        )
+
+        self.assertIsInstance(res, IdealGeneratorSizingResult)
+        self.assertEqual(res.peak_overload_kw, 200.0)
+        # 100% zero-breach with 10% headroom: 200 * 1.10 = 220 -> ceil to 25kW = 225 kW
+        self.assertEqual(res.recommended_rated_kw_100, 225.0)
+        # 80% peak capping: 200 * 0.80 = 160 -> ceil to 25kW = 175 kW
+        self.assertEqual(res.recommended_rated_kw_80, 175.0)
+        # 50% peak assist: 200 * 0.50 = 100 -> ceil to 25kW = 100 kW
+        self.assertEqual(res.recommended_rated_kw_50, 100.0)
+        self.assertEqual(res.overload_intervals_count, 8)
+        self.assertEqual(res.overload_hours_count, 2.0)
+        self.assertEqual(res.engine_starts_count, 1)
+        self.assertEqual(res.max_continuous_breach_hours, 2.0)
+        self.assertGreater(res.recommended_fuel_tank_liters, 500.0)
+        self.assertGreater(res.annual_estimated_fuel_liters, 0.0)
+
+        # Verify Sizing Sweep
+        timestamps = [f"2025-01-01 {h:02d}:{m:02d}:00" for h in range(24) for m in (0, 15, 30, 45)]
+        cfg = GeneratorConfig(rated_power_kw=150.0, fuel_type="Diesel")
+        df_sweep, presets = compute_generator_sizing_sweep(
+            load_kw=base_load,
+            grid_limit_kw=grid_limit,
+            timestamps=timestamps,
+            base_config=cfg,
+        )
+        self.assertFalse(df_sweep.empty)
+        self.assertIn("rated_kw", df_sweep.columns)
+        self.assertIn("avoided_overload_pct", df_sweep.columns)
+        self.assertIn("zero_breach_100", presets)
 
 
 if __name__ == "__main__":
