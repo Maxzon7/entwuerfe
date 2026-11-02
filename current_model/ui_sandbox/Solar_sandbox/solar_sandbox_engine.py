@@ -346,3 +346,246 @@ def create_solar_hockey_stick_figure(
     )
     return fig
 
+
+def compute_pure_solar_plant_economics(
+    pv_kwp: float,
+    annual_generation_kwh: float,
+    capex_per_kwp: float = 850.0,
+    annual_om_pct: float = 1.5,
+    annual_om_fixed: float = 0.0,
+    horizon_years: int = 20,
+    discount_rate_pct: float = 5.0,
+    degradation_pct_a: float = 0.40,
+    first_year_degradation_pct: float = 1.50,
+    inverter_replacement_cost_pct: float = 12.0,
+    inverter_replacement_year: int = 11,
+) -> Dict[str, Any]:
+    """
+    Computes pure plant financial metrics (Levelized Cost of Electricity LCOE, total CAPEX,
+    annual OPEX, and lifecycle cashflow schedule) WITHOUT coupling to external electricity tariffs or bills.
+    """
+    total_capex = float(pv_kwp * capex_per_kwp)
+    r = float(discount_rate_pct / 100.0)
+    d1 = float(first_year_degradation_pct / 100.0)
+    d2 = float(degradation_pct_a / 100.0)
+
+    opex_year1 = total_capex * (annual_om_pct / 100.0) + annual_om_fixed
+    inv_rep_cost = total_capex * (inverter_replacement_cost_pct / 100.0) if inverter_replacement_year > 0 else 0.0
+
+    discounted_costs_sum = total_capex
+    discounted_generation_sum = 0.0
+    total_lifetime_generation = 0.0
+
+    cashflow_rows: List[Dict[str, Any]] = [
+        {
+            "year": 0,
+            "capex_and_rep": total_capex,
+            "opex": 0.0,
+            "net_outflow": total_capex,
+            "generation_kwh": 0.0,
+            "discounted_cost": total_capex,
+            "discounted_gen_kwh": 0.0,
+            "cumulative_cost": total_capex,
+        }
+    ]
+
+    running_cost = total_capex
+    for y in range(1, horizon_years + 1):
+        # Physical degradation
+        f_deg = (1.0 - d1) if y == 1 else (1.0 - d1) * ((1.0 - d2) ** (y - 1))
+        y_gen = annual_generation_kwh * f_deg
+        total_lifetime_generation += y_gen
+
+        # OPEX with small inflation (2% p.a.)
+        y_opex = opex_year1 * ((1.0 + 0.02) ** (y - 1))
+        y_rep = inv_rep_cost if y == inverter_replacement_year else 0.0
+        y_outflow = y_opex + y_rep
+        running_cost += y_outflow
+
+        disc_factor = 1.0 / ((1.0 + r) ** y)
+        y_disc_cost = y_outflow * disc_factor
+        y_disc_gen = y_gen * disc_factor
+
+        discounted_costs_sum += y_disc_cost
+        discounted_generation_sum += y_disc_gen
+
+        cashflow_rows.append(
+            {
+                "year": y,
+                "capex_and_rep": y_rep,
+                "opex": y_opex,
+                "net_outflow": y_outflow,
+                "generation_kwh": y_gen,
+                "discounted_cost": y_disc_cost,
+                "discounted_gen_kwh": y_disc_gen,
+                "cumulative_cost": running_cost,
+            }
+        )
+
+    lcoe = (discounted_costs_sum / discounted_generation_sum) if discounted_generation_sum > 0 else 0.0
+
+    return {
+        "total_capex": total_capex,
+        "capex_per_kwp": capex_per_kwp,
+        "annual_om_year1": opex_year1,
+        "lcoe": lcoe,
+        "discounted_costs_sum": discounted_costs_sum,
+        "discounted_generation_sum": discounted_generation_sum,
+        "total_lifetime_generation_kwh": total_lifetime_generation,
+        "cashflow_rows": cashflow_rows,
+    }
+
+
+def create_monthly_solar_balance_figure(
+    load: LoadSeries2025,
+    p_direct_kw: np.ndarray,
+    p_export_kw: np.ndarray,
+    p_load_kw: np.ndarray,
+) -> go.Figure:
+    """Creates a monthly stacked bar chart showing Direct Self-Consumption vs. Export Surplus."""
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    direct_m = []
+    export_m = []
+    load_m = []
+
+    dt = 0.25
+    for m in range(1, 13):
+        mask = (load.month_indices == m)
+        direct_m.append(float(np.sum(p_direct_kw[mask]) * dt / 1000.0))
+        export_m.append(float(np.sum(p_export_kw[mask]) * dt / 1000.0))
+        load_m.append(float(np.sum(p_load_kw[mask]) * dt / 1000.0))
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=direct_m,
+            name="Direct On-Site Consumption (MWh)",
+            marker_color="#10b981",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=export_m,
+            name="Grid Export / Surplus (MWh)",
+            marker_color="#f59e0b",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=months,
+            y=load_m,
+            mode="lines+markers",
+            name="Total Facility Load (MWh)",
+            line=dict(color="#38bdf8", width=2.5),
+            marker=dict(size=6),
+        )
+    )
+    fig.update_layout(
+        title=dict(text="<b>Monthly Generation & Self-Consumption Balance (MWh)</b>", x=0.01, y=0.98, xanchor="left"),
+        barmode="stack",
+        template="plotly_dark",
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.55)",
+        height=350,
+        margin=dict(l=50, r=30, t=85, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="left", x=0.01),
+        yaxis=dict(title="Energy (MWh)", gridcolor="#1e293b"),
+    )
+    return fig
+
+
+def create_diurnal_solar_season_figure(
+    load: LoadSeries2025,
+    unit_pv_kw: np.ndarray,
+    pv_capacity_kwp: float,
+    latitude: float,
+) -> go.Figure:
+    """Creates a 24-hour diurnal profile comparing average Summer vs. Winter load and solar curves."""
+    p_pv = unit_pv_kw * max(0.0, float(pv_capacity_kwp))
+    hour_float = load.timestamps.hour + load.timestamps.minute / 60.0
+
+    # Summer / Winter months based on hemisphere
+    is_northern = (latitude >= 0.0)
+    summer_months = [6, 7, 8] if is_northern else [12, 1, 2]
+    winter_months = [12, 1, 2] if is_northern else [6, 7, 8]
+
+    mask_sum = np.isin(load.month_indices, summer_months)
+    mask_win = np.isin(load.month_indices, winter_months)
+
+    df_h = pd.DataFrame(
+        {
+            "hour": hour_float,
+            "load_sum": np.where(mask_sum, load.power_kw, np.nan),
+            "pv_sum": np.where(mask_sum, p_pv, np.nan),
+            "load_win": np.where(mask_win, load.power_kw, np.nan),
+            "pv_win": np.where(mask_win, p_pv, np.nan),
+        }
+    ).groupby("hour", as_index=False).mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df_h["hour"], y=df_h["load_sum"], name="Mean Load (Summer, kW)", line=dict(color="#94a3b8", width=2, dash="dash")))
+    fig.add_trace(go.Scatter(x=df_h["hour"], y=df_h["pv_sum"], name="Solar Generation (Summer, kW)", fill="tozeroy", line=dict(color="#f59e0b", width=2.5), fillcolor="rgba(245, 158, 11, 0.22)"))
+    fig.add_trace(go.Scatter(x=df_h["hour"], y=df_h["load_win"], name="Mean Load (Winter, kW)", line=dict(color="#64748b", width=1.5, dash="dot")))
+    fig.add_trace(go.Scatter(x=df_h["hour"], y=df_h["pv_win"], name="Solar Generation (Winter, kW)", fill="tozeroy", line=dict(color="#38bdf8", width=2), fillcolor="rgba(56, 189, 248, 0.15)"))
+
+    fig.update_layout(
+        title=dict(text="<b>24-Hour Diurnal Profile: Summer vs. Winter Generation & Facility Load</b>", x=0.01, y=0.98, xanchor="left"),
+        template="plotly_dark",
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.55)",
+        height=350,
+        margin=dict(l=50, r=30, t=85, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="left", x=0.01),
+        xaxis=dict(title="Hour of Day (00:00 - 24:00)", gridcolor="#1e293b"),
+        yaxis=dict(title="Power (kW)", gridcolor="#1e293b"),
+    )
+    return fig
+
+
+def create_solar_pure_cashflow_figure(
+    cashflow_rows: List[Dict[str, Any]],
+    currency_code: str = "EUR",
+) -> go.Figure:
+    """Creates a chart showing annual lifecycle outflows and cumulative pure plant investment."""
+    years = [r["year"] for r in cashflow_rows]
+    cum_costs = [r["cumulative_cost"] for r in cashflow_rows]
+    outflows = [r["net_outflow"] for r in cashflow_rows]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(
+            x=years[1:],
+            y=outflows[1:],
+            name=f"Annual O&M & Replacement ({currency_code}/yr)",
+            marker_color="rgba(245, 158, 11, 0.65)",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_costs,
+            mode="lines+markers",
+            name=f"Cumulative Plant Expenditure ({currency_code})",
+            line=dict(color="#38bdf8", width=3),
+            marker=dict(size=6),
+        ),
+        secondary_y=True,
+    )
+    fig.update_layout(
+        title=dict(text="<b>Pure Solar Plant Lifecycle Cashflows & Cumulative Investment</b>", x=0.01, y=0.98, xanchor="left"),
+        template="plotly_dark",
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.55)",
+        height=350,
+        margin=dict(l=50, r=50, t=85, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="left", x=0.01),
+        xaxis=dict(title="Operating Year", gridcolor="#1e293b"),
+    )
+    fig.update_yaxes(title_text=f"Annual Outflow ({currency_code})", gridcolor="#1e293b", secondary_y=False)
+    fig.update_yaxes(title_text=f"Cumulative Cost ({currency_code})", showgrid=False, secondary_y=True)
+    return fig
+
+

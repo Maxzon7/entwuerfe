@@ -1,3 +1,4 @@
+# to run: python -m streamlit run "ui_sandbox/NewContract_sandbox/app.py"
 """
 ========================================================================================
 Scenario 2: Standalone New Contract & Capacity Optimization Sandbox (ui_sandbox/NewContract_sandbox/app.py)
@@ -32,7 +33,8 @@ import streamlit as st
 _CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 _UI_SANDBOX_DIR = os.path.abspath(os.path.join(_CURRENT_DIR, ".."))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_UI_SANDBOX_DIR, ".."))
-for _p in (_PROJECT_ROOT, _UI_SANDBOX_DIR, _CURRENT_DIR):
+_WORKSPACE_DIR = os.path.abspath(os.path.join(_PROJECT_ROOT, ".."))
+for _p in (_WORKSPACE_DIR, _PROJECT_ROOT, _UI_SANDBOX_DIR, _CURRENT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -84,17 +86,18 @@ def _compute_contract_capacity_optimization_sweep(
         cfg_tmp.dso.contracted_capacity_kw = float(kw_cand)
         res_tmp = calculate_status_quo_master_2025(load=load, config=cfg_tmp)
 
-        cap_fee_yr = sum(r.contracted_capacity_fee for r in res_tmp.dso_monthly)
-        peak_fee_yr = sum(r.peak_demand_fee for r in res_tmp.dso_monthly)
-        pen_fee_yr = sum(r.excess_penalty_fee for r in res_tmp.dso_monthly)
-        breach_months = sum(1 for r in res_tmp.dso_monthly if r.is_capacity_breached)
+        dso_records = [r.dso for r in res_tmp.monthly_records]
+        cap_fee_yr = sum(r.contracted_capacity_fee for r in dso_records)
+        peak_fee_yr = sum(r.peak_demand_fee for r in dso_records)
+        pen_fee_yr = sum(r.excess_penalty_fee for r in dso_records)
+        breach_months = sum(1 for r in dso_records if r.is_capacity_breached)
 
         rows.append(
             {
                 "contracted_kw": float(kw_cand),
-                "annual_dso_net": float(res_tmp.annual_dso_net),
-                "annual_total_net": float(res_tmp.total_annual_net),
-                "annual_total_gross": float(res_tmp.total_annual_gross),
+                "annual_dso_net": float(res_tmp.total_dso_net),
+                "annual_total_net": float(res_tmp.total_status_quo_net),
+                "annual_total_gross": float(res_tmp.total_status_quo_gross),
                 "contracted_capacity_fee_yr": float(cap_fee_yr),
                 "peak_demand_fee_yr": float(peak_fee_yr),
                 "excess_penalty_fee_yr": float(pen_fee_yr),
@@ -234,9 +237,10 @@ def render_new_contract_sandbox(key_prefix: str = "newcon_sb") -> ScenarioEvalua
     # ----------------------------------------------------------------------------------
     with tabs[0]:
         st.markdown("#### :material/warning: Current Contract Capacity Audit & Penalty Exposure")
-        breach_months_cnt = sum(1 for r in res_base.dso_monthly if r.is_capacity_breached)
-        annual_pen_cost = sum(r.excess_penalty_fee for r in res_base.dso_monthly)
-        annual_cap_cost = sum(r.contracted_capacity_fee for r in res_base.dso_monthly)
+        dso_recs_base = [r.dso for r in res_base.monthly_records]
+        breach_months_cnt = sum(1 for r in dso_recs_base if r.is_capacity_breached)
+        annual_pen_cost = sum(r.excess_penalty_fee for r in dso_recs_base)
+        annual_cap_cost = sum(r.contracted_capacity_fee for r in dso_recs_base)
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric(
@@ -441,28 +445,32 @@ def render_new_contract_sandbox(key_prefix: str = "newcon_sb") -> ScenarioEvalua
             res_opt = calculate_status_quo_master_2025(load=base_load, config=cfg_opt)
             res_alt = calculate_status_quo_master_2025(load=base_load, config=alt_config)
 
+            dso_b = [r.dso for r in res_base.monthly_records]
+            dso_o = [r.dso for r in res_opt.monthly_records]
+            dso_a = [r.dso for r in res_alt.monthly_records]
+
             sub_df = pd.DataFrame(
                 [
                     {
                         "Contract Variant": "1. Status Quo Contract (Baseline)",
                         "P_contract (kW)": f"{base_config.dso.contracted_capacity_kw:,.1f}",
-                        "Breach Months": sum(1 for r in res_base.dso_monthly if r.is_capacity_breached),
-                        f"Annual Net Bill ({curr})": f"{res_base.total_annual_net:,.2f}",
+                        "Breach Months": sum(1 for r in dso_b if r.is_capacity_breached),
+                        f"Annual Net Bill ({curr})": f"{res_base.total_status_quo_net:,.2f}",
                         f"Net Savings vs. Baseline ({curr}/yr)": "0.00",
                     },
                     {
                         "Contract Variant": "2. Auto Cost-Optimal P_contract",
                         "P_contract (kW)": f"{optimal_kw:,.1f}",
-                        "Breach Months": sum(1 for r in res_opt.dso_monthly if r.is_capacity_breached),
-                        f"Annual Net Bill ({curr})": f"{res_opt.total_annual_net:,.2f}",
-                        f"Net Savings vs. Baseline ({curr}/yr)": f"{res_base.total_annual_net - res_opt.total_annual_net:+,.2f}",
+                        "Breach Months": sum(1 for r in dso_o if r.is_capacity_breached),
+                        f"Annual Net Bill ({curr})": f"{res_opt.total_status_quo_net:,.2f}",
+                        f"Net Savings vs. Baseline ({curr}/yr)": f"{res_base.total_status_quo_net - res_opt.total_status_quo_net:+,.2f}",
                     },
                     {
                         "Contract Variant": "3. Active Configured New Contract",
                         "P_contract (kW)": f"{alt_config.dso.contracted_capacity_kw:,.1f}",
-                        "Breach Months": sum(1 for r in res_alt.dso_monthly if r.is_capacity_breached),
-                        f"Annual Net Bill ({curr})": f"{res_alt.total_annual_net:,.2f}",
-                        f"Net Savings vs. Baseline ({curr}/yr)": f"{res_base.total_annual_net - res_alt.total_annual_net:+,.2f}",
+                        "Breach Months": sum(1 for r in dso_a if r.is_capacity_breached),
+                        f"Annual Net Bill ({curr})": f"{res_alt.total_status_quo_net:,.2f}",
+                        f"Net Savings vs. Baseline ({curr}/yr)": f"{res_base.total_status_quo_net - res_alt.total_status_quo_net:+,.2f}",
                     },
                 ]
             )
@@ -526,19 +534,19 @@ def render_new_contract_sandbox(key_prefix: str = "newcon_sb") -> ScenarioEvalua
     # TAB 4: 15-Year TCO & Standardized Output
     # ----------------------------------------------------------------------------------
     res_after_full = calculate_status_quo_master_2025(load=base_load, config=alt_config)
-    annual_net_sav = res_base.total_annual_net - res_after_full.total_annual_net
+    annual_net_sav = res_base.total_status_quo_net - res_after_full.total_status_quo_net
     payback_yrs = (one_off_contract_fee / annual_net_sav) if (annual_net_sav > 0 and one_off_contract_fee > 0) else (0.0 if annual_net_sav > 0 else 99.9)
 
     npv_before, sched_before = compute_15y_tco_npv(
         capex=0.0,
-        annual_grid_bill_year1=res_base.total_annual_net,
+        annual_grid_bill_year1=res_base.total_status_quo_net,
         discount_rate_pct=base_config.discount_rate_pct,
         escalation_rate_pct=base_config.energy_escalation_pct,
         horizon_years=15,
     )
     npv_after, sched_after = compute_15y_tco_npv(
         capex=one_off_contract_fee,
-        annual_grid_bill_year1=res_after_full.total_annual_net,
+        annual_grid_bill_year1=res_after_full.total_status_quo_net,
         discount_rate_pct=alt_config.discount_rate_pct,
         escalation_rate_pct=alt_config.energy_escalation_pct,
         horizon_years=15,
@@ -563,10 +571,10 @@ def render_new_contract_sandbox(key_prefix: str = "newcon_sb") -> ScenarioEvalua
         autarky_pct=0.0,
         capex_total=float(one_off_contract_fee),
         annual_tech_opex=0.0,
-        annual_grid_bill_net_before=float(res_base.total_annual_net),
-        annual_grid_bill_net_after=float(res_after_full.total_annual_net),
-        annual_grid_bill_gross_before=float(res_base.total_annual_gross),
-        annual_grid_bill_gross_after=float(res_after_full.total_annual_gross),
+        annual_grid_bill_net_before=float(res_base.total_status_quo_net),
+        annual_grid_bill_net_after=float(res_after_full.total_status_quo_net),
+        annual_grid_bill_gross_before=float(res_base.total_status_quo_gross),
+        annual_grid_bill_gross_after=float(res_after_full.total_status_quo_gross),
         annual_net_savings=float(annual_net_sav),
         simple_payback_years=float(payback_yrs),
         npv_15y_tco_before=float(npv_before),

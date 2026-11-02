@@ -31,7 +31,8 @@ import streamlit as st
 _CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 _UI_SANDBOX_DIR = os.path.abspath(os.path.join(_CURRENT_DIR, ".."))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_UI_SANDBOX_DIR, ".."))
-for _p in (_PROJECT_ROOT, _UI_SANDBOX_DIR, _CURRENT_DIR):
+_WORKSPACE_DIR = os.path.abspath(os.path.join(_PROJECT_ROOT, ".."))
+for _p in (_WORKSPACE_DIR, _PROJECT_ROOT, _UI_SANDBOX_DIR, _CURRENT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -401,25 +402,25 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> ScenarioEvaluationOu
 
         res_base_full = calculate_status_quo_master_2025(load=base_load, config=base_config)
         res_after_full = calculate_status_quo_master_2025(load=residual_load, config=base_config)
-        grid_bill_savings_net = res_base_full.total_annual_net - res_after_full.total_annual_net
+        grid_bill_savings_net = res_base_full.total_status_quo_net - res_after_full.total_status_quo_net
 
         # Compute 15Y TCO for Status Quo, Option A (Purchase), and Option B (Rental)
         npv_sq, sched_sq = compute_15y_tco_npv(
             capex=0.0,
-            annual_grid_bill_year1=res_base_full.total_annual_net,
+            annual_grid_bill_year1=res_base_full.total_status_quo_net,
             discount_rate_pct=base_config.discount_rate_pct,
             escalation_rate_pct=base_config.energy_escalation_pct,
         )
         npv_buy, sched_buy = compute_15y_tco_npv(
             capex=purchase_capex,
-            annual_grid_bill_year1=res_after_full.total_annual_net,
+            annual_grid_bill_year1=res_after_full.total_status_quo_net,
             annual_tech_opex_year1=annual_var_gen_opex,
             discount_rate_pct=base_config.discount_rate_pct,
             escalation_rate_pct=base_config.energy_escalation_pct,
         )
         npv_rent, sched_rent = compute_15y_tco_npv(
             capex=0.0,
-            annual_grid_bill_year1=res_after_full.total_annual_net,
+            annual_grid_bill_year1=res_after_full.total_status_quo_net,
             annual_tech_opex_year1=annual_var_gen_opex + (monthly_lease * 12.0),
             discount_rate_pct=base_config.discount_rate_pct,
             escalation_rate_pct=base_config.energy_escalation_pct,
@@ -467,10 +468,10 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> ScenarioEvaluationOu
             autarky_pct=(sim_gen["gen_energy_kwh"] / max(1.0, sim_gen["load_kwh"]) * 100.0),
             capex_total=float(active_capex),
             annual_tech_opex=float(active_opex),
-            annual_grid_bill_net_before=float(res_base_full.total_annual_net),
-            annual_grid_bill_net_after=float(res_after_full.total_annual_net),
-            annual_grid_bill_gross_before=float(res_base_full.total_annual_gross),
-            annual_grid_bill_gross_after=float(res_after_full.total_annual_gross),
+            annual_grid_bill_net_before=float(res_base_full.total_status_quo_net),
+            annual_grid_bill_net_after=float(res_after_full.total_status_quo_net),
+            annual_grid_bill_gross_before=float(res_base_full.total_status_quo_gross),
+            annual_grid_bill_gross_after=float(res_after_full.total_status_quo_gross),
             annual_net_savings=float(active_net_sav),
             simple_payback_years=float(active_payback),
             npv_15y_tco_before=float(npv_sq),

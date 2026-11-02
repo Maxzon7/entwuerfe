@@ -32,7 +32,8 @@ import streamlit as st
 _CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 _UI_SANDBOX_DIR = os.path.abspath(os.path.join(_CURRENT_DIR, ".."))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_UI_SANDBOX_DIR, ".."))
-for _p in (_PROJECT_ROOT, _UI_SANDBOX_DIR, _CURRENT_DIR):
+_WORKSPACE_DIR = os.path.abspath(os.path.join(_PROJECT_ROOT, ".."))
+for _p in (_WORKSPACE_DIR, _PROJECT_ROOT, _UI_SANDBOX_DIR, _CURRENT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -513,19 +514,19 @@ def render_solar_bess_sandbox(key_prefix: str = "solbess_sb") -> ScenarioEvaluat
 
         total_capex = pv_kwp * pv_capex_unit + bess_kwh * bess_capex_unit
         annual_om = total_capex * (om_pct_capex / 100.0)
-        bill_savings_net = res_base_full.total_annual_net - res_after_full.total_annual_net
+        bill_savings_net = res_base_full.total_status_quo_net - res_after_full.total_status_quo_net
         annual_net_savings = bill_savings_net - annual_om
         payback_yrs = (total_capex / annual_net_savings) if annual_net_savings > 0 else 99.9
 
         npv_before, sched_before = compute_15y_tco_npv(
             capex=0.0,
-            annual_grid_bill_year1=res_base_full.total_annual_net,
+            annual_grid_bill_year1=res_base_full.total_status_quo_net,
             discount_rate_pct=base_config.discount_rate_pct,
             escalation_rate_pct=base_config.energy_escalation_pct,
         )
         npv_after, sched_after = compute_15y_tco_npv(
             capex=total_capex,
-            annual_grid_bill_year1=res_after_full.total_annual_net,
+            annual_grid_bill_year1=res_after_full.total_status_quo_net,
             annual_tech_opex_year1=annual_om,
             discount_rate_pct=base_config.discount_rate_pct,
             escalation_rate_pct=base_config.energy_escalation_pct,
@@ -571,10 +572,10 @@ def render_solar_bess_sandbox(key_prefix: str = "solbess_sb") -> ScenarioEvaluat
             autarky_pct=sim_active["autarky_pct"],
             capex_total=float(total_capex),
             annual_tech_opex=float(annual_om),
-            annual_grid_bill_net_before=float(res_base_full.total_annual_net),
-            annual_grid_bill_net_after=float(res_after_full.total_annual_net),
-            annual_grid_bill_gross_before=float(res_base_full.total_annual_gross),
-            annual_grid_bill_gross_after=float(res_after_full.total_annual_gross),
+            annual_grid_bill_net_before=float(res_base_full.total_status_quo_net),
+            annual_grid_bill_net_after=float(res_after_full.total_status_quo_net),
+            annual_grid_bill_gross_before=float(res_base_full.total_status_quo_gross),
+            annual_grid_bill_gross_after=float(res_after_full.total_status_quo_gross),
             annual_net_savings=float(annual_net_savings),
             simple_payback_years=float(payback_yrs),
             npv_15y_tco_before=float(npv_before),

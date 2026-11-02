@@ -368,3 +368,28 @@ class StatusQuoAnnualResult:
     # Audit points tracking
     has_capacity_breach: bool = False
     breach_months: List[int] = field(default_factory=list)
+
+    @property
+    def total_annual_net(self) -> float:
+        """Alias for total_status_quo_net."""
+        return self.total_status_quo_net
+
+    @property
+    def total_annual_gross(self) -> float:
+        """Alias for total_status_quo_gross."""
+        return self.total_status_quo_gross
+
+    @property
+    def annual_dso_net(self) -> float:
+        """Alias for total_dso_net."""
+        return self.total_dso_net
+
+    @property
+    def dso_monthly(self) -> List["DSOMonthlyResult"]:
+        """Provides direct access to monthly DSO results."""
+        return [r.dso for r in self.monthly_records]
+
+    @property
+    def commercial_monthly(self) -> List["CommercialMonthlyResult"]:
+        """Provides direct access to monthly commercial supplier & tax results."""
+        return [r.commercial for r in self.monthly_records]

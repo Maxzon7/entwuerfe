@@ -11,7 +11,10 @@ industrial, and mobility load profiles.
 
 import datetime
 from typing import List, Dict, Any, Callable
-from current_model.models.load_component import SimpleConsumer, TimeWindow
+try:
+    from current_model.models.load_component import SimpleConsumer, TimeWindow
+except ImportError:
+    from .load_component import SimpleConsumer, TimeWindow
 
 
 def get_industry_preset_consumers() -> List[SimpleConsumer]:
