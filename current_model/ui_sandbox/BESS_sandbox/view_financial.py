@@ -427,4 +427,59 @@ def render_financial_viability_tab(
                 use_container_width=True
             )
 
+    # --- Section 7: Multi-Sizing Sub-Scenario Summary & Standardized ScenarioEvaluationOutput ---
+    try:
+        from ui_sandbox.common import ScenarioEvaluationOutput, render_scenario_evaluation_output_card
+    except ImportError:
+        try:
+            from current_model.ui_sandbox.common import ScenarioEvaluationOutput, render_scenario_evaluation_output_card
+        except ImportError:
+            ScenarioEvaluationOutput = None
+            render_scenario_evaluation_output_card = None
+
+    if ScenarioEvaluationOutput is not None and render_scenario_evaluation_output_card is not None:
+        p_load_arr = sim_result.df_timeseries["P_Load_kW"].to_numpy(dtype=float)
+        p_grid_arr = sim_result.df_timeseries["P_Grid_kW"].to_numpy(dtype=float)
+        peak_before = float(np.max(p_load_arr)) if len(p_load_arr) > 0 else 0.0
+        peak_after = float(np.max(p_grid_arr)) if len(p_grid_arr) > 0 else 0.0
+        shaved_kw = max(0.0, peak_before - peak_after)
+        shaved_pct = (shaved_kw / peak_before * 100.0) if peak_before > 0 else 0.0
+        limit_kw = float(sim_result.grid_limit_kw)
+        scale_yr = 35040.0 / max(1, len(p_load_arr))
+        ov_before_hrs = float(np.sum(p_load_arr > limit_kw) * 0.25 * scale_yr)
+        ov_after_hrs = float(np.sum(p_grid_arr > limit_kw + 1e-4) * 0.25 * scale_yr)
+        load_kwh_yr = float(np.sum(p_load_arr) * 0.25 * scale_yr)
+        grid_kwh_yr = float(np.sum(p_grid_arr) * 0.25 * scale_yr)
+
+        scen_out = ScenarioEvaluationOutput(
+            scenario_id="bess_only",
+            scenario_name="Scenario 4: Standalone BESS Peak-Shaving",
+            sub_scenario_label=f"{bess_cfg.capacity_kwh:,.0f} kWh / {bess_cfg.max_power_kw:,.0f} kW ({bess_cfg.chemistry})",
+            currency_code=currency,
+            peak_before_kw=peak_before,
+            peak_after_kw=peak_after,
+            peak_shaved_kw=shaved_kw,
+            peak_shaved_pct=shaved_pct,
+            grid_limit_kw=limit_kw,
+            overload_hours_before=ov_before_hrs,
+            overload_hours_after=ov_after_hrs,
+            annual_load_kwh=load_kwh_yr,
+            annual_grid_import_before_kwh=load_kwh_yr,
+            annual_grid_import_after_kwh=grid_kwh_yr,
+            self_consumption_pct=0.0,
+            autarky_pct=0.0,
+            capex_total=float(net_initial_investment),
+            annual_tech_opex=float(fin_metrics.annual_opex_year1),
+            annual_grid_bill_net_before=float(sq_total),
+            annual_grid_bill_net_after=float(fin_metrics.annual_with_bess_total_bill),
+            annual_grid_bill_gross_before=float(sq_total * 1.21),
+            annual_grid_bill_gross_after=float(fin_metrics.annual_with_bess_total_bill * 1.21),
+            annual_net_savings=float(sq_total - wb_total),
+            simple_payback_years=float(fin_metrics.simple_payback_years if fin_metrics.simple_payback_years is not None else 99.9),
+            npv_15y_tco_before=float(sq_total * 10.38),
+            npv_15y_tco_after=float(sq_total * 10.38 - fin_metrics.net_present_value),
+            npv_15y_net_benefit=float(fin_metrics.net_present_value),
+        )
+        render_scenario_evaluation_output_card(output=scen_out, key_prefix="bess_sb")
+
     return fin_metrics

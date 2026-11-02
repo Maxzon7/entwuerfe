@@ -54,6 +54,22 @@ class TestUISandboxIsolation(unittest.TestCase):
             f_path = os.path.join(bess_dir, expected_file)
             self.assertTrue(os.path.isfile(f_path), f"ui_sandbox/BESS_sandbox/{expected_file} must exist")
 
+        # Shared Foundation + New Standalone Sandboxes (Scenarios 2, 3, 5, 6)
+        for sub_dir, req_files in [
+            ("common", ["__init__.py", "evaluation_models.py", "baseline_loader.py"]),
+            ("NewContract_sandbox", ["__init__.py", "app.py"]),
+            ("Solar_sandbox", ["__init__.py", "solar_sandbox_engine.py", "app.py"]),
+            ("SolarBESS_sandbox", ["__init__.py", "app.py"]),
+            ("Generator_sandbox", ["__init__.py", "app.py"]),
+        ]:
+            d_path = os.path.join(self.sandbox_dir, sub_dir)
+            self.assertTrue(os.path.isdir(d_path), f"ui_sandbox/{sub_dir} directory must exist")
+            for rf in req_files:
+                fp = os.path.join(d_path, rf)
+                self.assertTrue(os.path.isfile(fp), f"ui_sandbox/{sub_dir}/{rf} must exist")
+                with open(fp, "r", encoding="utf-8") as src_f:
+                    ast.parse(src_f.read(), filename=fp)
+
     def test_production_codebase_never_imports_ui_sandbox(self):
         """Strict architectural guard: Main app, core, models, and ui must NEVER import ui_sandbox."""
         prod_patterns = [

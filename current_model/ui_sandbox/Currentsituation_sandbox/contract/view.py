@@ -558,6 +558,21 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
     result = calculate_status_quo_master_2025(load=load_series, config=active_config)
 
+    # Save shared baseline snapshot in session_state and offer portable JSON export
+    st.session_state["shared_baseline_snapshot"] = {
+        "load": load_series,
+        "config": active_config,
+        "result": result,
+        "site_label": source_label,
+    }
+    try:
+        from ui_sandbox.common.baseline_loader import export_baseline_snapshot_json
+    except ImportError:
+        try:
+            from current_model.ui_sandbox.common.baseline_loader import export_baseline_snapshot_json
+        except ImportError:
+            export_baseline_snapshot_json = None
+
     assumptions_dict = build_assumptions_register_dict(
         load_series=load_series,
         config=active_config,
@@ -567,6 +582,19 @@ def render_tab2_base_contract(key_prefix: str = "currsit_contract") -> Any:
 
     with equation_bar_container:
         st.markdown(_render_master_bill_equation_bar_html(result), unsafe_allow_html=True)
+        if export_baseline_snapshot_json is not None:
+            snap_json = export_baseline_snapshot_json(
+                load_series=load_series,
+                config=active_config,
+                site_label=source_label,
+            )
+            st.download_button(
+                label=":material/share: Export Baseline Snapshot (.json) for Standalone Scenario Sandboxes",
+                data=snap_json.encode("utf-8"),
+                file_name=f"baseline_snapshot_2025_{active_config.currency_code}.json",
+                mime="application/json",
+                key=f"{key_prefix}_dl_baseline_snap_json",
+            )
 
     with assumptions_banner_container:
         render_assumptions_banner(assumptions_dict=assumptions_dict, expanded=False)
