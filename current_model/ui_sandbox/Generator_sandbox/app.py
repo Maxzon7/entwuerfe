@@ -12,24 +12,25 @@ Architecture (1:1 with Main Program UI & Component Architecture):
   - Tab 1: Facility Load & Consumption Profile (1:1 from Currentsituation_sandbox / Main App)
       * Real CSV Smart Meter Ingestion & Synthetic 24h/365d Load Simulator
       * 35,040-step 15-min interactive profile, Load Duration Curve (LDC), and 4 Base KPIs
-  - Tab 2: Standalone Generator Sizing & Fuel Economics (1:1 with ui/tab_generator/view.py)
-      * 1. Diagnostic Status Cards (Facility Peak Demand, Contracted Grid Limit, Overload Status, Configured Capacity)
-      * 2. Generator Technical & Commercial Sizing Form (Model Presets, Rated kW, Fuel Curve, Wet-Stacking, Rental vs. CAPEX)
+  - Tab 2: Generator Sizing, Ideal Peaker & Fuel Economics (1:1 with ui/tab_generator/view.py)
+      * 1. Interactive Grid Limit Controller (Live reactive number input & quick presets)
+      * 2. Diagnostic Status Cards (Facility Peak Demand, Contracted Grid Limit, Overload Status, Configured Capacity)
+      * 3. "The Perfect Generator" Diagnostic Blueprint & Sizing Recommendations:
+          - 4 Diagnostic KPI Cards (Peak Overload kW, Overload Energy MWh, Continuous Run hrs, Safe Fuel Tank Autonomy)
+          - Wet-stacking risk alert (<25% minimum engine loading)
+          - 3 Sizing Tiers with 1-Click Auto-Configure (100% Zero-Breach, 80% Sweet Spot, 50% Peak-Assist)
+      * 4. Generator Technical & Commercial Sizing Form (Model Presets, Rated kW, Fuel Curve, Wet-Stacking, Rental vs. CAPEX)
       * Primary action button: Run Generator Simulation & Dispatch
-      * 3. Executive KPI Results Cards (Shaved Peak Demand, Runtime hrs & Starts, Fuel OPEX, Net Annual Impact)
-      * 4. Consolidated Visual Dispatch & Financial Analysis Suite (4 Sub-Tabs):
+      * 5. Executive KPI Results Cards (Shaved Peak Demand, Runtime hrs & Starts, Fuel OPEX, Net Annual Impact)
+      * 6. Consolidated Visual Dispatch & Financial Analysis Suite (4 Sub-Tabs):
           - Subtab 1: 15-Minute Dispatch Timeseries (with 7D, 1M, 3M, All zoom & range slider)
           - Subtab 2: Monthly Generation & Fuel Breakdown (12-month dual-axis chart)
           - Subtab 3: Energy Flow Sankey Diagram
-          - Subtab 4: Commercial Zahlungsreihe & Amortization Trajectory + Ledger Table
-  - Tab 3: Ideal Peaker Dimensioning & Sizing Optimizer ("The Perfect Generator")
-      * 1. Coupled Performance Metrics: 8 KPI cards
-      * 2. "The Perfect Generator" Diagnostic Blueprint (Unconstrained Sizing Analysis):
-          - 4 Diagnostic KPI Cards (Peak Overload kW, Overload Energy MWh, Continuous Run hrs, Safe Fuel Tank Autonomy)
-          - Wet-stacking risk alert (<25% minimum engine loading)
-          - 3 Sizing Tiers with 1-Click Sync to Tab 2 Form (100% Zero-Breach, 80% Sweet Spot, 50% Peak-Assist)
-      * 3. Parametric Capacity Sweep Curve & Tradeoff Analysis
-      * 4. Standardized Master Integration Data Contract (residual_power_kw + JSON export)
+          - Subtab 4: Commercial Payment Schedule & Amortization Trajectory + Monthly Ledger Table
+  - Tab 3: Parametric Capacity Sweep & Master Integration
+      * 1. Coupled Performance Metrics: 8 KPI cards (Active Generator vs. Grid Congestion)
+      * 2. Parametric Capacity Sweep Curve & Tradeoff Analysis (Avoided Overload % vs. Rated kW vs. Fuel Burn)
+      * 3. Developer & Master Integration Data Contract (residual_power_kw + JSON export)
 ========================================================================================
 """
 
@@ -181,8 +182,8 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
     tab1, tab2, tab3 = st.tabs(
         [
             ":material/analytics: Tab 1: Facility Load & Consumption Profile",
-            ":material/local_gas_station: Tab 2: Standalone Generator Sizing & Fuel Economics",
-            ":material/precision_manufacturing: Tab 3: Ideal Peaker Dimensioning & Sizing Optimizer",
+            ":material/local_gas_station: Tab 2: Generator Sizing, Ideal Peaker & Fuel Economics",
+            ":material/tune: Tab 3: Parametric Capacity Sweep & Master Integration",
         ]
     )
 
@@ -363,9 +364,127 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
         st.markdown("---")
 
         # ------------------------------------------------------------------------------
-        # 3. Generator Configuration Form (Template for Master Program)
+        # 3. "The Perfect Generator" Diagnostic Blueprint & Sizing Recommendations
         # ------------------------------------------------------------------------------
-        st.subheader(":material/settings: Generator Technical & Commercial Sizing")
+        st.subheader("3. :material/auto_awesome: 'The Perfect Generator' Diagnostic Blueprint")
+        st.caption(
+            "Inspired by unconstrained BESS diagnostics, this blueprint calculates the mathematically ideal genset "
+            "required to completely eradicate all facility grid overload breaches. Select a sizing tier below to instantly auto-configure the generator."
+        )
+
+        active_fuel = st.session_state.get(f"{key_prefix}_form_fuel_type", st.session_state.get(f"{key_prefix}_cfg_fuel_type", "Diesel"))
+        active_price = float(st.session_state.get(f"{key_prefix}_form_fuel_price", st.session_state.get(f"{key_prefix}_cfg_fuel_price", 1.45)))
+        active_min_load = float(st.session_state.get(f"{key_prefix}_form_min_load", st.session_state.get(f"{key_prefix}_cfg_min_load", 25.0)))
+
+        ideal_res = compute_ideal_generator_dimensioning(
+            load_kw=load_series.power_kw,
+            grid_limit_kw=contract_cap_kw,
+            step_hours=0.25,
+            fuel_type=str(active_fuel),
+            fuel_price_per_unit=float(active_price),
+            min_load_pct=float(active_min_load),
+        )
+
+        tank_unit = "m³" if active_fuel == "Natural Gas" else "Liters"
+
+        # 4 Diagnostic KPI Cards
+        d1, d2, d3, d4 = st.columns(4)
+        with d1:
+            render_kpi_card(
+                "Peak Grid Overload",
+                f"{ideal_res.peak_overload_kw:,.1f} kW",
+                f"Peak breach above {contract_cap_kw:.0f} kW limit",
+                status="alert" if ideal_res.peak_overload_kw > 0 else "ok",
+            )
+        with d2:
+            render_kpi_card(
+                "Annual Overload Energy",
+                f"{ideal_res.annual_overload_energy_mwh:,.1f} MWh/a",
+                f"{ideal_res.overload_hours_count:,.1f} breach hrs ({ideal_res.engine_starts_count} starts)",
+                status="alert" if ideal_res.annual_overload_energy_mwh > 0 else "ok",
+            )
+        with d3:
+            render_kpi_card(
+                "Longest Continuous Run",
+                f"{ideal_res.max_continuous_breach_hours:.1f} hrs",
+                "Longest unbroken grid breach duration",
+                status="default",
+            )
+        with d4:
+            render_kpi_card(
+                "Safe Tank Autonomy",
+                f"{ideal_res.recommended_fuel_tank_liters:,.0f} {tank_unit}",
+                "Worst event burn + 48h emergency reserve",
+                status="ok",
+            )
+
+        # Wet-stacking risk alert if needed
+        if ideal_res.wet_stacking_risk_pct > 15.0:
+            st.warning(
+                f":material/warning: **Wet-Stacking Risk Warning:** {ideal_res.wet_stacking_risk_pct:.1f}% of overload intervals demand less than 25% nameplate capacity. "
+                "Running a single oversized generator below minimum loading causes unburned fuel buildup. Consider multi-genset modularity or a BESS hybrid buffer.",
+                icon=":material/warning:",
+            )
+
+        # 3 Sizing Recommendations Cards with 1-Click Apply Buttons
+        st.markdown("##### :material/recommend: Recommended Sizing Tiers (1-Click Auto-Configure)")
+        rec_c1, rec_c2, rec_c3 = st.columns(3)
+
+        with rec_c1:
+            with st.container(border=True):
+                st.markdown("**:material/verified: Tier 1: 100% Zero-Breach Champion**")
+                st.markdown(f"<h3 style='margin:4px 0; color:#38bdf8;'>{ideal_res.recommended_rated_kw_100:,.0f} kW</h3>", unsafe_allow_html=True)
+                st.caption(f"Guarantees 100% compliance with 10% safety margin. Projected annual fuel: ~{ideal_res.annual_estimated_fuel_liters:,.0f} {tank_unit} (~{ideal_res.annual_fuel_cost_est:,.0f} EUR).")
+                if st.button(
+                    f":material/auto_fix_high: Apply 100% Sizing ({ideal_res.recommended_rated_kw_100:,.0f} kW)",
+                    key=f"{key_prefix}_btn_apply_ideal_100",
+                    type="primary",
+                    use_container_width=True,
+                    help="Transfers 100% zero-breach rated power directly into the form below and recalculates.",
+                ):
+                    _recalc_target_gen_kw(ideal_res.recommended_rated_kw_100, st.session_state.get(f"{key_prefix}_active_cfg"), key_prefix)
+
+        with rec_c2:
+            with st.container(border=True):
+                st.markdown("**:material/savings: Tier 2: 80% Economic Sweet Spot**")
+                st.markdown(f"<h3 style='margin:4px 0; color:#34d399;'>{ideal_res.recommended_rated_kw_80:,.0f} kW</h3>", unsafe_allow_html=True)
+                st.caption("Eradicates 80% of grid breach capacity. Substantially lowers equipment CAPEX and reduces wet-stacking during small peaks.")
+                if st.button(
+                    f":material/auto_fix_high: Apply 80% Sizing ({ideal_res.recommended_rated_kw_80:,.0f} kW)",
+                    key=f"{key_prefix}_btn_apply_ideal_80",
+                    use_container_width=True,
+                    help="Transfers 80% economic sweet spot rated power directly into the form below and recalculates.",
+                ):
+                    _recalc_target_gen_kw(ideal_res.recommended_rated_kw_80, st.session_state.get(f"{key_prefix}_active_cfg"), key_prefix)
+
+        with rec_c3:
+            with st.container(border=True):
+                st.markdown("**:material/battery_charging_full: Tier 3: 50% Peak-Assist Model**")
+                st.markdown(f"<h3 style='margin:4px 0; color:#fbbf24;'>{ideal_res.recommended_rated_kw_50:,.0f} kW</h3>", unsafe_allow_html=True)
+                st.caption("Cuts top 50% peak breaches. Highly recommended when paired with an on-site battery (BESS) or active demand-response.")
+                if st.button(
+                    f":material/auto_fix_high: Apply 50% Sizing ({ideal_res.recommended_rated_kw_50:,.0f} kW)",
+                    key=f"{key_prefix}_btn_apply_ideal_50",
+                    use_container_width=True,
+                    help="Transfers 50% assist rated power directly into the form below and recalculates.",
+                ):
+                    _recalc_target_gen_kw(ideal_res.recommended_rated_kw_50, st.session_state.get(f"{key_prefix}_active_cfg"), key_prefix)
+
+        st.markdown("---")
+
+        # ------------------------------------------------------------------------------
+        # 4. Generator Configuration Form (Template for Master Program)
+        # ------------------------------------------------------------------------------
+        st.subheader("4. :material/settings: Generator Technical & Commercial Sizing")
+
+        # Check for staged capacity updates from 1-click apply buttons
+        pending_kw_key = f"{key_prefix}_pending_power_kw"
+        if pending_kw_key in st.session_state:
+            pending_val = float(st.session_state.pop(pending_kw_key))
+            st.session_state[f"{key_prefix}_form_power_kw"] = pending_val
+            st.session_state[f"{key_prefix}_cfg_power_kw"] = pending_val
+            st.session_state[f"{key_prefix}_preset_select"] = "Custom"
+            st.session_state[f"{key_prefix}_last_selected_preset"] = "Custom"
 
         presets = get_generator_presets()
         preset_names = ["Custom"] + list(presets.keys())
@@ -633,7 +752,7 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
             ":material/timeline: 15-Minute Dispatch Timeseries",
             ":material/bar_chart: Monthly Generation & Fuel Breakdown",
             ":material/schema: Energy Flow (Sankey)",
-            ":material/payments: Commercial Zahlungsreihe & Amortization",
+            ":material/payments: Commercial Payment Schedule & Amortization",
         ])
 
         with tab_v1:
@@ -661,21 +780,20 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
         with tab_v4:
             fig_payment = create_cumulative_payment_chart(df_zahlungsreihe, currency=currency)
             st.plotly_chart(fig_payment, use_container_width=True)
-            with st.expander(":material/table_chart: Detailed Monthly Payment Schedule (Zahlungsreihe Table)", expanded=False):
+            with st.expander(":material/table_chart: Detailed Monthly Payment Schedule Ledger", expanded=False):
                 st.dataframe(df_zahlungsreihe, use_container_width=True, hide_index=True)
 
     # ==================================================================================
-    # TAB 3: Ideal Peaker Dimensioning & Sizing Optimizer ("The Perfect Generator")
+    # TAB 3: Parametric Capacity Sweep & Master Integration
     # ==================================================================================
     with tab3:
         st.markdown(
             """
-            <div style="background: #0f172a; border-left: 4px solid #10b981; padding: 12px 18px; border-radius: 6px; margin-bottom: 16px;">
-                <strong style="color:#f8fafc; font-size:1.05rem;">"The Perfect Generator" — Ideal Peaker Dimensioning & Sizing Optimizer</strong>
+            <div style="background: #0f172a; border-left: 4px solid #38bdf8; padding: 12px 18px; border-radius: 6px; margin-bottom: 16px;">
+                <strong style="color:#f8fafc; font-size:1.05rem;">Parametric Capacity Sweep & Master Integration Workbench</strong>
                 <p style="color:#94a3b8; font-size:0.84rem; margin:3px 0 0 0;">
-                    Calculates the unconstrained physical generator dimensioning required to completely eradicate all grid limit breaches,
-                    inspired by the unconstrained BESS diagnostics. Automatically computes optimal rated power, continuous runtime duration,
-                    safe on-site fuel tank autonomy, wet-stacking risks, and parametric capacity tradeoffs.
+                    Couples 15-minute physical generator dispatch with your facility baseline, explores parametric capacity sweep tradeoffs,
+                    and exposes the standardized master integration data contract.
                 </p>
             </div>
             """,
@@ -773,114 +891,9 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
         st.markdown("---")
 
         # ------------------------------------------------------------------------------
-        # 2. "The Perfect Generator" Diagnostic Blueprint (Unconstrained Sizing Analysis)
+        # 2. Parametric Capacity Sweep & Sizing Tradeoff Curve
         # ------------------------------------------------------------------------------
-        st.subheader("2. :material/auto_awesome: 'The Perfect Generator' Diagnostic Blueprint")
-        st.caption(
-            "Inspired by the unconstrained BESS diagnostics, this blueprint models the ideal genset required to completely eradicate all facility grid overload breaches. "
-            "It computes the unconstrained power demand peak, required continuous runtime, safe fuel storage, wet-stacking exposure, and sizing tiers."
-        )
-
-        ideal_res = compute_ideal_generator_dimensioning(
-            load_kw=load_series.power_kw,
-            grid_limit_kw=contract_cap_kw,
-            step_hours=0.25,
-            fuel_type=gen_cfg_active.fuel_type,
-            fuel_price_per_unit=gen_cfg_active.fuel_price_per_unit,
-            min_load_pct=gen_cfg_active.min_load_ratio_pct,
-        )
-
-        tank_unit = "m³" if gen_cfg_active.fuel_type == "Natural Gas" else "Liters"
-
-        # Diagnostic KPI Cards
-        d1, d2, d3, d4 = st.columns(4)
-        with d1:
-            render_kpi_card(
-                "Peak Grid Overload",
-                f"{ideal_res.peak_overload_kw:,.1f} kW",
-                f"Instantaneous peak breach above {contract_cap_kw:.0f} kW limit",
-                status="alert" if ideal_res.peak_overload_kw > 0 else "ok",
-            )
-        with d2:
-            render_kpi_card(
-                "Annual Overload Energy",
-                f"{ideal_res.annual_overload_energy_mwh:,.1f} MWh/a",
-                f"{ideal_res.overload_hours_count:,.1f} breach hours ({ideal_res.engine_starts_count} start events)",
-                status="alert" if ideal_res.annual_overload_energy_mwh > 0 else "ok",
-            )
-        with d3:
-            render_kpi_card(
-                "Longest Continuous Run",
-                f"{ideal_res.max_continuous_breach_hours:.1f} hrs",
-                "Longest unbroken grid breach duration",
-                status="default",
-            )
-        with d4:
-            render_kpi_card(
-                "Safe Tank Autonomy",
-                f"{ideal_res.recommended_fuel_tank_liters:,.0f} {tank_unit}",
-                "Worst event burn + 48h emergency reserve",
-                status="ok",
-            )
-
-        # Wet-stacking risk alert if needed
-        if ideal_res.wet_stacking_risk_pct > 15.0:
-            st.warning(
-                f":material/warning: **Wet-Stacking Risk Warning:** {ideal_res.wet_stacking_risk_pct:.1f}% of overload intervals demand less than 25% nameplate capacity. "
-                "Running a single oversized generator below minimum loading causes unburned fuel buildup. Consider multi-genset modularity or a BESS hybrid buffer.",
-                icon=":material/warning:",
-            )
-
-        # 3 Sizing Recommendations Cards with 1-Click Apply Buttons
-        st.markdown("##### :material/recommend: Peaker Sizing Tiers & 1-Click Synchronization to Tab 2")
-        rec_c1, rec_c2, rec_c3 = st.columns(3)
-
-        with rec_c1:
-            with st.container(border=True):
-                st.markdown("**:material/verified: Tier 1: 100% Zero-Breach Champion**")
-                st.markdown(f"<h3 style='margin:4px 0; color:#38bdf8;'>{ideal_res.recommended_rated_kw_100:,.0f} kW</h3>", unsafe_allow_html=True)
-                st.caption(f"Guarantees 100% contract compliance with 10% safety margin. Projected annual fuel: ~{ideal_res.annual_estimated_fuel_liters:,.0f} {tank_unit} (~{ideal_res.annual_fuel_cost_est:,.0f} {currency}).")
-                if st.button(
-                    f":material/auto_fix_high: Apply 100% Sizing ({ideal_res.recommended_rated_kw_100:,.0f} kW)",
-                    key=f"{key_prefix}_btn_apply_ideal_100",
-                    type="primary",
-                    use_container_width=True,
-                    help="Transfers 100% zero-breach rated power directly into Tab 2 form and re-dispatches.",
-                ):
-                    _recalc_target_gen_kw(ideal_res.recommended_rated_kw_100, gen_cfg_active, key_prefix)
-
-        with rec_c2:
-            with st.container(border=True):
-                st.markdown("**:material/savings: Tier 2: 80% Economic Sweet Spot**")
-                st.markdown(f"<h3 style='margin:4px 0; color:#34d399;'>{ideal_res.recommended_rated_kw_80:,.0f} kW</h3>", unsafe_allow_html=True)
-                st.caption("Eradicates 80% of grid breach capacity. Substantially lowers equipment CAPEX and avoids wet-stacking during small peaks.")
-                if st.button(
-                    f":material/auto_fix_high: Apply 80% Sizing ({ideal_res.recommended_rated_kw_80:,.0f} kW)",
-                    key=f"{key_prefix}_btn_apply_ideal_80",
-                    use_container_width=True,
-                    help="Transfers 80% economic sweet spot rated power directly into Tab 2 form and re-dispatches.",
-                ):
-                    _recalc_target_gen_kw(ideal_res.recommended_rated_kw_80, gen_cfg_active, key_prefix)
-
-        with rec_c3:
-            with st.container(border=True):
-                st.markdown("**:material/battery_charging_full: Tier 3: 50% Peak-Assist Model**")
-                st.markdown(f"<h3 style='margin:4px 0; color:#fbbf24;'>{ideal_res.recommended_rated_kw_50:,.0f} kW</h3>", unsafe_allow_html=True)
-                st.caption("Cuts top 50% peak breaches. Highly recommended when paired with an on-site battery (BESS) or active demand-response.")
-                if st.button(
-                    f":material/auto_fix_high: Apply 50% Sizing ({ideal_res.recommended_rated_kw_50:,.0f} kW)",
-                    key=f"{key_prefix}_btn_apply_ideal_50",
-                    use_container_width=True,
-                    help="Transfers 50% assist rated power directly into Tab 2 form and re-dispatches.",
-                ):
-                    _recalc_target_gen_kw(ideal_res.recommended_rated_kw_50, gen_cfg_active, key_prefix)
-
-        st.markdown("---")
-
-        # ------------------------------------------------------------------------------
-        # 3. Parametric Capacity Sweep & Tradeoff Curve
-        # ------------------------------------------------------------------------------
-        st.subheader("3. Parametric Capacity Sweep & Sizing Tradeoff Curve")
+        st.subheader("2. Parametric Capacity Sweep & Sizing Tradeoff Curve")
         st.caption(
             "The **Capacity Sweep Curve** visualizes the continuous tradeoff between generator continuous rated kW, "
             "avoided overload breach hours, and operating fuel burn across different sizing points."
@@ -893,6 +906,15 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
             base_config=gen_cfg_active,
         )
 
+        st.markdown("##### :material/auto_awesome: Quick Sizing Presets (Target Overload Mitigation)")
+        sb1, sb2, sb3 = st.columns(3)
+        if sb1.button(f"100% Zero-Breach Sizing ({sweep_presets['zero_breach_100']:,.0f} kW)", use_container_width=True, key=f"{key_prefix}_sz_100", type="primary"):
+            _recalc_target_gen_kw(sweep_presets["zero_breach_100"], gen_cfg_active, key_prefix)
+        if sb2.button(f"80% Peak Capping ({sweep_presets['peak_cap_80']:,.0f} kW)", use_container_width=True, key=f"{key_prefix}_sz_80"):
+            _recalc_target_gen_kw(sweep_presets["peak_cap_80"], gen_cfg_active, key_prefix)
+        if sb3.button(f"50% Peak Capping ({sweep_presets['peak_cap_50']:,.0f} kW)", use_container_width=True, key=f"{key_prefix}_sz_50"):
+            _recalc_target_gen_kw(sweep_presets["peak_cap_50"], gen_cfg_active, key_prefix)
+
         col_sweep_curve, col_sweep_kpis = st.columns([1.5, 1.0])
         with col_sweep_curve:
             fig_sweep = create_generator_sweep_figure(
@@ -903,14 +925,17 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
 
         with col_sweep_kpis:
             with st.container(border=True):
-                st.markdown("##### Current Sizing Summary")
+                st.markdown("##### Sizing Performance Summary")
                 st.metric("Continuous Rated Capacity", f"{gen_cfg_active.rated_power_kw:,.0f} kW", f"Min Load: {gen_cfg_active.min_power_kw:,.0f} kW")
                 st.metric("Avoided Overload Hours", f"{hrs_eliminated_pct:.1f}%", f"Remaining Overload: {res_coupled['overload_hours_after']:.1f} hrs")
                 st.metric("Total Operating OPEX", f"{kpis_coupled.total_operating_cost:,.0f} {currency}/a", f"Fuel: {kpis_coupled.fuel_cost_total:,.0f} {currency}")
 
+        st.markdown("---")
+
         # ------------------------------------------------------------------------------
-        # 4. Standardized Session State Output Contract for Phase 2 Master Integration
+        # 3. Standardized Session State Output Contract for Phase 2 Master Integration
         # ------------------------------------------------------------------------------
+        st.subheader("3. :material/integration_instructions: Developer & Future Master Integration Data Contract")
         p_residual_arr = res_coupled["p_grid_kw"]
         p_gen_arr = res_coupled["p_gen_kw"]
 
@@ -929,7 +954,7 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
             "currency_code": currency,
         }
 
-        with st.expander(":material/integration_instructions: Developer & Future Master Integration Data Contract", expanded=False):
+        with st.expander(":material/data_object: View Standardized JSON Output Contract", expanded=False):
             st.caption(
                 "This clean data contract holds the 35,040-step residual load array `residual_power_kw` and generator metrics. "
                 "In Phase 2, this object will directly feed into the 4-Pillar electricity billing engine to evaluate penalty and bill savings."
@@ -960,13 +985,14 @@ def render_generator_sandbox(key_prefix: str = "gen_sb") -> None:
             )
 
 
-def _recalc_target_gen_kw(target_kw: float, cfg: GeneratorConfig, key_prefix: str) -> None:
-    """Helper to update generator rated capacity and trigger re-simulation."""
+def _recalc_target_gen_kw(target_kw: float, cfg: Optional[GeneratorConfig], key_prefix: str) -> None:
+    """Helper to update generator rated capacity and trigger re-simulation safely."""
     target_val = float(target_kw)
-    cfg.rated_power_kw = target_val
+    st.session_state[f"{key_prefix}_pending_power_kw"] = target_val
     st.session_state[f"{key_prefix}_cfg_power_kw"] = target_val
-    st.session_state[f"{key_prefix}_form_power_kw"] = target_val
-    st.session_state[f"{key_prefix}_active_cfg"] = cfg
+    if cfg is not None:
+        cfg.rated_power_kw = target_val
+        st.session_state[f"{key_prefix}_active_cfg"] = cfg
     st.session_state[f"{key_prefix}_trigger_calc"] = True
     if f"{key_prefix}_sim_result" in st.session_state:
         del st.session_state[f"{key_prefix}_sim_result"]

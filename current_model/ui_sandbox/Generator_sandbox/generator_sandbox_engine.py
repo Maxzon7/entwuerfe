@@ -24,6 +24,8 @@ from plotly.subplots import make_subplots
 
 from current_model.models.generator import GeneratorConfig, GeneratorKPIs
 
+MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
 
 @dataclass
 class IdealGeneratorSizingResult:

@@ -117,6 +117,8 @@ class SolarPVConfig:
     soiling_loss_pct: float = 2.0                 # Soiling & dust losses (%)
     shading_loss_pct: float = 1.5                 # Near shading losses (%)
     dc_wiring_loss_pct: float = 1.5               # DC cable & mismatch losses (%)
+    bifacial_factor: float = 0.0                  # Bifacial gain factor (0.0 = monofacial)
+    system_losses_pct: float = 14.0               # Overall system loss guideline (%)
 
     # Weather Data Foundation
     weather_mode: str = "TMY"                     # "TMY", "single_year", or "multi_year"
@@ -185,6 +187,8 @@ class SolarPVConfig:
             "soiling_loss_pct": float(self.soiling_loss_pct),
             "shading_loss_pct": float(self.shading_loss_pct),
             "dc_wiring_loss_pct": float(self.dc_wiring_loss_pct),
+            "bifacial_factor": float(self.bifacial_factor),
+            "system_losses_pct": float(self.system_losses_pct),
             "weather_mode": str(self.weather_mode),
             "selected_weather_year": int(self.selected_weather_year),
             "multi_year_start": int(self.multi_year_start),
@@ -222,6 +226,8 @@ class SolarPVConfig:
             soiling_loss_pct=float(data.get("soiling_loss_pct", 2.0)),
             shading_loss_pct=float(data.get("shading_loss_pct", 1.5)),
             dc_wiring_loss_pct=float(data.get("dc_wiring_loss_pct", 1.5)),
+            bifacial_factor=float(data.get("bifacial_factor", 0.0)),
+            system_losses_pct=float(data.get("system_losses_pct", 14.0)),
             weather_mode=data.get("weather_mode", "TMY"),
             selected_weather_year=int(data.get("selected_weather_year", 2024)),
             multi_year_start=int(data.get("multi_year_start", 2015)),

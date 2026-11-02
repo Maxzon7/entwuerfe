@@ -265,9 +265,7 @@ def render_solar_sandbox(key_prefix: str = "solar_sb") -> None:
                     azimuth_deg=0.0,
                     dc_capacity_kwp=270.0,
                     temp_coefficient_pct_c=-0.30,
-                    bifacial_factor=0.0,
-                    system_losses_pct=14.0,
-                    weather_mode="tmy"
+                    weather_mode="TMY"
                 )
                 ex_fin = SolarFinancialConfig(
                     is_enabled=True,

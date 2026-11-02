@@ -612,6 +612,97 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
         self.assertIn("avoided_overload_pct", df_sweep.columns)
         self.assertIn("zero_breach_100", presets)
 
+    def test_hybrid_solar_bess_sandbox_engine_and_charts(self):
+        """Verifies 3-Tier BESS pre-dimensioning, dual-strategy hybrid dispatch, synergy table, and 15Y plant LCOE."""
+        import numpy as np
+        import pandas as pd
+        from ui_sandbox.SolarBESS_sandbox.solar_bess_sandbox_engine import (
+            compute_hybrid_bess_pre_dimensioning,
+            simulate_dual_strategies_comparison,
+            compute_synergy_comparison_metrics,
+            compute_hybrid_plant_financials,
+            create_hybrid_synchronized_dispatch_soc_figure,
+            create_hybrid_monthly_balance_figure,
+            create_hybrid_sankey_figure,
+            create_hybrid_synergy_comparison_figure,
+            create_hybrid_capex_donut_figure,
+            create_hybrid_15y_outflow_figure,
+        )
+
+        # Create 7 days (672 steps) of synthetic 15-min load + solar PV
+        n_steps = 672
+        ts = pd.date_range("2025-06-01 00:00:00", periods=n_steps, freq="15min")
+        hours = np.asarray(ts.hour + ts.minute / 60.0)
+
+        # Facility load: 120 kW base, evening peak of 260 kW between 18:00 and 21:00
+        load_kw = np.where((hours >= 18.0) & (hours < 21.0), 260.0, 120.0)
+        # Solar PV: midday bell peaking at 300 kW between 08:00 and 16:00
+        pv_kw = np.where(
+            (hours >= 8.0) & (hours <= 16.0),
+            300.0 * np.sin(np.pi * (hours - 8.0) / 8.0),
+            0.0,
+        )
+        grid_limit_kw = 180.0
+
+        # 1. Pre-dimensioning
+        pre_dim = compute_hybrid_bess_pre_dimensioning(
+            load_kw=load_kw,
+            pv_kw=pv_kw,
+            grid_limit_kw=grid_limit_kw,
+        )
+        self.assertEqual(pre_dim.original_peak_kw, 260.0)
+        self.assertEqual(pre_dim.remaining_overload_kw, 80.0)
+        self.assertGreater(pre_dim.rec_peak_kwh, 0.0)
+        self.assertGreater(pre_dim.rec_solar_kwh, 0.0)
+        self.assertGreaterEqual(pre_dim.rec_hybrid_kwh, max(pre_dim.rec_peak_kwh, pre_dim.rec_solar_kwh))
+
+        # 2. Dual-Strategy Comparison
+        dual = simulate_dual_strategies_comparison(
+            timestamps=ts,
+            load_kw=load_kw,
+            pv_kw=pv_kw,
+            bess_capacity_kwh=pre_dim.rec_hybrid_kwh,
+            bess_power_kw=pre_dim.rec_hybrid_kw,
+            grid_limit_kw=grid_limit_kw,
+        )
+        kpis_s1 = dual["peak_shaving_priority"]["kpis"]
+        kpis_s2 = dual["hybrid_self_cons_and_peak"]["kpis"]
+        self.assertLessEqual(kpis_s1.new_grid_peak_kw, grid_limit_kw + 1.0)
+        self.assertLessEqual(kpis_s2.new_grid_peak_kw, grid_limit_kw + 1.0)
+        self.assertGreaterEqual(kpis_s2.self_consumption_rate_pct, kpis_s1.self_consumption_rate_pct)
+        self.assertEqual(len(dual["comparison_df"]), 2)
+        self.assertGreaterEqual(len(dual["comparison_df"].columns), 8)
+
+        # 3. Synergy comparison
+        df_syn = compute_synergy_comparison_metrics(
+            timestamps=ts,
+            load_kw=load_kw,
+            pv_kw=pv_kw,
+            bess_capacity_kwh=pre_dim.rec_hybrid_kwh,
+            bess_power_kw=pre_dim.rec_hybrid_kw,
+            grid_limit_kw=grid_limit_kw,
+        )
+        self.assertEqual(len(df_syn), 4)
+
+        # 4. Combined Plant Financials & Charts
+        fin_res = compute_hybrid_plant_financials(
+            pv_kwp=300.0,
+            bess_capacity_kwh=pre_dim.rec_hybrid_kwh,
+            bess_power_kw=pre_dim.rec_hybrid_kw,
+            kpis=kpis_s2,
+        )
+        self.assertGreater(fin_res.total_combined_capex, 0.0)
+        self.assertGreater(fin_res.discounted_lcoe_per_kwh, 0.0)
+        self.assertAlmostEqual(fin_res.pv_share_pct + fin_res.bess_share_pct, 100.0, places=2)
+
+        df_ts = dual["hybrid_self_cons_and_peak"]["df_timeseries"]
+        self.assertIsNotNone(create_hybrid_synchronized_dispatch_soc_figure(df_ts=df_ts, grid_limit_kw=grid_limit_kw, pv_kwp=300.0, bess_kwh=pre_dim.rec_hybrid_kwh, bess_kw=pre_dim.rec_hybrid_kw))
+        self.assertIsNotNone(create_hybrid_monthly_balance_figure(df_ts=df_ts))
+        self.assertIsNotNone(create_hybrid_sankey_figure(kpis_s2))
+        self.assertIsNotNone(create_hybrid_synergy_comparison_figure(df_syn, grid_limit_kw))
+        self.assertIsNotNone(create_hybrid_capex_donut_figure(fin_res))
+        self.assertIsNotNone(create_hybrid_15y_outflow_figure(fin_res))
+
 
 if __name__ == "__main__":
     unittest.main()
