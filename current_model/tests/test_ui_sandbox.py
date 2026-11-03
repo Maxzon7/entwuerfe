@@ -57,9 +57,9 @@ class TestUISandboxIsolation(unittest.TestCase):
         # Shared Foundation + New Standalone Sandboxes (Scenarios 2, 3, 5, 6)
         for sub_dir, req_files in [
             ("common", ["__init__.py", "evaluation_models.py", "baseline_loader.py"]),
-            ("NewContract_sandbox", ["__init__.py", "app.py"]),
+            ("NewContract_sandbox", ["__init__.py", "contract_comparison_engine.py", "app.py"]),
             ("Solar_sandbox", ["__init__.py", "solar_sandbox_engine.py", "app.py"]),
-            ("SolarBESS_sandbox", ["__init__.py", "app.py"]),
+            ("SolarBESS_sandbox", ["__init__.py", "solar_bess_sandbox_engine.py", "app.py"]),
             ("Generator_sandbox", ["__init__.py", "generator_sandbox_engine.py", "app.py"]),
         ]:
             d_path = os.path.join(self.sandbox_dir, sub_dir)

@@ -34,9 +34,10 @@ current_model/ui_sandbox/
 │   ├── contract/                               # Tab 2: 4-Pillar Contract (DSO, Supplier, Metering/Taxes, Overview, Invoice PDF)
 │   └── engine/                                 # 5-Layer 2025 Unbundled & Single-Utility Calculation Engine
 │
-├── NewContract_sandbox/                        # [Scenario 2] Pure Contract & Capacity Optimization Sandbox
+├── NewContract_sandbox/                        # [Scenario 2] Contract Switch & Twin-Contract Benchmark Sandbox
 │   ├── __init__.py
-│   └── app.py                                  # Standalone 4-Tab app (P_contract optimization sweep, tariff switch, 4-Pillar diff)
+│   ├── contract_comparison_engine.py           # 4-Pillar delta KPIs, side-by-side stacked bar, 12-month grouped bill series, audit table & 15Y TCO
+│   └── app.py                                  # Standalone 3-Tab Twin-Contract Workbench (Contract 1, Contract 2 auto-cloned, Cost Comparison)
 │
 ├── Solar_sandbox/                              # [Scenario 3] Standalone Solar PV & Hockey-Stick Auto-Sizing Sandbox
 │   ├── __init__.py
@@ -92,6 +93,33 @@ python -m streamlit run "ui_sandbox/Generator_sandbox/app.py"
 
 ---
 
+## :material/tune: Scenario 2: Standalone Contract Switch & Twin-Contract Benchmark Sandbox (`ui_sandbox/NewContract_sandbox/`)
+
+The Contract Switch Sandbox provides a twin-contract workbench allowing rapid side-by-side benchmarking of your current commercial electricity contract against an alternative supply contract or right-sized capacity:
+
+* **Top Header & Baseline Selector:** Active 35,040-step consumption profile with 1-click verified benchmarks (Rotterdam Stedin WKO, EDEMSA Bodegas Salentein, Enexis, Liander) or custom 15-minute CSV upload.
+* **Tab 1: Contract 1 — Current Situation (Baseline Contract):**
+  * Exact layout of the Current Situation contract workbench ([`ui_sandbox/Currentsituation_sandbox/contract/view.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui_sandbox/Currentsituation_sandbox/contract/view.py)).
+  * General Market Structure & Currency Settings + Benchmark Presets Quick-Loader.
+  * Live Master Bill Equation Bar + Simulation Assumptions Register Banner.
+  * 5 Actor Sub-Tabs: Grid Network (DSO), Energy Supply (Retailer), Metering & Taxes, Executive Overview & 15Y TCO, and Classic Electricity Bill.
+* **Tab 2: Contract 2 — Alternative Contract (Switch Setup):**
+  * Identical layout and sub-tabs to Tab 1, operating with independent state.
+  * **Auto-Cloned by Default:** Contract 2 initializes identically to Contract 1 so users can test changes (e.g. switch the Retailer in Sub-tab 2 from Fixed to EPEX Spot, or adjust contracted capacity in Sub-tab 1) without re-entering parameters.
+  * Includes a 1-click `:material/content_copy: Reset / Sync from Contract 1` button.
+* **Tab 3: Cost Comparison & Delta Analytics (Contract 1 vs. Contract 2):**
+  * **Executive Delta Status Banner:** Instant notification of Net Annual Cost Savings / Surcharges.
+  * **5 Executive Delta KPI Cards:** Annual Net Bill Delta, Annual Gross Bill Delta (incl. VAT), Pillar 1 (Supply) Delta, Pillar 2 (DSO) Delta, and Effective Blended Rate Delta (EUR/kWh).
+  * **Interactive Plotly Suite:**
+    * 4-Pillar Side-by-Side Cost Comparison (Stacked Bar Chart).
+    * 12-Month Net Invoices Grouped Bar Chart (Month-by-month bill series & delta line).
+    * 15-Year Life-Cycle Cumulative Cost & TCO NPV Trajectory.
+  * **Detailed 4-Pillar Line-by-Line Comparative Audit Table:** Complete reconciliation of all 4 cost pillars, standing fees, capacity charges, and volumetric rates.
+  * **Grid Capacity & Breach Diagnostics:** $P_{\text{contract}}$, Peak Overload, Breach Months, and Excess Penalties.
+  * **Export & Master Integration:** CSV comparison table download, standardized `ScenarioEvaluationOutput` container, and JSON export.
+
+---
+
 ## :material/wb_sunny: Scenario 3: Standalone Solar PV Sandbox (`ui_sandbox/Solar_sandbox/`)
 
 The Solar PV Sandbox replicates the exact UI layout and proven calculation components of the main program ([`ui/tab3_solar/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/ui/tab3_solar/view.py)) into an isolated, standalone workbench:
@@ -144,9 +172,10 @@ The Hybrid Solar PV + BESS Sandbox unites the physical Solar PV workbench from `
   * **1. Geographic Location & Solar Radiation Site:** City search, presets, interactive Folium map, and GPS coordinates.
   * **2. Technical PV Specification Form:** Module count $\times$ wattage ($W_p$), cell technology (`TOPCon`, `PERC`, `Backcontact`), tilt/azimuth, and inverter sizing.
   * **3. Solar Generation Baseline & Free BESS Charging Pool:** 4 KPI cards (`Annual Solar Yield`, `Specific Yield`, `Direct PV Self-Consumption (No BESS)`, and `Available PV Surplus for BESS` as the bridge to Tab 3).
-  * **4. Hockey-Stick Auto-Sizing & Demand Coverage Curve:** 1-click demand presets (`40%`, `Sweet-Spot 55%`, `60%`, `80%`, `100% Net-Zero`) + interactive Hockey-Stick Pareto chart.
+  * **4. Solar Generation Profile Timeseries (15-Minute Resolution):** Interactive high-resolution generation profile chart with range slider, plus collapsible Monthly Energy Production & Physical Loss Waterfall expander.
+  * **5. Hockey-Stick Auto-Sizing & Demand Coverage Curve:** 1-click demand presets (`40%`, `Sweet-Spot 55%`, `60%`, `80%`, `100% Net-Zero`) + interactive Hockey-Stick Pareto chart.
 * **Tab 3: BESS Sizing & Coupled Hybrid Dispatch (Core Hybrid Engine):**
-  * **1. Intelligent Battery Pre-Dimensioning:** Diagnoses post-solar net load ($P_{\text{Load}} - P_{\text{PV, Direct}}$) and daily solar surplus, offering 3 1-click sizing tiers:
+  * **1. Intelligent Battery Pre-Dimensioning:** Diagnoses post-solar net load ($P_{\text{Load}} - P_{\text{PV, Direct}}$) and daily solar surplus. Features a collapsible **One-Click BESS Dimensioning Recommendations Expander** with 3 sizing tiers:
     * *Tier 1: Peak-Shaving Focus (100% Zero-Breach)*
     * *Tier 2: Self-Consumption Focus (Solar Surplus Buffer)*
     * *Tier 3: Double-Lever Optimum (Peak Shaving + Solar Cycle Buffer)*

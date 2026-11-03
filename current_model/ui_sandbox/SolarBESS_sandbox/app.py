@@ -565,8 +565,35 @@ def render_solar_bess_sandbox(key_prefix: str = "hyb_sb") -> None:
 
         st.write("")
 
-        # Section 4: Hockey-Stick 1-Click Auto-Sizing Presets (from Solar_sandbox)
-        st.subheader("4. Hockey-Stick Auto-Sizing & Demand Coverage Curve")
+        # Section 4: Solar Generation Profile Timeseries (15-Minute Resolution)
+        st.subheader("4. Solar Generation Profile Timeseries (15-Minute Resolution)")
+        fig_sol_ts = create_solar_timeseries_figure(
+            df=cached_res.df_timeseries,
+            dc_capacity_kwp=cached_res.config.dc_capacity_kwp,
+            inverter_capacity_kw=cached_res.config.inverter_capacity_kw,
+        )
+        st.plotly_chart(fig_sol_ts, use_container_width=True)
+
+        with st.expander(":material/bar_chart: Monthly Energy Production & Physical Loss Waterfall", expanded=False):
+            c_m, c_l = st.columns(2)
+            with c_m:
+                st.plotly_chart(
+                    create_solar_monthly_bar_figure(
+                        monthly_yields=cached_res.monthly_yields,
+                        dc_capacity_kwp=cached_res.config.dc_capacity_kwp,
+                    ),
+                    use_container_width=True,
+                )
+            with c_l:
+                st.plotly_chart(
+                    create_solar_loss_waterfall_figure(loss_breakdown=cached_res.loss_breakdown),
+                    use_container_width=True,
+                )
+
+        st.divider()
+
+        # Section 5: Hockey-Stick 1-Click Auto-Sizing Presets (from Solar_sandbox)
+        st.subheader("5. Hockey-Stick Auto-Sizing & Demand Coverage Curve")
         st.caption(
             "One-click PV array pre-dimensioning relative to your annual facility consumption from Tab 1. "
             "In a hybrid PV + BESS system, sizing PV at **60% to 100% Demand** intentionally generates midday surplus to charge the battery."
@@ -628,28 +655,6 @@ def render_solar_bess_sandbox(key_prefix: str = "hyb_sb") -> None:
             selected_scr_pct=kpis_coupled.self_consumption_rate_pct,
         )
         st.plotly_chart(fig_hockey, use_container_width=True)
-
-        with st.expander(":material/insights: Detailed Standalone Solar PV Generation & Loss Cascade Charts", expanded=False):
-            fig_sol_ts = create_solar_timeseries_figure(
-                df=cached_res.df_timeseries,
-                dc_capacity_kwp=cached_res.config.dc_capacity_kwp,
-                inverter_capacity_kw=cached_res.config.inverter_capacity_kw,
-            )
-            st.plotly_chart(fig_sol_ts, use_container_width=True)
-            c_m, c_l = st.columns(2)
-            with c_m:
-                st.plotly_chart(
-                    create_solar_monthly_bar_figure(
-                        monthly_yields=cached_res.monthly_yields,
-                        dc_capacity_kwp=cached_res.config.dc_capacity_kwp,
-                    ),
-                    use_container_width=True,
-                )
-            with c_l:
-                st.plotly_chart(
-                    create_solar_loss_waterfall_figure(loss_breakdown=cached_res.loss_breakdown),
-                    use_container_width=True,
-                )
 
     # ==================================================================================
     # TAB 3: BESS Sizing & Coupled Hybrid Dispatch (Core Hybrid Workbench)
@@ -722,78 +727,81 @@ def render_solar_bess_sandbox(key_prefix: str = "hyb_sb") -> None:
             )
 
         st.write("")
-        st.markdown("##### :material/auto_awesome: One-Click BESS Dimensioning Recommendations")
-        tier_col1, tier_col2, tier_col3 = st.columns(3)
+        with st.expander(
+            ":material/auto_awesome: One-Click BESS Dimensioning Recommendations (Tier 1: Peak-Shaving, Tier 2: Solar Buffer, Tier 3: Optimum)",
+            expanded=False,
+        ):
+            tier_col1, tier_col2, tier_col3 = st.columns(3)
 
-        STRAT_1_LABEL = "Strategy 1: Strict Peak-Shaving Priority (Cap Grid <= Limit)"
-        STRAT_2_LABEL = "Strategy 2: Double-Lever (Max Self-Consumption + Peak-Shaving Reserve)"
+            STRAT_1_LABEL = "Strategy 1: Strict Peak-Shaving Priority (Cap Grid <= Limit)"
+            STRAT_2_LABEL = "Strategy 2: Double-Lever (Max Self-Consumption + Peak-Shaving Reserve)"
 
-        with tier_col1:
-            with st.container(border=True):
-                st.markdown(
-                    """
-                    <div style="border-left: 3px solid #38bdf8; padding-left: 10px; margin-bottom: 8px;">
-                        <strong style="color:#f8fafc; font-size:0.92rem;">Tier 1: Peak-Shaving Focus (100% Zero-Breach)</strong>
-                        <div style="color:#94a3b8; font-size:0.78rem;">Sized strictly to eliminate all remaining post-solar grid breaches above P_limit</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"**Recommended BESS:** `{pre_dim.rec_peak_kwh:,.0f} kWh` / `{pre_dim.rec_peak_kw:,.0f} kW` "
-                    f"*(C-Rate: {pre_dim.rec_peak_kw / max(1.0, pre_dim.rec_peak_kwh):.2f}C)*"
-                )
-                if st.button(
-                    f":material/bolt: Apply Tier 1 ({pre_dim.rec_peak_kwh:,.0f} kWh / {pre_dim.rec_peak_kw:,.0f} kW)",
-                    use_container_width=True,
-                    key=f"{key_prefix}_btn_tier1",
-                ):
-                    _stage_bess_sizing(pre_dim.rec_peak_kwh, pre_dim.rec_peak_kw, key_prefix, STRAT_1_LABEL)
+            with tier_col1:
+                with st.container(border=True):
+                    st.markdown(
+                        """
+                        <div style="border-left: 3px solid #38bdf8; padding-left: 10px; margin-bottom: 8px;">
+                            <strong style="color:#f8fafc; font-size:0.92rem;">Tier 1: Peak-Shaving Focus (100% Zero-Breach)</strong>
+                            <div style="color:#94a3b8; font-size:0.78rem;">Sized strictly to eliminate all remaining post-solar grid breaches above P_limit</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f"**Recommended BESS:** `{pre_dim.rec_peak_kwh:,.0f} kWh` / `{pre_dim.rec_peak_kw:,.0f} kW` "
+                        f"*(C-Rate: {pre_dim.rec_peak_kw / max(1.0, pre_dim.rec_peak_kwh):.2f}C)*"
+                    )
+                    if st.button(
+                        f":material/bolt: Apply Tier 1 ({pre_dim.rec_peak_kwh:,.0f} kWh / {pre_dim.rec_peak_kw:,.0f} kW)",
+                        use_container_width=True,
+                        key=f"{key_prefix}_btn_tier1",
+                    ):
+                        _stage_bess_sizing(pre_dim.rec_peak_kwh, pre_dim.rec_peak_kw, key_prefix, STRAT_1_LABEL)
 
-        with tier_col2:
-            with st.container(border=True):
-                st.markdown(
-                    """
-                    <div style="border-left: 3px solid #f59e0b; padding-left: 10px; margin-bottom: 8px;">
-                        <strong style="color:#f8fafc; font-size:0.92rem;">Tier 2: Self-Consumption Focus (Solar Buffer)</strong>
-                        <div style="color:#94a3b8; font-size:0.78rem;">Sized to absorb P75 midday PV surplus and shift it into evening/night hours</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"**Recommended BESS:** `{pre_dim.rec_solar_kwh:,.0f} kWh` / `{pre_dim.rec_solar_kw:,.0f} kW` "
-                    f"*(C-Rate: {pre_dim.rec_solar_kw / max(1.0, pre_dim.rec_solar_kwh):.2f}C)*"
-                )
-                if st.button(
-                    f":material/wb_sunny: Apply Tier 2 ({pre_dim.rec_solar_kwh:,.0f} kWh / {pre_dim.rec_solar_kw:,.0f} kW)",
-                    use_container_width=True,
-                    key=f"{key_prefix}_btn_tier2",
-                ):
-                    _stage_bess_sizing(pre_dim.rec_solar_kwh, pre_dim.rec_solar_kw, key_prefix, STRAT_2_LABEL)
+            with tier_col2:
+                with st.container(border=True):
+                    st.markdown(
+                        """
+                        <div style="border-left: 3px solid #f59e0b; padding-left: 10px; margin-bottom: 8px;">
+                            <strong style="color:#f8fafc; font-size:0.92rem;">Tier 2: Self-Consumption Focus (Solar Buffer)</strong>
+                            <div style="color:#94a3b8; font-size:0.78rem;">Sized to absorb P75 midday PV surplus and shift it into evening/night hours</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f"**Recommended BESS:** `{pre_dim.rec_solar_kwh:,.0f} kWh` / `{pre_dim.rec_solar_kw:,.0f} kW` "
+                        f"*(C-Rate: {pre_dim.rec_solar_kw / max(1.0, pre_dim.rec_solar_kwh):.2f}C)*"
+                    )
+                    if st.button(
+                        f":material/wb_sunny: Apply Tier 2 ({pre_dim.rec_solar_kwh:,.0f} kWh / {pre_dim.rec_solar_kw:,.0f} kW)",
+                        use_container_width=True,
+                        key=f"{key_prefix}_btn_tier2",
+                    ):
+                        _stage_bess_sizing(pre_dim.rec_solar_kwh, pre_dim.rec_solar_kw, key_prefix, STRAT_2_LABEL)
 
-        with tier_col3:
-            with st.container(border=True):
-                st.markdown(
-                    """
-                    <div style="border-left: 3px solid #10b981; padding-left: 10px; margin-bottom: 8px;">
-                        <strong style="color:#f8fafc; font-size:0.92rem;">Tier 3: Double-Lever Optimum (Peak + Solar Cycle)</strong>
-                        <div style="color:#94a3b8; font-size:0.78rem;">Combines peak-shaving reserve with daily solar shifting for maximum synergy</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"**Recommended BESS:** `{pre_dim.rec_hybrid_kwh:,.0f} kWh` / `{pre_dim.rec_hybrid_kw:,.0f} kW` "
-                    f"*(C-Rate: {pre_dim.rec_hybrid_kw / max(1.0, pre_dim.rec_hybrid_kwh):.2f}C)*"
-                )
-                if st.button(
-                    f":material/stars: Apply Tier 3 ({pre_dim.rec_hybrid_kwh:,.0f} kWh / {pre_dim.rec_hybrid_kw:,.0f} kW)",
-                    type="primary",
-                    use_container_width=True,
-                    key=f"{key_prefix}_btn_tier3",
-                ):
-                    _stage_bess_sizing(pre_dim.rec_hybrid_kwh, pre_dim.rec_hybrid_kw, key_prefix, STRAT_2_LABEL)
+            with tier_col3:
+                with st.container(border=True):
+                    st.markdown(
+                        """
+                        <div style="border-left: 3px solid #10b981; padding-left: 10px; margin-bottom: 8px;">
+                            <strong style="color:#f8fafc; font-size:0.92rem;">Tier 3: Double-Lever Optimum (Peak + Solar Cycle)</strong>
+                            <div style="color:#94a3b8; font-size:0.78rem;">Combines peak-shaving reserve with daily solar shifting for maximum synergy</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f"**Recommended BESS:** `{pre_dim.rec_hybrid_kwh:,.0f} kWh` / `{pre_dim.rec_hybrid_kw:,.0f} kW` "
+                        f"*(C-Rate: {pre_dim.rec_hybrid_kw / max(1.0, pre_dim.rec_hybrid_kwh):.2f}C)*"
+                    )
+                    if st.button(
+                        f":material/stars: Apply Tier 3 ({pre_dim.rec_hybrid_kwh:,.0f} kWh / {pre_dim.rec_hybrid_kw:,.0f} kW)",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"{key_prefix}_btn_tier3",
+                    ):
+                        _stage_bess_sizing(pre_dim.rec_hybrid_kwh, pre_dim.rec_hybrid_kw, key_prefix, STRAT_2_LABEL)
 
         st.divider()
 
