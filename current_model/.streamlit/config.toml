@@ -6,3 +6,4 @@ gatherUsageStats = false
 
 [client]
 showErrorDetails = "full"
+

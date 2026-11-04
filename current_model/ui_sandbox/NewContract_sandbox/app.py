@@ -140,13 +140,25 @@ def sync_contract_state(from_prefix: str = "con1", to_prefix: str = "con2") -> N
     """
     Clones all session state parameters from from_prefix into to_prefix.
     Ensures that Contract 2 is 100% identical to Contract 1 until explicitly modified.
-    Strictly skips ephemeral button/download widgets to comply with Streamlit's widget policy.
+    Strictly skips ephemeral button/download widgets and st.data_editor state dictionaries
+    to comply with Streamlit's widget policy (avoiding StreamlitValueAssignmentNotAllowedError).
     """
     source_tag = f"{from_prefix}_"
     target_tag = f"{to_prefix}_"
     prefix_len = len(source_tag)
 
-    skip_keywords = ("btn", "button", "download", "dl_", "upload", "submit")
+    skip_keywords = (
+        "btn",
+        "button",
+        "download",
+        "dl_",
+        "upload",
+        "submit",
+        "editor",
+        "data_editor",
+        "tou_editor",
+        "_form",
+    )
 
     # Clean existing target keys to avoid stale overrides
     for k in list(st.session_state.keys()):
