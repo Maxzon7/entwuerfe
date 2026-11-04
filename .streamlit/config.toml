@@ -2,7 +2,6 @@
 runOnSave = false
 fileWatcherType = "auto"
 headless = true
-port = 8501
 enableCORS = false
 enableXsrfProtection = false
 
