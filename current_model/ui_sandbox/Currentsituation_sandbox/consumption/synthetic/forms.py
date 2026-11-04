@@ -212,42 +212,43 @@ def render_consumer_editor(consumers: List[SimpleConsumer]) -> None:
                         )
                     )
 
-                # Weekly Schedule & Seasonal Variation Editors
-                with st.expander("Weekly Schedule, Standby & Seasonality", icon=":material/date_range:", expanded=False):
-                    sb_e1, sb_e2 = st.columns(2)
-                    with sb_e1:
-                        curr_sb_pct = int(getattr(c, "standby_power_ratio", 0.0) * 100)
-                        edit_standby_pct = st.slider(
-                            "Off-Hours Standby Load (%):",
-                            min_value=0,
-                            max_value=50,
-                            value=curr_sb_pct,
-                            step=5,
-                            key=f"edit_sb_{c.id}"
-                        )
-                    with sb_e2:
-                        st.caption(f"Standby Power: **{(edit_power * edit_standby_pct / 100.0 * edit_count):.2f} kW** idle draw.")
+                # Weekly Schedule & Seasonal Variation Section
+                st.markdown("---")
+                st.markdown("**:material/date_range: Weekly Schedule, Standby & Seasonality**")
+                sb_e1, sb_e2 = st.columns(2)
+                with sb_e1:
+                    curr_sb_pct = int(getattr(c, "standby_power_ratio", 0.0) * 100)
+                    edit_standby_pct = st.slider(
+                        "Off-Hours Standby Load (%):",
+                        min_value=0,
+                        max_value=50,
+                        value=curr_sb_pct,
+                        step=5,
+                        key=f"edit_sb_{c.id}"
+                    )
+                with sb_e2:
+                    st.caption(f"Standby Power: **{(edit_power * edit_standby_pct / 100.0 * edit_count):.2f} kW** idle draw.")
 
-                    edit_days = st.multiselect(
-                        "Operating Days:",
-                        options=WEEKDAY_LABELS,
-                        default=[INT_TO_WEEKDAY[d] for d in getattr(c, "active_days", [0, 1, 2, 3, 4])],
-                        key=f"edit_days_{c.id}"
-                    )
-                    pattern_keys = ["flat", "winter_heavy", "summer_heavy"]
-                    curr_pat = getattr(c, "seasonal_pattern", "flat")
-                    pat_idx = pattern_keys.index(curr_pat) if curr_pat in pattern_keys else 0
-                    edit_pattern = st.selectbox(
-                        "Seasonal Profile:",
-                        options=["Flat (Constant 100%)", "Winter-Heavy (+25% in Winter)", "Summer-Heavy (+30% in Summer)"],
-                        index=pat_idx,
-                        key=f"edit_pattern_{c.id}"
-                    )
-                    pattern_map = {
-                        "Flat (Constant 100%)": "flat",
-                        "Winter-Heavy (+25% in Winter)": "winter_heavy",
-                        "Summer-Heavy (+30% in Summer)": "summer_heavy"
-                    }
+                edit_days = st.multiselect(
+                    "Operating Days:",
+                    options=WEEKDAY_LABELS,
+                    default=[INT_TO_WEEKDAY[d] for d in getattr(c, "active_days", [0, 1, 2, 3, 4])],
+                    key=f"edit_days_{c.id}"
+                )
+                pattern_keys = ["flat", "winter_heavy", "summer_heavy"]
+                curr_pat = getattr(c, "seasonal_pattern", "flat")
+                pat_idx = pattern_keys.index(curr_pat) if curr_pat in pattern_keys else 0
+                edit_pattern = st.selectbox(
+                    "Seasonal Profile:",
+                    options=["Flat (Constant 100%)", "Winter-Heavy (+25% in Winter)", "Summer-Heavy (+30% in Summer)"],
+                    index=pat_idx,
+                    key=f"edit_pattern_{c.id}"
+                )
+                pattern_map = {
+                    "Flat (Constant 100%)": "flat",
+                    "Winter-Heavy (+25% in Winter)": "winter_heavy",
+                    "Summer-Heavy (+30% in Summer)": "summer_heavy"
+                }
 
                 btn_c1, btn_c2 = st.columns([3, 1])
                 with btn_c1:

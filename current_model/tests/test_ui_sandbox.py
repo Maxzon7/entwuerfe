@@ -720,6 +720,50 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
         label = f"{cfg.capacity_kwh:,.0f} kWh / {power_kw:,.0f} kW ({chem})"
         self.assertIn("100 kWh / 50 kW (LFP", label)
 
+    def test_no_nested_st_expanders_in_codebase(self):
+        """Verifies using AST that no active python file nests st.expander inside another st.expander."""
+        class NestedExpanderChecker(ast.NodeVisitor):
+            def __init__(self, filepath):
+                self.filepath = filepath
+                self.expander_depth = 0
+                self.violations = []
+
+            def visit_With(self, node):
+                is_expander = False
+                for item in node.items:
+                    expr = item.context_expr
+                    if isinstance(expr, ast.Call):
+                        if isinstance(expr.func, ast.Attribute) and expr.func.attr == "expander":
+                            is_expander = True
+                            break
+
+                if is_expander:
+                    if self.expander_depth > 0:
+                        self.violations.append(f"{self.filepath}:{node.lineno} nested expander inside expander")
+                    self.expander_depth += 1
+                    self.generic_visit(node)
+                    self.expander_depth -= 1
+                else:
+                    self.generic_visit(node)
+
+        violations = []
+        for root, _, files in os.walk(self.current_model_dir):
+            if any(skip in root for skip in [".git", ".pytest_cache", "venv", "not in Use"]):
+                continue
+            for f in files:
+                if f.endswith(".py"):
+                    full_p = os.path.join(root, f)
+                    try:
+                        with open(full_p, "r", encoding="utf-8") as fp:
+                            tree = ast.parse(fp.read(), filename=full_p)
+                        checker = NestedExpanderChecker(full_p)
+                        checker.visit(tree)
+                        violations.extend(checker.violations)
+                    except Exception:
+                        pass
+
+        self.assertEqual(violations, [], f"Found nested expanders: {violations}")
+
 
 if __name__ == "__main__":
     unittest.main()
