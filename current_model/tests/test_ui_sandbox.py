@@ -703,6 +703,23 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
         self.assertIsNotNone(create_hybrid_capex_donut_figure(fin_res))
         self.assertIsNotNone(create_hybrid_15y_outflow_figure(fin_res))
 
+    def test_bess_config_properties_and_financial_subscenario_label(self):
+        """Verifies BESSConfig max_power_kw and chemistry property aliases and label formatting."""
+        from models.bess import BESSConfig
+        cfg = BESSConfig(
+            capacity_kwh=100.0,
+            max_discharge_power_kw=50.0,
+            max_charge_power_kw=40.0,
+            battery_chemistry="LFP (Lithium Iron Phosphate - Standard)"
+        )
+        self.assertEqual(cfg.max_power_kw, 50.0)
+        self.assertEqual(cfg.chemistry, "LFP (Lithium Iron Phosphate - Standard)")
+
+        power_kw = getattr(cfg, "max_power_kw", getattr(cfg, "max_discharge_power_kw", 0.0))
+        chem = getattr(cfg, "battery_chemistry", getattr(cfg, "chemistry", "LFP"))
+        label = f"{cfg.capacity_kwh:,.0f} kWh / {power_kw:,.0f} kW ({chem})"
+        self.assertIn("100 kWh / 50 kW (LFP", label)
+
 
 if __name__ == "__main__":
     unittest.main()

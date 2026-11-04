@@ -451,10 +451,12 @@ def render_financial_viability_tab(
         load_kwh_yr = float(np.sum(p_load_arr) * 0.25 * scale_yr)
         grid_kwh_yr = float(np.sum(p_grid_arr) * 0.25 * scale_yr)
 
+        power_kw = getattr(bess_cfg, "max_power_kw", getattr(bess_cfg, "max_discharge_power_kw", 0.0))
+        chem = getattr(bess_cfg, "battery_chemistry", getattr(bess_cfg, "chemistry", "LFP"))
         scen_out = ScenarioEvaluationOutput(
             scenario_id="bess_only",
             scenario_name="Scenario 4: Standalone BESS Peak-Shaving",
-            sub_scenario_label=f"{bess_cfg.capacity_kwh:,.0f} kWh / {bess_cfg.max_power_kw:,.0f} kW ({bess_cfg.chemistry})",
+            sub_scenario_label=f"{bess_cfg.capacity_kwh:,.0f} kWh / {power_kw:,.0f} kW ({chem})",
             currency_code=currency,
             peak_before_kw=peak_before,
             peak_after_kw=peak_after,

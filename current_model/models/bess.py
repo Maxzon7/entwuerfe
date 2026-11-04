@@ -72,6 +72,16 @@ class BESSConfig:
         return round(self.max_charge_power_kw / max(1e-3, self.capacity_kwh), 2)
 
     @property
+    def max_power_kw(self) -> float:
+        """Nominal / maximum continuous inverter power rating (kW)."""
+        return max(float(self.max_discharge_power_kw), float(self.max_charge_power_kw))
+
+    @property
+    def chemistry(self) -> str:
+        """Alias for battery_chemistry."""
+        return self.battery_chemistry
+
+    @property
     def total_capex(self) -> float:
         """Total turn-key CAPEX investment for the BESS system."""
         if not self.is_financial_enabled:
