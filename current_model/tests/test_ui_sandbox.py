@@ -747,7 +747,7 @@ class TestClassicInvoiceReconciliation(unittest.TestCase):
                     self.generic_visit(node)
 
         violations = []
-        for root, _, files in os.walk(self.current_model_dir):
+        for root, _, files in os.walk(_PROJECT_ROOT):
             if any(skip in root for skip in [".git", ".pytest_cache", "venv", "not in Use"]):
                 continue
             for f in files:
