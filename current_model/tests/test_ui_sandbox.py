@@ -61,6 +61,7 @@ class TestUISandboxIsolation(unittest.TestCase):
             ("Solar_sandbox", ["__init__.py", "solar_sandbox_engine.py", "app.py"]),
             ("SolarBESS_sandbox", ["__init__.py", "solar_bess_sandbox_engine.py", "app.py"]),
             ("Generator_sandbox", ["__init__.py", "generator_sandbox_engine.py", "app.py"]),
+            ("Combined_sandbox", ["__init__.py", "combined_sandbox_engine.py", "combined_charts.py", "app.py"]),
         ]:
             d_path = os.path.join(self.sandbox_dir, sub_dir)
             self.assertTrue(os.path.isdir(d_path), f"ui_sandbox/{sub_dir} directory must exist")

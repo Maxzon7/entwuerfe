@@ -1,0 +1,383 @@
+"""
+========================================================================================
+Combined System Sandbox Charts (ui_sandbox/Combined_sandbox/combined_charts.py)
+========================================================================================
+
+Provides the two core interactive Plotly visualizations required under the Clean Screen Policy:
+  1. Tab 1: `create_consumption_baseline_figure` — 15-Minute Consumption Profile
+  2. Tab 2: `create_combined_dispatch_soc_figure` — Synchronized 2-in-1 15-Minute
+     Dispatch (Grid Import, Solar Direct, Battery Discharge, Generator Output,
+     Consumption, Grid Limit) & Battery SoC (%) + Generator Active Phases.
+========================================================================================
+"""
+
+from typing import Tuple
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from .combined_sandbox_engine import CombinedSimulationResult
+
+
+def _resolve_window_slice(
+    timestamps: pd.DatetimeIndex,
+    load_kw: np.ndarray,
+    timeframe: str = "Peak Week",
+) -> Tuple[int, int]:
+    """
+    Determines the start and end index for a selected timeframe window:
+      - "Peak Week": 7-day window centered around the annual maximum peak demand
+      - "7D": First 7 days of the year (or typical week in May)
+      - "1M": Month containing the peak demand (30 days)
+      - "Full Year": Full 35,040 steps
+    """
+    n = len(load_kw)
+    if n == 0 or timeframe == "Full Year":
+        return 0, n
+
+    peak_idx = int(np.argmax(load_kw))
+    steps_per_day = 96
+
+    if timeframe == "Peak Week":
+        half_w = (7 * steps_per_day) // 2
+        start_i = max(0, peak_idx - half_w)
+        end_i = min(n, start_i + 7 * steps_per_day)
+        start_i = max(0, end_i - 7 * steps_per_day)
+        return start_i, end_i
+
+    if timeframe == "7D":
+        # 7 days starting from May 1 (step 120 * 96) for balanced spring solar + load view
+        start_i = min(max(0, 120 * steps_per_day), max(0, n - 7 * steps_per_day))
+        end_i = min(n, start_i + 7 * steps_per_day)
+        return start_i, end_i
+
+    if timeframe == "1M":
+        half_m = (30 * steps_per_day) // 2
+        start_i = max(0, peak_idx - half_m)
+        end_i = min(n, start_i + 30 * steps_per_day)
+        start_i = max(0, end_i - 30 * steps_per_day)
+        return start_i, end_i
+
+    return 0, n
+
+
+def create_consumption_baseline_figure(
+    timestamps: pd.DatetimeIndex,
+    load_kw: np.ndarray,
+    timeframe: str = "Full Year",
+) -> go.Figure:
+    """
+    Creates the clean 15-minute Consumption Baseline chart for Tab 1.
+    """
+    s_idx, e_idx = _resolve_window_slice(timestamps, load_kw, timeframe=timeframe)
+    ts_slice = timestamps[s_idx:e_idx]
+    load_slice = load_kw[s_idx:e_idx]
+
+    peak_kw = float(np.max(load_kw)) if len(load_kw) > 0 else 0.0
+    avg_kw = float(np.mean(load_kw)) if len(load_kw) > 0 else 0.0
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=ts_slice,
+            y=load_slice,
+            mode="lines",
+            name="Consumption (kW)",
+            line=dict(color="#38BDF8", width=1.4),
+            fill="tozeroy",
+            fillcolor="rgba(56, 189, 248, 0.14)",
+            hovertemplate="<b>%{x|%Y-%m-%d %H:%M}</b><br>Consumption: %{y:,.1f} kW<extra></extra>",
+        )
+    )
+
+    fig.add_hline(
+        y=peak_kw,
+        line_dash="dot",
+        line_color="#F87171",
+        line_width=1.3,
+        annotation_text=f"Max Peak: {peak_kw:,.1f} kW",
+        annotation_position="top right",
+        annotation_font=dict(color="#F87171", size=11),
+    )
+
+    fig.add_hline(
+        y=avg_kw,
+        line_dash="dash",
+        line_color="#94A3B8",
+        line_width=1.1,
+        annotation_text=f"Average Load: {avg_kw:,.1f} kW",
+        annotation_position="bottom right",
+        annotation_font=dict(color="#94A3B8", size=11),
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=410,
+        margin=dict(l=55, r=25, t=45, b=45),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        title=dict(
+            text=f"15-Minute Consumption Profile ({timeframe})",
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.0,
+        ),
+        xaxis=dict(
+            title="Time (15-min intervals)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            showspikes=True,
+        ),
+        yaxis=dict(
+            title="Power (kW)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            rangemode="tozero",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_combined_dispatch_soc_figure(
+    sim_res: CombinedSimulationResult,
+    timeframe: str = "Peak Week",
+) -> go.Figure:
+    """
+    Creates the Synchronized 2-in-1 15-Minute Interaction Chart for Tab 2 (Level 4):
+      - Upper Subplot (Power in kW):
+          * Stacked supply layers: Solar Direct, Battery Discharge, Generator Output, Grid Import
+          * Consumption (kW) line
+          * Dashed red Grid Limit (kW) line
+      - Lower Subplot (Synchronized X-Axis):
+          * Battery State of Charge (SoC %)
+          * Generator Active operating phases
+    """
+    s_idx, e_idx = _resolve_window_slice(
+        sim_res.timestamps,
+        sim_res.load_kw,
+        timeframe=timeframe,
+    )
+
+    ts = sim_res.timestamps[s_idx:e_idx]
+    p_load = sim_res.load_kw[s_idx:e_idx]
+    p_solar_dir = sim_res.solar_direct_kw[s_idx:e_idx]
+    p_bess_dis = sim_res.bess_discharge_kw[s_idx:e_idx]
+    p_gen_out = sim_res.gen_output_kw[s_idx:e_idx]
+    p_grid_imp = sim_res.grid_import_kw[s_idx:e_idx]
+    soc_pct = sim_res.bess_soc_pct[s_idx:e_idx]
+    gen_active_pct = np.where(sim_res.gen_running_mask[s_idx:e_idx], 100.0, 0.0)
+
+    cfg = sim_res.system_config
+    rules = sim_res.rules_config
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.66, 0.34],
+        subplot_titles=(
+            f"15-Minute Power Dispatch & Supply Breakdown ({timeframe})",
+            "Battery State of Charge (SoC %) & Generator Active Phases",
+        ),
+    )
+
+    # --- ROW 1: Stacked Supply Breakdown + Consumption + Grid Limit ---
+    fig.add_trace(
+        go.Scatter(
+            x=ts,
+            y=p_grid_imp,
+            mode="lines",
+            name="Grid Import (kW)",
+            stackgroup="supply",
+            line=dict(width=0.6, color="#3B82F6"),
+            fillcolor="rgba(59, 130, 246, 0.45)",
+            hovertemplate="Grid Import: %{y:,.1f} kW<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    if cfg.enable_solar:
+        fig.add_trace(
+            go.Scatter(
+                x=ts,
+                y=p_solar_dir,
+                mode="lines",
+                name="Solar Direct (kW)",
+                stackgroup="supply",
+                line=dict(width=0.6, color="#FACC15"),
+                fillcolor="rgba(250, 204, 21, 0.55)",
+                hovertemplate="Solar Direct: %{y:,.1f} kW<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    if cfg.enable_battery:
+        fig.add_trace(
+            go.Scatter(
+                x=ts,
+                y=p_bess_dis,
+                mode="lines",
+                name="Battery Discharge (kW)",
+                stackgroup="supply",
+                line=dict(width=0.6, color="#10B981"),
+                fillcolor="rgba(16, 185, 129, 0.60)",
+                hovertemplate="Battery Discharge: %{y:,.1f} kW<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    if cfg.enable_generator:
+        fig.add_trace(
+            go.Scatter(
+                x=ts,
+                y=p_gen_out,
+                mode="lines",
+                name="Generator Output (kW)",
+                stackgroup="supply",
+                line=dict(width=0.6, color="#F97316"),
+                fillcolor="rgba(249, 115, 22, 0.65)",
+                hovertemplate="Generator Output: %{y:,.1f} kW<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    # Consumption reference line
+    fig.add_trace(
+        go.Scatter(
+            x=ts,
+            y=p_load,
+            mode="lines",
+            name="Consumption (kW)",
+            line=dict(color="#F8FAFC", width=1.7),
+            hovertemplate="Consumption: %{y:,.1f} kW<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    # Red dashed Grid Limit line
+    fig.add_trace(
+        go.Scatter(
+            x=ts,
+            y=np.full(len(ts), cfg.grid_limit_kw),
+            mode="lines",
+            name=f"Grid Limit ({cfg.grid_limit_kw:,.0f} kW)",
+            line=dict(color="#EF4444", width=2.0, dash="dash"),
+            hovertemplate="Grid Limit: %{y:,.1f} kW<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    # --- ROW 2: Battery SoC (%) & Generator Active Phases ---
+    if cfg.enable_generator:
+        fig.add_trace(
+            go.Scatter(
+                x=ts,
+                y=gen_active_pct,
+                mode="lines",
+                name="Generator Active",
+                line=dict(width=0.0, color="rgba(249, 115, 22, 0.0)"),
+                fill="tozeroy",
+                fillcolor="rgba(249, 115, 22, 0.22)",
+                hovertemplate="Generator Status: %{y:.0f}% active<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
+
+    if cfg.enable_battery:
+        fig.add_trace(
+            go.Scatter(
+                x=ts,
+                y=soc_pct,
+                mode="lines",
+                name="Battery SoC (%)",
+                line=dict(color="#10B981", width=1.8),
+                fill="tozeroy",
+                fillcolor="rgba(16, 185, 129, 0.15)",
+                hovertemplate="Battery SoC: %{y:.1f}%<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
+
+        # Min SoC line
+        fig.add_hline(
+            y=cfg.min_soc_pct,
+            line_dash="dot",
+            line_color="#64748B",
+            line_width=1.0,
+            row=2,
+            col=1,
+        )
+
+        # Peak Reserve SoC line if Self-Consumption + Peak Reserve is active
+        if rules.rule2_battery_strategy == "self_consumption_reserve":
+            fig.add_hline(
+                y=rules.peak_reserve_soc_pct,
+                line_dash="dash",
+                line_color="#F59E0B",
+                line_width=1.2,
+                annotation_text=f"Peak Reserve ({rules.peak_reserve_soc_pct:.0f}%)",
+                annotation_position="top right",
+                annotation_font=dict(color="#F59E0B", size=10),
+                row=2,
+                col=1,
+            )
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=600,
+        margin=dict(l=55, r=25, t=65, b=40),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.05,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+        hovermode="x unified",
+    )
+
+    fig.update_yaxes(
+        title_text="Power (kW)",
+        gridcolor="rgba(148, 163, 184, 0.12)",
+        rangemode="tozero",
+        row=1,
+        col=1,
+    )
+    fig.update_yaxes(
+        title_text="SoC (%)",
+        gridcolor="rgba(148, 163, 184, 0.12)",
+        range=[0, 105],
+        row=2,
+        col=1,
+    )
+    fig.update_xaxes(
+        title_text="Time (15-min intervals)",
+        gridcolor="rgba(148, 163, 184, 0.12)",
+        row=2,
+        col=1,
+    )
+
+    return fig
+

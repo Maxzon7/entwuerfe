@@ -65,6 +65,12 @@ current_model/ui_sandbox/
     ├── __init__.py
     ├── generator_sandbox_engine.py             # 35,040-step Willans fuel curve, "The Perfect Generator" unconstrained dimensioning, sweep & Plotly suite
     └── app.py                                  # Standalone 3-Tab app (Load Baseline, Sizing & Consolidated Visual Dispatch Suite, Ideal Peaker Optimizer)
+
+└── Combined_sandbox/                           # [Scenario 7] Combined System Sandbox (Grid + Solar + Battery + Generator)
+    ├── __init__.py
+    ├── combined_sandbox_engine.py              # 35,040-step 4-source coupled dispatch (Rules 1-3) & transparent Solar kWp derivation
+    ├── combined_charts.py                      # Synchronized 2-in-1 15-min dispatch & SoC figure + Consumption baseline chart
+    └── app.py                                  # Clean Screen Policy 2-Tab app (Tab 1: Consumption, Tab 2: Combined system)
 ```
 
 ---

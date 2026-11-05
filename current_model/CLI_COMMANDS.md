@@ -69,6 +69,12 @@ Coupled PV generation and battery storage dispatch:
 python -m streamlit run ui_sandbox/SolarBESS_sandbox/app.py
 ```
 
+### G. Combined System Sandbox (`Grid + Solar + Battery + Generator`)
+Clean Screen Policy 2-Tab workbench uniting Grid, Solar, Battery, and Generator via Operating Rules 1–3:
+```bash
+python -m streamlit run ui_sandbox/Combined_sandbox/app.py
+```
+
 ---
 
 ## 4. Test Suite Execution
