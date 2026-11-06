@@ -5,9 +5,10 @@ Combined System Sandbox Charts (ui_sandbox/Combined_sandbox/combined_charts.py)
 
 Provides the two core interactive Plotly visualizations required under the Clean Screen Policy:
   1. Tab 1: `create_consumption_baseline_figure` — 15-Minute Consumption Profile
+     with timeframe switches (7D, 1M, 3M, All) and Range-Slider.
   2. Tab 2: `create_combined_dispatch_soc_figure` — Synchronized 2-in-1 15-Minute
      Dispatch (Grid Import, Solar Direct, Battery Discharge, Generator Output,
-     Consumption, Grid Limit) & Battery SoC (%) + Generator Active Phases.
+     Consumption, Grid Limit) & Battery SoC (% and kWh) + Generator Active Phases.
 ========================================================================================
 """
 
@@ -23,52 +24,45 @@ from .combined_sandbox_engine import CombinedSimulationResult
 def _resolve_window_slice(
     timestamps: pd.DatetimeIndex,
     load_kw: np.ndarray,
-    timeframe: str = "Peak Week",
+    timeframe: str = "7D",
 ) -> Tuple[int, int]:
     """
     Determines the start and end index for a selected timeframe window:
-      - "Peak Week": 7-day window centered around the annual maximum peak demand
-      - "7D": First 7 days of the year (or typical week in May)
-      - "1M": Month containing the peak demand (30 days)
-      - "Full Year": Full 35,040 steps
+      - "7D" or "Peak Week": 7-day window centered around the annual maximum peak demand
+      - "1M": 30-day window centered around the annual maximum peak demand
+      - "3M": 90-day window centered around the annual maximum peak demand
+      - "All" or "Full Year": Full 35,040 steps
     """
     n = len(load_kw)
-    if n == 0 or timeframe == "Full Year":
+    if n == 0 or timeframe in ("All", "Full Year"):
         return 0, n
 
     peak_idx = int(np.argmax(load_kw))
     steps_per_day = 96
 
-    if timeframe == "Peak Week":
-        half_w = (7 * steps_per_day) // 2
-        start_i = max(0, peak_idx - half_w)
-        end_i = min(n, start_i + 7 * steps_per_day)
-        start_i = max(0, end_i - 7 * steps_per_day)
-        return start_i, end_i
+    if timeframe in ("7D", "Peak Week"):
+        span = 7 * steps_per_day
+    elif timeframe == "1M":
+        span = 30 * steps_per_day
+    elif timeframe == "3M":
+        span = 90 * steps_per_day
+    else:
+        return 0, n
 
-    if timeframe == "7D":
-        # 7 days starting from May 1 (step 120 * 96) for balanced spring solar + load view
-        start_i = min(max(0, 120 * steps_per_day), max(0, n - 7 * steps_per_day))
-        end_i = min(n, start_i + 7 * steps_per_day)
-        return start_i, end_i
-
-    if timeframe == "1M":
-        half_m = (30 * steps_per_day) // 2
-        start_i = max(0, peak_idx - half_m)
-        end_i = min(n, start_i + 30 * steps_per_day)
-        start_i = max(0, end_i - 30 * steps_per_day)
-        return start_i, end_i
-
-    return 0, n
+    half_w = span // 2
+    start_i = max(0, peak_idx - half_w)
+    end_i = min(n, start_i + span)
+    start_i = max(0, end_i - span)
+    return start_i, end_i
 
 
 def create_consumption_baseline_figure(
     timestamps: pd.DatetimeIndex,
     load_kw: np.ndarray,
-    timeframe: str = "Full Year",
+    timeframe: str = "All",
 ) -> go.Figure:
     """
-    Creates the clean 15-minute Consumption Baseline chart for Tab 1.
+    Creates the clean 15-minute Consumption Baseline chart for Tab 1 with Range-Slider.
     """
     s_idx, e_idx = _resolve_window_slice(timestamps, load_kw, timeframe=timeframe)
     ts_slice = timestamps[s_idx:e_idx]
@@ -97,7 +91,7 @@ def create_consumption_baseline_figure(
         line_dash="dot",
         line_color="#F87171",
         line_width=1.3,
-        annotation_text=f"Max Peak: {peak_kw:,.1f} kW",
+        annotation_text=f"Peak Demand: {peak_kw:,.1f} kW",
         annotation_position="top right",
         annotation_font=dict(color="#F87171", size=11),
     )
@@ -114,7 +108,7 @@ def create_consumption_baseline_figure(
 
     fig.update_layout(
         template="plotly_dark",
-        height=410,
+        height=440,
         margin=dict(l=55, r=25, t=45, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
@@ -127,6 +121,7 @@ def create_consumption_baseline_figure(
             title="Time (15-min intervals)",
             gridcolor="rgba(148, 163, 184, 0.12)",
             showspikes=True,
+            rangeslider=dict(visible=True, thickness=0.06),
         ),
         yaxis=dict(
             title="Power (kW)",
@@ -149,16 +144,16 @@ def create_consumption_baseline_figure(
 
 def create_combined_dispatch_soc_figure(
     sim_res: CombinedSimulationResult,
-    timeframe: str = "Peak Week",
+    timeframe: str = "7D",
 ) -> go.Figure:
     """
-    Creates the Synchronized 2-in-1 15-Minute Interaction Chart for Tab 2 (Level 4):
+    Creates the Synchronized 2-in-1 15-Minute Interaction Chart for Tab 2:
       - Upper Subplot (Power in kW):
           * Stacked supply layers: Solar Direct, Battery Discharge, Generator Output, Grid Import
           * Consumption (kW) line
           * Dashed red Grid Limit (kW) line
       - Lower Subplot (Synchronized X-Axis):
-          * Battery State of Charge (SoC %)
+          * Battery State of Charge (SoC % and kWh)
           * Generator Active operating phases
     """
     s_idx, e_idx = _resolve_window_slice(
@@ -174,6 +169,7 @@ def create_combined_dispatch_soc_figure(
     p_gen_out = sim_res.gen_output_kw[s_idx:e_idx]
     p_grid_imp = sim_res.grid_import_kw[s_idx:e_idx]
     soc_pct = sim_res.bess_soc_pct[s_idx:e_idx]
+    soc_kwh = sim_res.bess_energy_kwh[s_idx:e_idx]
     gen_active_pct = np.where(sim_res.gen_running_mask[s_idx:e_idx], 100.0, 0.0)
 
     cfg = sim_res.system_config
@@ -184,10 +180,10 @@ def create_combined_dispatch_soc_figure(
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.08,
-        row_heights=[0.66, 0.34],
+        row_heights=[0.65, 0.35],
         subplot_titles=(
-            f"15-Minute Power Dispatch & Supply Breakdown ({timeframe})",
-            "Battery State of Charge (SoC %) & Generator Active Phases",
+            f"Power Flow ({timeframe})",
+            "Battery Level & Generator",
         ),
     )
 
@@ -283,7 +279,7 @@ def create_combined_dispatch_soc_figure(
         col=1,
     )
 
-    # --- ROW 2: Battery SoC (%) & Generator Active Phases ---
+    # --- ROW 2: Battery SoC (% & kWh) & Generator Active Phases ---
     if cfg.enable_generator:
         fig.add_trace(
             go.Scatter(
@@ -294,7 +290,7 @@ def create_combined_dispatch_soc_figure(
                 line=dict(width=0.0, color="rgba(249, 115, 22, 0.0)"),
                 fill="tozeroy",
                 fillcolor="rgba(249, 115, 22, 0.22)",
-                hovertemplate="Generator Status: %{y:.0f}% active<extra></extra>",
+                hovertemplate="Generator Active: %{y:.0f}%<extra></extra>",
             ),
             row=2,
             col=1,
@@ -305,12 +301,13 @@ def create_combined_dispatch_soc_figure(
             go.Scatter(
                 x=ts,
                 y=soc_pct,
+                customdata=soc_kwh,
                 mode="lines",
-                name="Battery SoC (%)",
+                name=f"Battery Level (% of {cfg.battery_capacity_kwh:,.0f} kWh)",
                 line=dict(color="#10B981", width=1.8),
                 fill="tozeroy",
                 fillcolor="rgba(16, 185, 129, 0.15)",
-                hovertemplate="Battery SoC: %{y:.1f}%<extra></extra>",
+                hovertemplate="Battery Level: %{y:.1f}% (%{customdata:,.1f} kWh)<extra></extra>",
             ),
             row=2,
             col=1,
@@ -342,8 +339,8 @@ def create_combined_dispatch_soc_figure(
 
     fig.update_layout(
         template="plotly_dark",
-        height=600,
-        margin=dict(l=55, r=25, t=65, b=40),
+        height=640,
+        margin=dict(l=55, r=25, t=65, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         legend=dict(
@@ -366,7 +363,7 @@ def create_combined_dispatch_soc_figure(
         col=1,
     )
     fig.update_yaxes(
-        title_text="SoC (%)",
+        title_text="Battery Level (%)",
         gridcolor="rgba(148, 163, 184, 0.12)",
         range=[0, 105],
         row=2,
@@ -375,9 +372,9 @@ def create_combined_dispatch_soc_figure(
     fig.update_xaxes(
         title_text="Time (15-min intervals)",
         gridcolor="rgba(148, 163, 184, 0.12)",
+        rangeslider=dict(visible=True, thickness=0.05),
         row=2,
         col=1,
     )
 
     return fig
-

@@ -68,9 +68,10 @@ current_model/ui_sandbox/
 
 └── Combined_sandbox/                           # [Scenario 7] Combined System Sandbox (Grid + Solar + Battery + Generator)
     ├── __init__.py
-    ├── combined_sandbox_engine.py              # 35,040-step 4-source coupled dispatch (Rules 1-3) & transparent Solar kWp derivation
-    ├── combined_charts.py                      # Synchronized 2-in-1 15-min dispatch & SoC figure + Consumption baseline chart
-    └── app.py                                  # Clean Screen Policy 2-Tab app (Tab 1: Consumption, Tab 2: Combined system)
+    ├── combined_sandbox_engine.py              # 35,040-step 4-source coupled dispatch (Rules 1-3), Amsterdam GPS default & decoupled Financials
+    ├── combined_charts.py                      # Synchronized 2-in-1 15-min dispatch & SoC (% & kWh) figure + Consumption baseline chart
+    ├── combined_excel_exporter.py              # 4-Sheet .xlsx verification workbook exporter (Summary, 15-Min Dispatch, Monthly, Cost & Tariffs)
+    └── app.py                                  # Clean Screen Policy 3-Tab app (Tab 1: Consumption, Tab 2: Combined system, Tab 3: Financials)
 ```
 
 ---
@@ -238,3 +239,61 @@ The Generator Sandbox replicates the exact UI layout and proven calculation comp
   * **3. Developer & Master Integration Data Contract:**
     * Stores 35,040-step $P_{\text{Residual}}(t) = \max(0, P_{\text{Load}}(t) - P_{\text{Gen}}(t))$ into `st.session_state["generator_standalone_result"]`.
     * One-click JSON download button for Phase 2 multi-scenario billing integration.
+
+---
+
+## :material/grid_view: Scenario 7: Combined System Sandbox (`ui_sandbox/Combined_sandbox/`)
+
+The Combined System Sandbox serves as the official UX reference standard under the **Clean Screen Policy**, uniting **Grid, Solar, Battery, and Generator** into an uncluttered 3-tab workspace:
+
+* **Tab 1: Consumption (Universal Baseline Profile Ingestion):**
+  * Shared 1:1 with all scenario sandboxes via `render_tab1_consumption`.
+  * Multi-format archive and file ingestion: `.csv`, `.txt`, and compressed `.zip` archives with automatic extraction and multi-encoding decoding (`utf-8`, `utf-8-sig`, `latin1`, `cp1252`).
+  * Header row skipping (`skiprows`) with live table preview.
+  * Multi-column timestamp selection (supports separate Date and Time columns merged automatically) and multi-channel power summing.
+  * 4 unit conversion modes: `kWh (15-min interval) → kW`, `kW (Direct Power)`, `W (Watt) → kW`, and `kWh (Hourly interval) → kW`.
+  * Day-first date parsing toggle (`DD.MM` vs `MM.DD`) with live formatted sample preview.
+  * Day-accurate date range filtering (`start_date`, `end_date`) to isolate evaluation windows.
+  * 1-Click "Load 15-Min Demo CSV (Full Year 2025)" button for instant verification.
+  * Alternative bottom-up synthetic load simulator mode.
+  * Automatic normalization into canonical 35,040-step profile (`LoadSeries2025`) feeding directly into Tab 2 physical dispatch and Tab 3 financials.
+  * 4 Baseline KPI Cards (Peak Demand, Total Energy, Average Power, Data Points) and interactive 15-minute consumption Plotly chart with range slider.
+* **Tab 2: Combined system (Grid + Solar + Battery + Generator — 100% Technical):**
+  * **Optional: Quick System Sizing / Share Split (Collapsed Expander):**
+    * Nested in an optional collapsed expander (`:material/pie_chart: Optional: Quick System Sizing (Share Split)`, `expanded=False`) above the 4 tiles so the screen remains clean and can be completely ignored by users who size components individually.
+    * Allows cross-system allocation: `Solar (% of Consumption)`, `Battery (% of overload)`, and `Generator (rest of overload)`.
+    * 5 One-Click Presets: `:material/battery_charging_full: 100% Battery`, `:material/power: 100% Generator`, `:material/solar_power: 100% Solar`, `:material/balance: 50 / 50`, and `:material/done_all: All 100%`.
+    * Direct primary action: `:material/play_arrow: Apply Split & Simulate` writes values into the tiles, toggles sources, and runs the simulation.
+  * **Accurate 100% Zero-Overload Sizing Engine (`derive_quick_sizing`):**
+    * Subtracts direct solar self-consumption from the load profile ($P_{\text{net}} = \max(0, P_{\text{load}} - P_{\text{solar}})$).
+    * Performs a 35,040-step unconstrained cumulative deficit integration across multi-day peak clusters, factoring in recharging from Solar surplus and Grid headroom (governed by Rules 2 & 3).
+    * Guaranteed `0.0 hrs remaining overload` when selecting 100% Battery or 100% Generator.
+  * **1. System Inputs (Symmetrical 2×2 Grid Architecture):**
+    * Core hardware inputs are directly visible in each bordered tile container without surrounding expanders:
+      * **Grid:** Enable toggle, Contracted Grid Limit (kW), Quick Sizing (% of Peak) buttons, and Measured Peak & Overload info line.
+      * **Solar:** Enable toggle, Quick Presets (20/40/60/100/Custom), Amsterdam GPS default & city search, sizing method (% of Consumption vs. Direct kWp), PVGIS yield caption, and blue formula callout (`st.info`).
+      * **Battery:** Enable toggle, Quick Presets (20/40/60/100/Custom), Capacity (kWh) and Power (kW) inputs, and usable energy & C-rate info line.
+      * **Generator:** Enable toggle, Quick Presets (20/40/60/100/Custom), Rated Power (kW), Minimum Load %, Fuel Type (Diesel, Gas, HVO), and minimum active output info line.
+    * Advanced engineering parameters are neatly grouped into collapsed mini-expanders (`:material/tune: Advanced <Source> Settings`, `expanded=False`) at the bottom of each tile:
+      * Solar: Manual GPS coordinates, Panel Wattage (Wp), and DC/AC Ratio.
+      * Battery: Min SoC %, Max SoC %, and Round-Trip Efficiency %.
+      * Generator: Standby Fuel Factor (unit/h/kW), Fuel Consumption per kWh (unit/kWh), and Minimum Runtime (minutes).
+  * **2. Interaction & Operating Rules (Prominent Open 3-Column Container):**
+    * Positioned directly below the 2×2 grid in plain view:
+      * **Column 1:** Peak Priority above Grid Limit (`Battery first, Generator as backup` vs. `Generator first, Battery for fast/small peaks`).
+      * **Column 2:** Battery Strategy below Grid Limit (`Peak Shaving only` vs. `Self-Consumption + Peak Reserve`) with conditional Peak Reserve SoC % slider.
+      * **Column 3:** Battery Charging Sources (`Solar surplus only`, `Solar surplus + Grid headroom`, `Solar surplus + Generator excess`).
+    * Primary action bar directly underneath: `:material/play_arrow: Simulate Combined System` (type="primary") and `:material/restart_alt: Reset Defaults`.
+  * **3. Key Results (4 Technical KPI Cards):**
+    * New Grid Peak (kW), Remaining Overload (factual `0.0 hrs remaining` format), Energy Supply Split (%), and Generator Runtime & Fuel.
+  * **4. Power Flow & Data:**
+    * 15-Minute Power Flow & Battery Level Plotly figure with timeframe selectors (`7D`, `1M`, `3M`, `All`) and range slider.
+    * System Overview Table (Baseline vs. Combined System).
+    * High-speed 4-sheet Excel verification export (`.xlsx`) via `openpyxl`.
+* **Tab 3: Financials (Dedicated Commercial Valuation):**
+  * Grid tariffs, capacity charges, fixed fees, and overload breach penalties.
+  * Solar Turnkey CAPEX (€/kWp) and O&M (%/year).
+  * Battery Pack CAPEX (€/kWh), PCS Inverter CAPEX (€/kW), and O&M (%/year).
+  * Generator acquisition mode (Rental / Lease vs. CAPEX), fuel unit price, and maintenance cost/hour.
+  * 4 Financial KPI Cards: Total Capital Investment (CAPEX), Annual Operating Costs (OPEX), Annual Utility Savings, and Simple Payback Period (years).
+  * Cost comparison table and monthly financial breakdown table.
