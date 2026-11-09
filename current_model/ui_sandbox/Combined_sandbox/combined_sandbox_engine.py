@@ -221,7 +221,12 @@ class CombinedFinancialConfig:
     dso_capacity_fee_eur_kw_month: float = 2.50
     dso_peak_demand_fee_eur_kw_month: float = 6.00
     dso_fixed_fee_eur_month: float = 100.0
+    dso_transport_eur_kwh: float = 0.025
     grid_overload_penalty_eur_kw: float = 15.00
+
+    # Avoided Grid Upgrade CAPEX & Avoided Transformer Rent OPEX
+    avoided_grid_upgrade_capex_eur: float = 0.0
+    avoided_transformer_rent_eur_month: float = 0.0
 
     # Pillar 3: Metering
     metering_fixed_fee_eur_month: float = 45.0
@@ -276,6 +281,8 @@ class CombinedFinancialKPIs:
     battery_capex_eur: float = 0.0
     battery_augmentation_eur: float = 0.0
     generator_capex_eur: float = 0.0
+    gross_capex_eur: float = 0.0
+    avoided_grid_upgrade_capex_eur: float = 0.0
     total_capex_eur: float = 0.0
 
     # Baseline (Current situation) 4-Pillar Annual Costs
@@ -619,6 +626,8 @@ class DualBatterySizingResult:
     standalone_80_kwh: float
     standalone_50_kw: float
     standalone_50_kwh: float
+    standalone_usable_kwh: float
+    standalone_cluster_duration_hrs: float
 
     # Mode B: Coupled (With active Solar / Generator & Rules)
     coupled_100_kw: float
@@ -627,6 +636,8 @@ class DualBatterySizingResult:
     coupled_80_kwh: float
     coupled_50_kw: float
     coupled_50_kwh: float
+    coupled_usable_kwh: float
+    coupled_cluster_duration_hrs: float
 
     # 4 Physical Criteria (Standalone vs. Coupled)
     standalone_peak_discharge_kw: float
@@ -663,6 +674,17 @@ class DualGeneratorSizingResult:
     coupled_80_kw: float
     coupled_50_kw: float
 
+    # Diagnostic Metrics (Mode A Standalone vs Mode B Coupled)
+    standalone_energy_mwh: float = 0.0
+    standalone_runtime_hours: float = 0.0
+    standalone_longest_run_hours: float = 0.0
+    standalone_fuel_tank_liters: float = 0.0
+
+    coupled_energy_mwh: float = 0.0
+    coupled_runtime_hours: float = 0.0
+    coupled_longest_run_hours: float = 0.0
+    coupled_fuel_tank_liters: float = 0.0
+
 
 def compute_overload_reference(
     load_kw: np.ndarray, grid_limit_kw: float, step_hours: float = 0.25
@@ -695,14 +717,14 @@ def _evaluate_bess_criteria_for_profile(
     extra_recharge_kw: Optional[np.ndarray] = None,
     allow_grid_recharge: bool = True,
     step_hours: float = 0.25,
-) -> Tuple[float, float, float, float, float, str]:
+) -> Tuple[float, float, float, float, float, str, float, float]:
     """
     Evaluates the 4 physical BESS sizing criteria on a given net load profile:
       1. Peak Discharge Power (kW)
       2. Single Peak Event Gross Energy (kWh)
       3. Multi-Day Cluster Gross Energy (kWh)
       4. Available Recharge Headroom (max kW, annual kWh)
-    Returns (peak_kw, single_gross_kwh, cluster_gross_kwh, max_rech_kw, total_rech_kwh, driver_label).
+    Returns (peak_kw, single_gross_kwh, cluster_gross_kwh, max_rech_kw, total_rech_kwh, driver_label, usable_chem_kwh, cluster_duration_hrs).
     """
     p = np.maximum(0.0, np.nan_to_num(np.asarray(net_load_kw, dtype=float), nan=0.0))
     n = len(p)
@@ -729,20 +751,34 @@ def _evaluate_bess_criteria_for_profile(
     total_rech_kwh = float(np.sum(avail_rech_kw_arr) * eta_chg * dt)
     total_req_chem_kwh = float(np.sum(np.maximum(0.0, p - lim) / eta_dis) * dt)
 
+    chg_cap_kw = float(peak_kw) if peak_kw > 0.0 else lim
     cum_def = 0.0
     max_cum_def = 0.0
+    curr_cluster_steps = 0
+    worst_cluster_steps = 0
     for i in range(n):
         nl = p[i]
         if nl > lim:
             cum_def += ((nl - lim) / eta_dis) * dt
+            curr_cluster_steps += 1
             if cum_def > max_cum_def:
                 max_cum_def = cum_def
+            if curr_cluster_steps > worst_cluster_steps:
+                worst_cluster_steps = curr_cluster_steps
         else:
-            rech_e = avail_rech_kw_arr[i] * eta_chg * dt
+            rech_e = min(avail_rech_kw_arr[i], chg_cap_kw) * eta_chg * dt
             cum_def = max(0.0, cum_def - rech_e)
+            if cum_def <= 1e-6:
+                curr_cluster_steps = 0
+            else:
+                curr_cluster_steps += 1
+                if curr_cluster_steps > worst_cluster_steps:
+                    worst_cluster_steps = curr_cluster_steps
 
     cluster_gross_kwh = (max_cum_def / dod) * 1.05 if max_cum_def > 0.0 else 0.0
     cluster_gross_kwh = max(cluster_gross_kwh, single_gross_kwh)
+    usable_chem_kwh = round(cluster_gross_kwh * dod, 1)
+    cluster_duration_hrs = round(worst_cluster_steps * dt, 1)
 
     if peak_kw <= 0.05:
         driver = "No Overload"
@@ -760,6 +796,8 @@ def _evaluate_bess_criteria_for_profile(
         round(max_rech_kw, 1),
         round(total_rech_kwh, 0),
         driver,
+        usable_chem_kwh,
+        cluster_duration_hrs,
     )
 
 
@@ -879,6 +917,8 @@ def compute_dual_battery_sizing(
         sa_rech_kw,
         sa_rech_kwh,
         sa_driver,
+        sa_usable_kwh,
+        sa_cluster_duration_hrs,
     ) = _evaluate_bess_criteria_for_profile(
         net_load_kw=p_load,
         grid_limit_kw=grid_limit,
@@ -891,7 +931,7 @@ def compute_dual_battery_sizing(
         step_hours=dt,
     )
     sa_100_kw = round(math.ceil(sa_peak_kw * 10.0) / 10.0, 1) if sa_peak_kw > 0.05 else 0.0
-    sa_100_kwh = round(sa_cluster_kwh, 1)
+    sa_100_kwh = float(math.ceil(sa_cluster_kwh))
 
     # 2. Mode B: Coupled (With active Solar, active Generator, and Rules 1-3)
     if system_cfg.enable_solar and n_steps > 0:
@@ -973,6 +1013,8 @@ def compute_dual_battery_sizing(
         cp_rech_kw,
         cp_rech_kwh,
         cp_driver,
+        cp_usable_kwh,
+        cp_cluster_duration_hrs,
     ) = _evaluate_bess_criteria_for_profile(
         net_load_kw=p_for_bess,
         grid_limit_kw=grid_limit,
@@ -985,7 +1027,7 @@ def compute_dual_battery_sizing(
         step_hours=dt,
     )
     cp_100_kw = round(math.ceil(cp_peak_kw * 10.0) / 10.0, 1) if cp_peak_kw > 0.05 else 0.0
-    cp_100_kwh = round(cp_cluster_kwh, 1)
+    cp_100_kwh = float(math.ceil(cp_cluster_kwh))
 
     # Build the 4-Criterion Bottleneck Diagnostic Table
     cfg_kw = float(system_cfg.battery_power_kw) if system_cfg.enable_battery else 0.0
@@ -1014,12 +1056,16 @@ def compute_dual_battery_sizing(
         standalone_80_kwh=round(sa_100_kwh * 0.80, 1),
         standalone_50_kw=round(sa_100_kw * 0.50, 1),
         standalone_50_kwh=round(sa_100_kwh * 0.50, 1),
+        standalone_usable_kwh=sa_usable_kwh,
+        standalone_cluster_duration_hrs=sa_cluster_duration_hrs,
         coupled_100_kw=cp_100_kw,
         coupled_100_kwh=cp_100_kwh,
         coupled_80_kw=round(cp_100_kw * 0.80, 1),
         coupled_80_kwh=round(cp_100_kwh * 0.80, 1),
         coupled_50_kw=round(cp_100_kw * 0.50, 1),
         coupled_50_kwh=round(cp_100_kwh * 0.50, 1),
+        coupled_usable_kwh=cp_usable_kwh,
+        coupled_cluster_duration_hrs=cp_cluster_duration_hrs,
         standalone_peak_discharge_kw=sa_peak_kw,
         coupled_peak_discharge_kw=cp_peak_kw,
         standalone_single_event_kwh=sa_single_kwh,
@@ -1053,6 +1099,31 @@ def compute_dual_generator_sizing(
     grid_limit = float(system_cfg.grid_limit_kw) if system_cfg.enable_grid else 0.0
     raw_over_kw, _ = compute_overload_reference(p_load, grid_limit, step_hours)
     sa_100 = round(math.ceil(raw_over_kw * 10.0) / 10.0, 1) if raw_over_kw > 0.05 else 0.0
+
+    # Diagnostic metrics for Standalone Generator
+    over_sa = np.maximum(0.0, p_load - grid_limit)
+    sa_kwh = float(np.sum(over_sa) * step_hours)
+    sa_mwh = round(sa_kwh / 1000.0, 1)
+    sa_is_over = over_sa > 0.05
+    sa_runtime_hrs = round(float(np.sum(sa_is_over) * step_hours), 1)
+
+    sa_cur_steps = 0
+    sa_max_steps = 0
+    for val in sa_is_over:
+        if val:
+            sa_cur_steps += 1
+            if sa_cur_steps > sa_max_steps:
+                sa_max_steps = sa_cur_steps
+        else:
+            sa_cur_steps = 0
+    sa_longest_hrs = round(float(sa_max_steps * step_hours), 1)
+
+    slope = float(system_cfg.gen_slope_per_kwh)
+    intercept = float(system_cfg.gen_intercept_per_kw_rated)
+    sa_event_fuel = (slope * raw_over_kw + intercept * sa_100) * sa_longest_hrs
+    sa_avg_kw = (sa_kwh / max(0.1, sa_runtime_hrs)) if sa_runtime_hrs > 0 else (sa_100 * 0.5)
+    sa_reserve_48h = (slope * sa_avg_kw + intercept * sa_100) * 48.0
+    sa_tank = round(max(100.0, sa_event_fuel + sa_reserve_48h), 0) if sa_100 > 0 else 0.0
 
     # Simulate with Generator disabled to measure exact residual peak left after active Solar & Battery
     cfg_no_gen = CombinedSystemConfig(
@@ -1091,6 +1162,29 @@ def compute_dual_generator_sizing(
     rem_over_kw = float(res_no_gen.kpis.remaining_overload_kw)
     cp_100 = round(math.ceil(rem_over_kw * 10.0) / 10.0, 1) if rem_over_kw > 0.05 else 0.0
 
+    # Diagnostic metrics for Coupled Generator
+    over_cp = np.maximum(0.0, res_no_gen.unmet_overload_kw)
+    cp_kwh = float(np.sum(over_cp) * step_hours)
+    cp_mwh = round(cp_kwh / 1000.0, 1)
+    cp_is_over = over_cp > 0.05
+    cp_runtime_hrs = round(float(np.sum(cp_is_over) * step_hours), 1)
+
+    cp_cur_steps = 0
+    cp_max_steps = 0
+    for val in cp_is_over:
+        if val:
+            cp_cur_steps += 1
+            if cp_cur_steps > cp_max_steps:
+                cp_max_steps = cp_cur_steps
+        else:
+            cp_cur_steps = 0
+    cp_longest_hrs = round(float(cp_max_steps * step_hours), 1)
+
+    cp_event_fuel = (slope * rem_over_kw + intercept * cp_100) * cp_longest_hrs
+    cp_avg_kw = (cp_kwh / max(0.1, cp_runtime_hrs)) if cp_runtime_hrs > 0 else (cp_100 * 0.5)
+    cp_reserve_48h = (slope * cp_avg_kw + intercept * cp_100) * 48.0
+    cp_tank = round(max(100.0, cp_event_fuel + cp_reserve_48h), 0) if cp_100 > 0 else 0.0
+
     return DualGeneratorSizingResult(
         standalone_100_kw=sa_100,
         standalone_80_kw=round(sa_100 * 0.80, 1),
@@ -1098,6 +1192,14 @@ def compute_dual_generator_sizing(
         coupled_100_kw=cp_100,
         coupled_80_kw=round(cp_100 * 0.80, 1),
         coupled_50_kw=round(cp_100 * 0.50, 1),
+        standalone_energy_mwh=sa_mwh,
+        standalone_runtime_hours=sa_runtime_hrs,
+        standalone_longest_run_hours=sa_longest_hrs,
+        standalone_fuel_tank_liters=sa_tank,
+        coupled_energy_mwh=cp_mwh,
+        coupled_runtime_hours=cp_runtime_hrs,
+        coupled_longest_run_hours=cp_longest_hrs,
+        coupled_fuel_tank_liters=cp_tank,
     )
 
 
@@ -1939,7 +2041,10 @@ def evaluate_combined_financials(
 
     gen_is_purchase = fin_cfg.generator_cost_model == "Purchase (CAPEX)"
     generator_capex = fin_cfg.generator_capex_eur if (cfg.enable_generator and gen_is_purchase) else 0.0
-    total_capex = solar_capex + battery_capex + generator_capex
+    gross_capex = solar_capex + battery_capex + generator_capex
+    avoided_upgrade_capex = max(0.0, float(fin_cfg.avoided_grid_upgrade_capex_eur))
+    net_total_capex = max(0.0, gross_capex - avoided_upgrade_capex)
+    total_capex = net_total_capex
 
     # 2. Resolve 4-Pillar Rates
     if fin_cfg.grid_energy_price_eur_kwh is not None:
@@ -1967,6 +2072,8 @@ def evaluate_combined_financials(
 
     pen_rate_kw = float(fin_cfg.grid_overload_penalty_eur_kw)
     tax_pct = float(fin_cfg.tax_surcharge_pct) / 100.0
+    dso_vol_rate = float(fin_cfg.dso_transport_eur_kwh)
+    trafo_rent_mo = float(fin_cfg.avoided_transformer_rent_eur_month)
 
     # 3. Monthly 4-Pillar Grid & Operational Costs (12 Months)
     mb_df = sim_res.monthly_balance_df
@@ -2007,7 +2114,7 @@ def evaluate_combined_financials(
         # Baseline (Current situation) 4 Pillars
         b_p1 = cons_kwh * supp_kwh_rate + supp_fixed_mo
         b_pen = base_over_kw * pen_rate_kw
-        b_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (base_peak_kw * dso_peak_rate) + dso_fixed_mo + b_pen
+        b_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (base_peak_kw * dso_peak_rate) + dso_fixed_mo + (cons_kwh * dso_vol_rate) + trafo_rent_mo + b_pen
         b_p3 = meter_fixed_mo
         b_p4 = (cons_kwh * tax_kwh_rate) + (b_p1 + b_p2 + b_p3) * tax_pct
         b_tot = b_p1 + b_p2 + b_p3 + b_p4
@@ -2015,7 +2122,7 @@ def evaluate_combined_financials(
         # Combined system 4 Pillars + Component OPEX
         c_p1 = comb_imp_kwh * supp_kwh_rate + supp_fixed_mo
         c_pen = comb_over_kw * pen_rate_kw
-        c_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (comb_peak_kw * dso_peak_rate) + dso_fixed_mo + c_pen
+        c_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (comb_peak_kw * dso_peak_rate) + dso_fixed_mo + (comb_imp_kwh * dso_vol_rate) + c_pen
         c_p3 = meter_fixed_mo
         c_p4 = (comb_imp_kwh * tax_kwh_rate) + (c_p1 + c_p2 + c_p3) * tax_pct
 
@@ -2108,6 +2215,8 @@ def evaluate_combined_financials(
         battery_capex_eur=round(battery_capex, 0),
         battery_augmentation_eur=round(battery_aug_eur, 0),
         generator_capex_eur=round(generator_capex, 0),
+        gross_capex_eur=round(gross_capex, 0),
+        avoided_grid_upgrade_capex_eur=round(avoided_upgrade_capex, 0),
         total_capex_eur=round(total_capex, 0),
         baseline_pillar1_supply_eur=round(base_p1_sum, 0),
         baseline_pillar2_dso_eur=round(base_p2_sum, 0),
@@ -2210,3 +2319,243 @@ def evaluate_combined_financials(
     sim_res.monthly_cost_df = pd.DataFrame(monthly_cost_rows)
     sim_res.cashflow_15y_df = pd.DataFrame(cashflow_rows)
     return sim_res
+
+
+# ======================================================================================
+# 7. Utility Tariff Preset Catalogs & 1-Click Template Loader
+# ======================================================================================
+
+UTILITY_DSO_PRESETS: Dict[str, Dict[str, Dict[str, float]]] = {
+    "Enexis Netbeheer B.V.": {
+        "MS-D (125 t/m 1.500 kW)": {
+            "capacity_fee_kw_mo": 2.44,
+            "peak_fee_kw_mo": 3.71,
+            "fixed_fee_mo": round((1653.0 + 441.0) / 12.0, 2),  # €174.50/mo
+            "transport_eur_kwh": 0.025,
+            "penalty_kw": 15.00,
+        },
+        "MS/LS (> 50 t/m 125 kW)": {
+            "capacity_fee_kw_mo": 4.20,
+            "peak_fee_kw_mo": 3.71,
+            "fixed_fee_mo": round((381.0 + 441.0) / 12.0, 2),   # €68.50/mo
+            "transport_eur_kwh": 0.025,
+            "penalty_kw": 15.00,
+        },
+        "LS (t/m 50 kW)": {
+            "capacity_fee_kw_mo": 1.34,
+            "peak_fee_kw_mo": 0.00,
+            "fixed_fee_mo": round((381.0 + 18.0) / 12.0, 2),    # €33.25/mo
+            "transport_eur_kwh": 0.061,
+            "penalty_kw": 15.00,
+        },
+        "MS-T (> 1.500 kW)": {
+            "capacity_fee_kw_mo": 2.31,
+            "peak_fee_kw_mo": 3.10,
+            "fixed_fee_mo": round((1653.0 + 441.0) / 12.0, 2),  # €174.50/mo
+            "transport_eur_kwh": 0.015,
+            "penalty_kw": 15.00,
+        },
+    },
+    "Liander Netbeheer B.V.": {
+        "MS-D (125 t/m 1.500 kW)": {
+            "capacity_fee_kw_mo": 2.50,
+            "peak_fee_kw_mo": 3.65,
+            "fixed_fee_mo": round((1620.0 + 430.0) / 12.0, 2),  # €170.83/mo
+            "transport_eur_kwh": 0.024,
+            "penalty_kw": 15.00,
+        },
+        "MS/LS (> 50 t/m 125 kW)": {
+            "capacity_fee_kw_mo": 4.15,
+            "peak_fee_kw_mo": 3.65,
+            "fixed_fee_mo": round((375.0 + 430.0) / 12.0, 2),   # €67.08/mo
+            "transport_eur_kwh": 0.024,
+            "penalty_kw": 15.00,
+        },
+        "LS (t/m 50 kW)": {
+            "capacity_fee_kw_mo": 1.40,
+            "peak_fee_kw_mo": 0.00,
+            "fixed_fee_mo": round((375.0 + 18.0) / 12.0, 2),    # €32.75/mo
+            "transport_eur_kwh": 0.058,
+            "penalty_kw": 15.00,
+        },
+        "MS-T (> 1.500 kW)": {
+            "capacity_fee_kw_mo": 2.25,
+            "peak_fee_kw_mo": 3.05,
+            "fixed_fee_mo": round((1620.0 + 430.0) / 12.0, 2),  # €170.83/mo
+            "transport_eur_kwh": 0.014,
+            "penalty_kw": 15.00,
+        },
+    },
+    "Stedin Netbeheer B.V.": {
+        "MS (125 t/m 1.500 kW)": {
+            "capacity_fee_kw_mo": 2.40,
+            "peak_fee_kw_mo": 3.80,
+            "fixed_fee_mo": round((1590.0 + 450.0) / 12.0, 2),  # €170.00/mo
+            "transport_eur_kwh": 0.026,
+            "penalty_kw": 15.00,
+        },
+        "Trafo MS/LS (> 50 t/m 125 kW)": {
+            "capacity_fee_kw_mo": 4.25,
+            "peak_fee_kw_mo": 3.80,
+            "fixed_fee_mo": round((390.0 + 450.0) / 12.0, 2),   # €70.00/mo
+            "transport_eur_kwh": 0.026,
+            "penalty_kw": 15.00,
+        },
+        "LS (t/m 50 kW)": {
+            "capacity_fee_kw_mo": 1.55,
+            "peak_fee_kw_mo": 0.00,
+            "fixed_fee_mo": round((74.44 + 18.0) / 12.0, 2),    # €7.70/mo
+            "transport_eur_kwh": 0.060,
+            "penalty_kw": 15.00,
+        },
+        "Trafo HS+TS/MS (> 1.500 kW)": {
+            "capacity_fee_kw_mo": 3.79,
+            "peak_fee_kw_mo": 5.30,
+            "fixed_fee_mo": round((3642.0 + 2760.0) / 12.0, 2), # €533.50/mo
+            "transport_eur_kwh": 0.012,
+            "penalty_kw": 15.00,
+        },
+    },
+    "EDEMSA Mendoza (Single-Utility)": {
+        "T2 RMT (Bodegas Salentein 430 kW)": {
+            "capacity_fee_kw_mo": 32.50,
+            "peak_fee_kw_mo": 6.80,
+            "fixed_fee_mo": 411.00,
+            "transport_eur_kwh": 0.054,
+            "penalty_kw": 32.50,
+        },
+    },
+}
+
+UTILITY_SUPPLIER_PRESETS: Dict[str, Dict[str, Dict[str, float]]] = {
+    "Vattenfall Zakelijk": {
+        "Vast 1 Jaar (Dubbeltarief HT/NT)": {
+            "energy_price_eur_kwh": 0.125,
+            "fixed_fee_mo": round(180.0 / 12.0, 2),  # €15.00/mo
+        },
+        "Vast 3 Jaar (Zekerheid)": {
+            "energy_price_eur_kwh": 0.121,
+            "fixed_fee_mo": round(195.0 / 12.0, 2),  # €16.25/mo
+        },
+        "Dynamisch EPEX Spot Zakelijk": {
+            "energy_price_eur_kwh": 0.120,
+            "fixed_fee_mo": round(180.0 / 12.0, 2),  # €15.00/mo
+        },
+    },
+    "Eneco Zakelijk": {
+        "Vast 1 Jaar (Dubbeltarief HT/NT)": {
+            "energy_price_eur_kwh": 0.127,
+            "fixed_fee_mo": round(160.0 / 12.0, 2),  # €13.33/mo
+        },
+        "Vast 3 Jaar (Zekerheid)": {
+            "energy_price_eur_kwh": 0.122,
+            "fixed_fee_mo": round(175.0 / 12.0, 2),  # €14.58/mo
+        },
+    },
+    "Essent Zakelijk": {
+        "Vast 1 Jaar (Dubbeltarief HT/NT)": {
+            "energy_price_eur_kwh": 0.123,
+            "fixed_fee_mo": round(190.0 / 12.0, 2),  # €15.83/mo
+        },
+        "Vast 3 Jaar (Zekerheid)": {
+            "energy_price_eur_kwh": 0.120,
+            "fixed_fee_mo": round(205.0 / 12.0, 2),  # €17.08/mo
+        },
+    },
+    "Shell Energy": {
+        "Direct Fixed 1-Year": {
+            "energy_price_eur_kwh": 0.126,
+            "fixed_fee_mo": round(200.0 / 12.0, 2),  # €16.67/mo
+        },
+    },
+}
+
+UTILITY_METERING_PRESETS: Dict[str, Dict[str, Dict[str, float]]] = {
+    "Fudura B.V.": {
+        "Kwartierdata Telemetrie MS (Grootverbruik RLM)": {
+            "fixed_fee_mo": round(900.0 / 12.0, 2),   # €75.00/mo
+        },
+        "Meettransformatoren MS (Trafo CT/VT)": {
+            "fixed_fee_mo": round(1550.0 / 12.0, 2),  # €129.17/mo
+        },
+        "Kleinverbruik / Tussenmeting": {
+            "fixed_fee_mo": round(420.0 / 12.0, 2),   # €35.00/mo
+        },
+    },
+    "Joulz Meetbedrijf": {
+        "Grootverbruik Telemetrie MS": {
+            "fixed_fee_mo": round(850.0 / 12.0, 2),   # €70.83/mo
+        },
+        "Meettransformatoren MS": {
+            "fixed_fee_mo": round(1480.0 / 12.0, 2),  # €123.33/mo
+        },
+    },
+    "Kenter B.V.": {
+        "Grootverbruik Kwartierdata Telemetrie": {
+            "fixed_fee_mo": round(880.0 / 12.0, 2),   # €73.33/mo
+        },
+        "Combinatie Telemetrie + Transformatoren": {
+            "fixed_fee_mo": round(2350.0 / 12.0, 2),  # €195.83/mo
+        },
+    },
+}
+
+
+def get_dso_preset_options() -> Dict[str, List[str]]:
+    """Returns mapping of DSO provider name to available voltage/capacity tiers."""
+    return {dso: list(tiers.keys()) for dso, tiers in UTILITY_DSO_PRESETS.items()}
+
+
+def get_supplier_preset_options() -> Dict[str, List[str]]:
+    """Returns mapping of energy supplier name to available contract products."""
+    return {supp: list(plans.keys()) for supp, plans in UTILITY_SUPPLIER_PRESETS.items()}
+
+
+def get_metering_preset_options() -> Dict[str, List[str]]:
+    """Returns mapping of certified metering company to metering packages."""
+    return {meter: list(plans.keys()) for meter, plans in UTILITY_METERING_PRESETS.items()}
+
+
+def apply_utility_tariff_presets(
+    dso_choice: str,
+    tier_choice: str,
+    supp_choice: str,
+    supp_plan: str,
+    meter_choice: str,
+    meter_tier: str,
+    fin_cfg: CombinedFinancialConfig,
+) -> CombinedFinancialConfig:
+    """
+    Applies real-world DSO, Supplier, and Metering benchmark rates to CombinedFinancialConfig.
+    Returns the updated configuration.
+    """
+    # DSO
+    dso_tiers = UTILITY_DSO_PRESETS.get(dso_choice, {})
+    dso_data = dso_tiers.get(tier_choice)
+    if not dso_data and dso_tiers:
+        dso_data = next(iter(dso_tiers.values()))
+    if dso_data:
+        fin_cfg.dso_capacity_fee_eur_kw_month = float(dso_data.get("capacity_fee_kw_mo", fin_cfg.dso_capacity_fee_eur_kw_month))
+        fin_cfg.dso_peak_demand_fee_eur_kw_month = float(dso_data.get("peak_fee_kw_mo", fin_cfg.dso_peak_demand_fee_eur_kw_month))
+        fin_cfg.dso_fixed_fee_eur_month = float(dso_data.get("fixed_fee_mo", fin_cfg.dso_fixed_fee_eur_month))
+        fin_cfg.dso_transport_eur_kwh = float(dso_data.get("transport_eur_kwh", fin_cfg.dso_transport_eur_kwh))
+        fin_cfg.grid_overload_penalty_eur_kw = float(dso_data.get("penalty_kw", fin_cfg.grid_overload_penalty_eur_kw))
+
+    # Supplier
+    supp_plans = UTILITY_SUPPLIER_PRESETS.get(supp_choice, {})
+    supp_data = supp_plans.get(supp_plan)
+    if not supp_data and supp_plans:
+        supp_data = next(iter(supp_plans.values()))
+    if supp_data:
+        fin_cfg.supplier_energy_price_eur_kwh = float(supp_data.get("energy_price_eur_kwh", fin_cfg.supplier_energy_price_eur_kwh))
+        fin_cfg.supplier_fixed_fee_eur_month = float(supp_data.get("fixed_fee_mo", fin_cfg.supplier_fixed_fee_eur_month))
+
+    # Metering
+    meter_tiers = UTILITY_METERING_PRESETS.get(meter_choice, {})
+    meter_data = meter_tiers.get(meter_tier)
+    if not meter_data and meter_tiers:
+        meter_data = next(iter(meter_tiers.values()))
+    if meter_data:
+        fin_cfg.metering_fixed_fee_eur_month = float(meter_data.get("fixed_fee_mo", fin_cfg.metering_fixed_fee_eur_month))
+
+    return fin_cfg

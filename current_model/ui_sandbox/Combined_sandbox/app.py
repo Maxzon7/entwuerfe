@@ -62,6 +62,7 @@ try:
     from ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
+        synthesize_edemsa_salentein_load_profile_2025,
     )
     from ui_sandbox.Currentsituation_sandbox.consumption.view import render_tab1_consumption
 except ImportError:
@@ -69,6 +70,7 @@ except ImportError:
     from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
         normalize_load_profile_2025,
         synthesize_benchmark_load_profile_2025,
+        synthesize_edemsa_salentein_load_profile_2025,
     )
     from current_model.ui_sandbox.Currentsituation_sandbox.consumption.view import render_tab1_consumption
 
@@ -82,6 +84,8 @@ try:
         CombinedSystemConfig,
         InteractionRulesConfig,
         CombinedFinancialConfig,
+        DualBatterySizingResult,
+        DualGeneratorSizingResult,
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
         compute_dual_battery_sizing,
@@ -89,6 +93,10 @@ try:
         compute_dual_generator_sizing,
         simulate_combined_system_dispatch,
         evaluate_combined_financials,
+        get_dso_preset_options,
+        get_supplier_preset_options,
+        get_metering_preset_options,
+        apply_utility_tariff_presets,
     )
 except (ImportError, AttributeError):
     for _m in list(sys.modules.keys()):
@@ -103,6 +111,8 @@ except (ImportError, AttributeError):
         CombinedSystemConfig,
         InteractionRulesConfig,
         CombinedFinancialConfig,
+        DualBatterySizingResult,
+        DualGeneratorSizingResult,
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
         compute_dual_battery_sizing,
@@ -110,6 +120,10 @@ except (ImportError, AttributeError):
         compute_dual_generator_sizing,
         simulate_combined_system_dispatch,
         evaluate_combined_financials,
+        get_dso_preset_options,
+        get_supplier_preset_options,
+        get_metering_preset_options,
+        apply_utility_tariff_presets,
     )
 
 from ui_sandbox.Combined_sandbox.combined_charts import (
@@ -292,7 +306,9 @@ def _apply_bess_quick_size(cap_kwh: float, p_kw: float) -> None:
     cfg: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cfg.battery_capacity_kwh = max(10.0, float(cap_kwh))
     cfg.battery_power_kw = max(5.0, float(p_kw))
-    st.session_state["comb_battery_capacity_kwh_num"] = cfg.battery_capacity_kwh
+    def_units = max(1, int(round(cfg.battery_capacity_kwh / 50.0)))
+    st.session_state["comb_bess_unit_count"] = def_units
+    st.session_state["comb_bess_unit_kwh"] = round(cfg.battery_capacity_kwh / def_units, 1)
     st.session_state["comb_battery_power_kw_num"] = cfg.battery_power_kw
     st.session_state.pop("comb_cached_excel_bytes", None)
 
@@ -389,9 +405,33 @@ def render_level1_overview_bar(load_series: LoadSeries2025, load_label: str) -> 
 # LEVEL 2 — SUBTAB 1: Consumption (Always Active)
 # ======================================================================================
 
+REFERENCE_SCENARIOS: dict = {
+    "Commercial Bakery / Office (250 kW Peak / Enexis Netbeheer)": {
+        "type": "commercial_hvac",
+        "peak_kw": 250.0,
+        "grid_limit_kw": 180.0,
+    },
+    "Rotterdam WKO Heat Pump (110 kW Peak / Stedin Netbeheer)": {
+        "type": "commercial_hvac",
+        "peak_kw": 110.0,
+        "grid_limit_kw": 75.0,
+    },
+    "Heavy Industrial Logistics (550 kW Peak / Liander Netbeheer)": {
+        "type": "commercial_hvac",
+        "peak_kw": 550.0,
+        "grid_limit_kw": 380.0,
+    },
+    "Bodegas Salentein Mendoza (430 kW Peak / EDEMSA)": {
+        "type": "edemsa_salentein",
+        "peak_kw": 691.0,
+        "grid_limit_kw": 430.0,
+    },
+}
+
+
 def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
     """
-    Renders Subtab 1: Consumption (CSV upload as default, benchmark switcher, and 4 Base KPIs).
+    Renders Subtab 1: Consumption (1-Click Reference Scenarios, CSV upload, and 4 Base KPIs).
     """
     cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     load_kw = load_series.power_kw
@@ -433,6 +473,47 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
             subtext=f"{over_kwh:,.0f} kWh above {cur_sys.grid_limit_kw:,.0f} kW limit",
             status="ok" if over_kw <= 0.05 else "alert",
         )
+
+    # 1-Click Reference Scenario Loader
+    with st.container(border=True):
+        st.markdown("##### :material/dataset: Standard Reference Scenarios (1-Click Loader)")
+        with st.form("comb_ref_scenario_form"):
+            sc1, sc_btn = st.columns([2.5, 1.2])
+            with sc1:
+                ref_names = list(REFERENCE_SCENARIOS.keys())
+                sel_sc = st.selectbox(
+                    "Standard Reference Scenarios",
+                    options=ref_names,
+                    index=0,
+                    key="comb_ref_scenario_select",
+                    help="Loads a complete, validated benchmark profile with contracted grid limits.",
+                )
+            with sc_btn:
+                st.write("")
+                apply_sc = st.form_submit_button(
+                    "Load Reference Scenario",
+                    icon=":material/download:",
+                    use_container_width=True,
+                )
+
+        if apply_sc and sel_sc in REFERENCE_SCENARIOS:
+            sc_info = REFERENCE_SCENARIOS[sel_sc]
+            cur_sys.grid_limit_kw = float(sc_info["grid_limit_kw"])
+            st.session_state["comb_grid_limit_num"] = cur_sys.grid_limit_kw
+            if sc_info["type"] == "edemsa_salentein":
+                bench_profile = synthesize_edemsa_salentein_load_profile_2025()
+            else:
+                bench_profile = synthesize_benchmark_load_profile_2025(
+                    profile_type=sc_info["type"],
+                    nominal_peak_kw=float(sc_info["peak_kw"]),
+                )
+            st.session_state["active_load_series_2025"] = bench_profile
+            st.session_state["comb_active_load_series"] = bench_profile
+            st.session_state["active_csv_filename"] = sel_sc
+            st.session_state["comb_active_load_label"] = f"Reference: {sel_sc}"
+            st.session_state["tab1_active_source"] = "benchmark"
+            _sync_shared_load_series()
+            st.rerun()
 
     st.write("")
     render_tab1_consumption(key_prefix="comb_tab1_cons")
@@ -573,8 +654,9 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         )
 
         with st.form("comb_solar_form"):
-            sz_m1, sz_m2 = st.columns([1.5, 2.5])
-            with sz_m1:
+            sz_c1, sz_c2, sz_c3 = st.columns(3)
+            with sz_c1:
+                st.markdown("**Sizing Mode & Energy Share:**")
                 sizing_mode_label = st.radio(
                     "Sizing Mode",
                     options=["% of Annual Consumption", "Direct Size (kWp)"],
@@ -583,14 +665,6 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     disabled=not is_active,
                     key="comb_solar_sizing_radio",
                 )
-            with sz_m2:
-                st.caption(
-                    "Select '% of Annual Consumption' to auto-size Solar from energy share, "
-                    "or 'Direct Size (kWp)' to specify exact installed capacity."
-                )
-
-            in_c1, in_c2, in_c3, in_c4, in_btn = st.columns([1.1, 1.1, 1.1, 1.1, 0.9])
-            with in_c1:
                 target_share_val = st.number_input(
                     "Share of Consumption (%)",
                     min_value=5.0,
@@ -599,8 +673,10 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     step=5.0,
                     disabled=not is_active,
                     key="comb_solar_target_share_num",
+                    help="Percentage of total annual electricity demand to be supplied by solar.",
                 )
-            with in_c2:
+            with sz_c2:
+                st.markdown("**Installed Capacity & Inverter AC Limit:**")
                 direct_kwp_val = st.number_input(
                     "Direct Size (kWp)",
                     min_value=1.0,
@@ -609,8 +685,8 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     step=10.0,
                     disabled=not is_active,
                     key="comb_solar_direct_kwp_num",
+                    help="Direct nameplate DC capacity in kWp.",
                 )
-            with in_c3:
                 inv_ac_limit_val = st.number_input(
                     "Inverter AC Limit (kW)",
                     min_value=0.0,
@@ -619,21 +695,24 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     step=10.0,
                     disabled=not is_active,
                     key="comb_solar_inv_ac_limit_num",
+                    help="Maximum continuous AC feed-in power to the site/grid.",
                 )
-            with in_c4:
-                inv_eff_val = st.number_input(
+            with sz_c3:
+                st.markdown("**Inverter Efficiency & Action:**")
+                inv_eff_val = st.slider(
                     "Inverter Efficiency (%)",
-                    min_value=80.0,
-                    max_value=100.0,
-                    value=float(cur_sys.inverter_efficiency_pct),
-                    step=0.5,
+                    min_value=85,
+                    max_value=100,
+                    value=int(round(cur_sys.inverter_efficiency_pct)),
+                    step=1,
                     disabled=not is_active,
                     key="comb_solar_inv_eff_num",
                 )
-            with in_btn:
                 st.write("")
                 sol_submitted = st.form_submit_button(
-                    "Apply Solar Settings",
+                    "Update Solar Settings & Run Simulation",
+                    icon=":material/refresh:",
+                    type="primary",
                     use_container_width=True,
                     disabled=not is_active,
                 )
@@ -669,14 +748,108 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
 # LEVEL 2 — SUBTAB 3: Battery (Dual-Sizing & 4-Bottleneck Diagnostic Table)
 # ======================================================================================
 
+@st.fragment
+def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_active: bool) -> None:
+    """Renders the interactive Mode A / Mode B reference box inside an isolated fragment to prevent full app reruns."""
+    st.markdown("##### :material/battery_charging_full: 1. Minimum Required Battery Sizing (100% Zero-Overload Reference)")
+    st.caption(
+        "Exact physical minimum sizing calculated using the multi-day cluster algorithm and enforcing grid recharge headroom constraints to ensure zero remaining overload."
+    )
+
+    mode_options = [
+        "Mode A – Standalone (Battery only)",
+        "Mode B – Coupled (With active Solar / Generator & Rules)",
+    ]
+    cur_mode = st.session_state.get("comb_bess_ref_mode", "Mode B – Coupled (With active Solar / Generator & Rules)")
+    sel_idx = 0 if cur_mode.startswith("Mode A") else 1
+    selected_mode = st.radio(
+        "Quick-Sizing Reference Mode",
+        options=mode_options,
+        index=sel_idx,
+        horizontal=True,
+        disabled=not is_active,
+        key="comb_bess_ref_mode_radio",
+    )
+    st.session_state["comb_bess_ref_mode"] = selected_mode
+    is_sa = selected_mode.startswith("Mode A")
+
+    req_gross = dual_bess.standalone_100_kwh if is_sa else dual_bess.coupled_100_kwh
+    req_usable = dual_bess.standalone_usable_kwh if is_sa else dual_bess.coupled_usable_kwh
+    req_power = dual_bess.standalone_100_kw if is_sa else dual_bess.coupled_100_kw
+    req_duration = dual_bess.standalone_cluster_duration_hrs if is_sa else dual_bess.coupled_cluster_duration_hrs
+
+    # 4 Metric Cards (1:1 with Screenshot 2)
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric(
+            label="Min. Required Gross Capacity",
+            value=f"{req_gross:,.1f} kWh",
+            help="Minimum nameplate storage capacity required to bridge the worst multi-peak deficit cluster.",
+        )
+    with m2:
+        st.metric(
+            label="Min. Required Usable Energy",
+            value=f"{req_usable:,.1f} kWh",
+            help="Net chemical energy needed across the worst consecutive peak cluster.",
+        )
+    with m3:
+        st.metric(
+            label="Min. Required Discharge Power",
+            value=f"{req_power:,.1f} kW",
+            help="Continuous inverter discharge power required to shave the highest peak overload down to the grid limit.",
+        )
+    with m4:
+        st.metric(
+            label="Worst Multi-Peak Cluster Duration",
+            value=f"{req_duration:.1f} hrs",
+            help="Duration of the most demanding overload sequence until battery fully recharges below grid limit.",
+        )
+
+    # Quick Apply Buttons (100%, 80%, 50%)
+    st.caption(f"Apply Quick Size ({'Standalone: Battery alone' if is_sa else 'Coupled: With active Solar/Generator'}):")
+    q_col1, q_col2, q_col3 = st.columns(3)
+    with q_col1:
+        if st.button(
+            f"Apply 100% Zero-Overload ({req_gross:,.0f} kWh / {req_power:,.1f} kW)",
+            icon=":material/bolt:",
+            type="primary",
+            use_container_width=True,
+            disabled=not is_active,
+            key="comb_bess_btn_apply_100",
+        ):
+            _apply_bess_quick_size(req_gross, req_power)
+            st.rerun()
+    with q_col2:
+        q80_kwh = round(req_gross * 0.80, 1)
+        q80_kw = round(req_power * 0.80, 1)
+        if st.button(
+            f"Apply 80% Quick-Size ({q80_kwh:,.0f} kWh / {q80_kw:,.1f} kW)",
+            use_container_width=True,
+            disabled=not is_active,
+            key="comb_bess_btn_apply_80",
+        ):
+            _apply_bess_quick_size(q80_kwh, q80_kw)
+            st.rerun()
+    with q_col3:
+        q50_kwh = round(req_gross * 0.50, 1)
+        q50_kw = round(req_power * 0.50, 1)
+        if st.button(
+            f"Apply 50% Quick-Size ({q50_kwh:,.0f} kWh / {q50_kw:,.1f} kW)",
+            use_container_width=True,
+            disabled=not is_active,
+            key="comb_bess_btn_apply_50",
+        ):
+            _apply_bess_quick_size(q50_kwh, q50_kw)
+            st.rerun()
+
+
 def render_subtab3_battery(load_series: LoadSeries2025) -> None:
     """
     Renders Subtab 3: Battery
       - 1-Click Activate button if inactive
-      - 1. Dual Sizing System (Mode A: Standalone vs. Mode B: Coupled) with 100%, 80%, 50% quick buttons
-      - Manual inputs: Battery Capacity (kWh) & Battery Power (kW)
-      - 2. 4-Criterion Bottleneck Diagnostic Table
-      - 3. Core technical parameters: Min SoC (%), Max SoC (%), Round-Trip Efficiency (%)
+      - Block 1: Minimum Required Battery Sizing (100% Zero-Overload Reference) with 4 metrics & quick apply
+      - Block 2: 3-Column Battery Hardware & Operating Limits Form with single Battery Power (kW)
+      - Block 3: Simultaneous Bottleneck Audit & Physical Constraints (status banner + 4 diagnostic cards)
     """
     cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cur_rules: InteractionRulesConfig = st.session_state["comb_rules_cfg"]
@@ -734,138 +907,119 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
 
     dual_bess = st.session_state["comb_cached_dual_bess"]
 
+    # Block 1: Minimum Required Battery Sizing Reference Box
     with st.container(border=True):
-        st.markdown("##### :material/battery_charging_full: 1. Dual Quick-Sizing & Manual Configuration")
+        _render_battery_reference_fragment(dual_bess=dual_bess, is_active=is_active)
 
-        mode_c1, mode_c2 = st.columns([1.6, 1.8])
-        with mode_c1:
-            bess_mode = st.radio(
-                "Quick-Sizing Mode",
-                options=[
-                    "Mode A – Standalone (Battery only)",
-                    "Mode B – Coupled (With active Solar / Generator & Rules)",
-                ],
-                index=1,
-                disabled=not is_active,
-                key="comb_bess_sizing_mode_radio",
-            )
-            is_standalone = bess_mode.startswith("Mode A")
-
-            if is_standalone:
-                q100_kwh, q100_kw = dual_bess.standalone_100_kwh, dual_bess.standalone_100_kw
-                q80_kwh, q80_kw = dual_bess.standalone_80_kwh, dual_bess.standalone_80_kw
-                q50_kwh, q50_kw = dual_bess.standalone_50_kwh, dual_bess.standalone_50_kw
-            else:
-                q100_kwh, q100_kw = dual_bess.coupled_100_kwh, dual_bess.coupled_100_kw
-                q80_kwh, q80_kw = dual_bess.coupled_80_kwh, dual_bess.coupled_80_kw
-                q50_kwh, q50_kw = dual_bess.coupled_50_kwh, dual_bess.coupled_50_kw
-
-        with mode_c2:
-            st.caption(
-                f"Apply Quick Size ({'Standalone: Battery alone' if is_standalone else 'Coupled: With active Solar/Generator'}):"
-            )
-            bq1, bq2, bq3 = st.columns(3)
-            bq1.button(
-                f"100% Zero-Overload ({q100_kwh:,.0f} kWh)",
-                use_container_width=True,
-                disabled=not is_active,
-                key="comb_bess_q100",
-                on_click=_apply_bess_quick_size,
-                args=(q100_kwh, q100_kw),
-            )
-            bq2.button(
-                f"80% ({q80_kwh:,.0f} kWh)",
-                use_container_width=True,
-                disabled=not is_active,
-                key="comb_bess_q80",
-                on_click=_apply_bess_quick_size,
-                args=(q80_kwh, q80_kw),
-            )
-            bq3.button(
-                f"50% ({q50_kwh:,.0f} kWh)",
-                use_container_width=True,
-                disabled=not is_active,
-                key="comb_bess_q50",
-                on_click=_apply_bess_quick_size,
-                args=(q50_kwh, q50_kw),
-            )
-            st.caption(
-                f"100% Reference — **Standalone:** {dual_bess.standalone_100_kwh:,.0f} kWh / {dual_bess.standalone_100_kw:,.1f} kW | "
-                f"**Coupled:** {dual_bess.coupled_100_kwh:,.0f} kWh / {dual_bess.coupled_100_kw:,.1f} kW"
-            )
-
-        # Manual Override & Core Technical Parameters (encapsulated in st.form)
+    # Block 2: Battery Hardware & Operating Limits Form
+    with st.container(border=True):
+        st.markdown("##### :material/tune: 2. Battery Hardware & Operating Limits")
         with st.form("comb_battery_form"):
-            bc1, bc2, bc3, bc4, bc5, bc_btn = st.columns([1.15, 1.15, 0.85, 0.85, 0.95, 0.95])
-            with bc1:
-                bess_kwh = st.number_input(
-                    "Battery Capacity (kWh)",
-                    min_value=10.0,
-                    max_value=50000.0,
-                    value=float(cur_sys.battery_capacity_kwh),
-                    step=25.0,
+            lock_05c = st.checkbox(
+                "Lock to Standard 0.5 C (2-Hour Storage: Capacity kWh = 2 × Battery Power kW)",
+                value=st.session_state.get("comb_bess_lock_05c", False),
+                disabled=not is_active,
+                key="comb_bess_lock_05c_box",
+            )
+            col_b1, col_b2, col_b3 = st.columns(3)
+            with col_b1:
+                st.markdown("**Modular Storage Units:**")
+                def_cap = float(cur_sys.battery_capacity_kwh)
+                def_units = max(1, int(round(def_cap / 50.0))) if def_cap > 0 else 2
+                def_unit_kwh = round(def_cap / def_units, 1) if def_units > 0 else 50.0
+                unit_count = st.number_input(
+                    "Modular Unit Count",
+                    min_value=1,
+                    max_value=200,
+                    value=int(st.session_state.get("comb_bess_unit_count", def_units)),
+                    step=1,
                     disabled=not is_active,
-                    key="comb_battery_capacity_kwh_num",
+                    key="comb_bess_unit_count_num",
                 )
-            with bc2:
-                bess_kw = st.number_input(
+                cap_per_unit = st.number_input(
+                    "Capacity per Unit (kWh)",
+                    min_value=1.0,
+                    max_value=1000.0,
+                    value=float(st.session_state.get("comb_bess_unit_kwh", def_unit_kwh)),
+                    step=10.0,
+                    disabled=not is_active,
+                    key="comb_bess_unit_kwh_num",
+                )
+                total_kwh_disp = float(unit_count * cap_per_unit)
+                st.caption(f"Configured Gross Nameplate: **{total_kwh_disp:,.1f} kWh**")
+
+            with col_b2:
+                st.markdown("**Inverter Power & Efficiency:**")
+                def_kw = round(total_kwh_disp / 2.0, 1) if lock_05c else float(cur_sys.battery_power_kw)
+                bat_kw = st.number_input(
                     "Battery Power (kW)",
-                    min_value=5.0,
+                    min_value=1.0,
                     max_value=25000.0,
-                    value=float(cur_sys.battery_power_kw),
+                    value=float(def_kw),
                     step=10.0,
                     disabled=not is_active,
                     key="comb_battery_power_kw_num",
+                    help="Unified bidirectional power rating for charging and discharging.",
                 )
-            with bc3:
-                min_soc = st.number_input(
-                    "Min SoC (%)",
-                    min_value=0.0,
-                    max_value=50.0,
-                    value=float(cur_sys.min_soc_pct),
-                    step=5.0,
+                rte_val = st.slider(
+                    "Round-Trip Efficiency (RTE %)",
+                    min_value=70,
+                    max_value=98,
+                    value=int(round(cur_sys.round_trip_efficiency_pct)),
+                    step=1,
                     disabled=not is_active,
-                    key="comb_battery_min_soc_num",
-                )
-            with bc4:
-                max_soc = st.number_input(
-                    "Max SoC (%)",
-                    min_value=55.0,
-                    max_value=100.0,
-                    value=float(cur_sys.max_soc_pct),
-                    step=5.0,
-                    disabled=not is_active,
-                    key="comb_battery_max_soc_num",
-                )
-            with bc5:
-                rte_pct = st.number_input(
-                    "Round-Trip Efficiency (%)",
-                    min_value=60.0,
-                    max_value=100.0,
-                    value=float(cur_sys.round_trip_efficiency_pct),
-                    step=1.0,
-                    disabled=not is_active,
-                    key="comb_battery_rte_num",
-                )
-            with bc_btn:
-                st.write("")
-                bess_submitted = st.form_submit_button(
-                    "Apply Battery Settings",
-                    use_container_width=True,
-                    disabled=not is_active,
+                    key="comb_battery_rte_slider",
                 )
 
-        if bess_submitted:
-            so_c_changed = (
-                abs(cur_sys.min_soc_pct - float(min_soc)) > 1e-4
-                or abs(cur_sys.max_soc_pct - float(max_soc)) > 1e-4
-                or abs(cur_sys.round_trip_efficiency_pct - float(rte_pct)) > 1e-4
+            with col_b3:
+                st.markdown("**State of Charge Boundaries:**")
+                min_soc_val = st.slider(
+                    "SoC Minimum Buffer (%)",
+                    min_value=0,
+                    max_value=40,
+                    value=int(round(cur_sys.min_soc_pct)),
+                    step=1,
+                    disabled=not is_active,
+                    key="comb_battery_min_soc_slider",
+                )
+                max_soc_val = st.slider(
+                    "SoC Maximum Limit (%)",
+                    min_value=60,
+                    max_value=100,
+                    value=int(round(cur_sys.max_soc_pct)),
+                    step=1,
+                    disabled=not is_active,
+                    key="comb_battery_max_soc_slider",
+                )
+                usable_window = max(0, max_soc_val - min_soc_val)
+                st.caption(f"Usable DoD Window: **{usable_window}%**")
+
+            st.write("")
+            bess_submitted = st.form_submit_button(
+                "Update Battery Settings & Run Simulation",
+                icon=":material/refresh:",
+                type="primary",
+                use_container_width=True,
+                disabled=not is_active,
             )
-            cur_sys.battery_capacity_kwh = float(bess_kwh)
-            cur_sys.battery_power_kw = float(bess_kw)
-            cur_sys.min_soc_pct = float(min_soc)
-            cur_sys.max_soc_pct = float(max_soc)
-            cur_sys.round_trip_efficiency_pct = float(rte_pct)
+
+        if bess_submitted:
+            st.session_state["comb_bess_lock_05c"] = bool(lock_05c)
+            st.session_state["comb_bess_unit_count"] = int(unit_count)
+            st.session_state["comb_bess_unit_kwh"] = float(cap_per_unit)
+            new_kwh = float(unit_count * cap_per_unit)
+            new_kw = round(new_kwh / 2.0, 1) if lock_05c else float(bat_kw)
+
+            so_c_changed = (
+                abs(cur_sys.min_soc_pct - float(min_soc_val)) > 1e-4
+                or abs(cur_sys.max_soc_pct - float(max_soc_val)) > 1e-4
+                or abs(cur_sys.round_trip_efficiency_pct - float(rte_val)) > 1e-4
+            )
+            cur_sys.battery_capacity_kwh = new_kwh
+            cur_sys.battery_power_kw = new_kw
+            cur_sys.min_soc_pct = float(min_soc_val)
+            cur_sys.max_soc_pct = float(max_soc_val)
+            cur_sys.round_trip_efficiency_pct = float(rte_val)
             if so_c_changed:
                 dual_bess = compute_dual_battery_sizing(
                     load_kw=load_series.power_kw,
@@ -875,38 +1029,232 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                 st.session_state["comb_cached_dual_bess"] = dual_bess
             st.session_state.pop("comb_cached_excel_bytes", None)
 
-        # Lightweight O(1) update of 'Configured Battery' & 'Status' columns (no 35,040-step re-run!)
-        bottleneck_df = refresh_bottleneck_table_configured_status(
-            dual_bess=dual_bess,
-            configured_kwh=cur_sys.battery_capacity_kwh,
-            configured_kw=cur_sys.battery_power_kw,
-            enable_battery=is_active,
-        )
-        st.session_state["comb_latest_bottleneck_df"] = bottleneck_df
+    # Block 3: Simultaneous Bottleneck Audit & Physical Constraints
+    with st.container(border=True):
+        cfg_kw = float(cur_sys.battery_power_kw) if is_active else 0.0
+        cfg_kwh = float(cur_sys.battery_capacity_kwh) if is_active else 0.0
+        req_kw = dual_bess.coupled_100_kw
+        req_kwh = dual_bess.coupled_100_kwh
+        rech_kw_avail = dual_bess.coupled_recharge_headroom_kw
+        rech_kwh_avail = dual_bess.coupled_recharge_headroom_kwh
 
-        st.markdown("---")
-        st.markdown("##### :material/checklist: 2. 4-Criterion Bottleneck Diagnostic Table")
-        st.caption(
-            f"Shows which of the 4 physical limits determines the required battery size "
-            f"(Primary driver: **{dual_bess.controlling_driver_coupled}**)."
+        pass_power = cfg_kw >= (req_kw - 0.1)
+        pass_capacity = cfg_kwh >= (req_kwh - 0.5)
+        pass_recharge = dual_bess.controlling_driver_coupled != "Available Recharge Headroom"
+        pass_all = pass_power and pass_capacity and pass_recharge and is_active
+
+        st.markdown("##### :material/fact_check: 3. Simultaneous Bottleneck Audit & Physical Constraints")
+        st.caption("All 4 physical engineering criteria are evaluated simultaneously without short-circuiting.")
+
+        if pass_all:
+            st.success(
+                ":material/check_circle: **100% Physically Feasible: Zero Remaining Deficit**  \n"
+                "All physical constraints (inverter discharge power, multi-peak storage capacity, "
+                "recharge power, and annual grid recharge headroom) are completely satisfied."
+            )
+        elif not is_active:
+            st.info("Battery is inactive. Constraints are evaluated when activated.")
+        else:
+            st.warning(
+                ":material/warning: **Bottleneck Detected: Remaining Deficit Expected**  \n"
+                "Current battery configuration does not fully cover physical constraints. "
+                "Review the 4 bottleneck indicators below."
+            )
+
+        # 4 Diagnostic Check Cards (1:1 visual match with BESS Sandbox layout)
+        chk_col1, chk_col2, chk_col3, chk_col4 = st.columns(4)
+        with chk_col1:
+            icon_p = ":material/check_circle:" if pass_power else ":material/error:"
+            delta_kw = cfg_kw - req_kw
+            delta_kw_str = f"+{delta_kw:,.1f} kW" if delta_kw >= 0 else f"{delta_kw:,.1f} kW"
+            st.markdown(f"**{icon_p} Inverter Discharge Power**")
+            st.metric(
+                label="Configured vs. Required",
+                value=f"{cfg_kw:,.1f} kW",
+                delta=f"Req: {req_kw:,.1f} kW ({delta_kw_str})",
+                delta_color="normal" if pass_power else "inverse",
+                help="Continuous inverter discharge power required to shave the highest peak overload down to the grid limit.",
+            )
+        with chk_col2:
+            icon_c = ":material/check_circle:" if pass_capacity else ":material/error:"
+            delta_kwh = cfg_kwh - req_kwh
+            delta_kwh_str = f"+{delta_kwh:,.1f} kWh" if delta_kwh >= 0 else f"{delta_kwh:,.1f} kWh"
+            st.markdown(f"**{icon_c} Storage Capacity (Multi-Peak Clusters)**")
+            st.metric(
+                label="Configured vs. Required",
+                value=f"{cfg_kwh:,.1f} kWh",
+                delta=f"Req: {req_kwh:,.1f} kWh ({delta_kwh_str})",
+                delta_color="normal" if pass_capacity else "inverse",
+                help="Minimum nameplate storage capacity required across consecutive peak days without sufficient recharge time.",
+            )
+        with chk_col3:
+            pass_rech_inv = cfg_kw >= min(req_kw, rech_kw_avail)
+            icon_r = ":material/check_circle:" if pass_rech_inv else ":material/warning:"
+            req_rech_p = min(req_kw, rech_kw_avail)
+            delta_rech = cfg_kw - req_rech_p
+            delta_rech_str = f"+{delta_rech:,.1f} kW" if delta_rech >= 0 else f"{delta_rech:,.1f} kW"
+            st.markdown(f"**{icon_r} Recharge Inverter Power**")
+            st.metric(
+                label="Configured vs. Required",
+                value=f"{cfg_kw:,.1f} kW",
+                delta=f"Req: {req_rech_p:,.1f} kW ({delta_rech_str})",
+                delta_color="normal" if pass_rech_inv else "inverse",
+                help="Inverter recharge power capability to replenish the battery buffer during off-peak periods.",
+            )
+        with chk_col4:
+            icon_h = ":material/check_circle:" if pass_recharge else ":material/error:"
+            st.markdown(f"**{icon_h} Grid Recharge Headroom**")
+            st.metric(
+                label="Configured vs. Required",
+                value=f"{rech_kwh_avail:,.0f} kWh/yr",
+                delta="Req: Available (Pass)" if pass_recharge else "Req: Insufficient (Deficit)",
+                delta_color="normal" if pass_recharge else "inverse",
+                help="Total cumulative annual energy available below the grid limit for battery recharging.",
+            )
+
+        with st.expander(":material/table_chart: Standalone vs. Coupled Sizing Comparison Table", expanded=False):
+            bottleneck_df = refresh_bottleneck_table_configured_status(
+                dual_bess=dual_bess,
+                configured_kwh=cur_sys.battery_capacity_kwh,
+                configured_kw=cur_sys.battery_power_kw,
+                enable_battery=is_active,
+            )
+            st.dataframe(bottleneck_df, use_container_width=True, hide_index=True)
+
+
+# ======================================================================================
+# LEVEL 2 — SUBTAB 4: Generator (With Dual-Sizing & Model Presets)
+# ======================================================================================
+
+GENERATOR_MODEL_PRESETS: dict = {
+    "Custom Size (Manual kW)": {},
+    "50 kW Small Diesel Backup (Cummins / Kohler 50 kVA)": {
+        "kw": 50.0,
+        "fuel": "Diesel",
+        "min_load": 25.0,
+    },
+    "100 kW Medium Commercial Genset (Caterpillar DE110)": {
+        "kw": 100.0,
+        "fuel": "Diesel",
+        "min_load": 25.0,
+    },
+    "200 kW Heavy Commercial Genset (CAT DE220 / MTU)": {
+        "kw": 200.0,
+        "fuel": "Diesel",
+        "min_load": 25.0,
+    },
+    "500 kW Industrial Prime Power (Cummins QSK19)": {
+        "kw": 500.0,
+        "fuel": "Diesel",
+        "min_load": 25.0,
+    },
+    "100 kW Natural Gas Continuous (Jenbacher / MAN)": {
+        "kw": 100.0,
+        "fuel": "Natural Gas",
+        "min_load": 30.0,
+    },
+    "250 kW Clean HVO Biofuel (Volvo Penta)": {
+        "kw": 250.0,
+        "fuel": "HVO",
+        "min_load": 25.0,
+    },
+}
+
+
+@st.fragment
+def _render_generator_reference_fragment(dual_gen: DualGeneratorSizingResult, is_active: bool) -> None:
+    """Renders the interactive Mode A / Mode B reference box inside an isolated fragment to prevent full app reruns."""
+    st.markdown("##### :material/electric_bolt: 1. Minimum Required Generator Sizing (100% Zero-Overload Reference)")
+    st.caption(
+        "Exact physical sizing required to eliminate peak overloads above the Grid Limit "
+        "(Standalone: full unmitigated peak; Coupled: residual peak remaining after active Solar & Battery dispatch)."
+    )
+
+    mode_options = [
+        "Mode A – Standalone (Generator only)",
+        "Mode B – Coupled (With active Solar / Battery & Rules)",
+    ]
+    cur_mode = st.session_state.get("comb_gen_ref_mode", "Mode B – Coupled (With active Solar / Battery & Rules)")
+    sel_idx = 0 if cur_mode.startswith("Mode A") else 1
+    selected_mode = st.radio(
+        "Quick-Sizing Reference Mode",
+        options=mode_options,
+        index=sel_idx,
+        horizontal=True,
+        disabled=not is_active,
+        key="comb_gen_ref_mode_radio",
+    )
+    st.session_state["comb_gen_ref_mode"] = selected_mode
+    is_sa = selected_mode.startswith("Mode A")
+
+    req_kw = dual_gen.standalone_100_kw if is_sa else dual_gen.coupled_100_kw
+    req_mwh = dual_gen.standalone_energy_mwh if is_sa else dual_gen.coupled_energy_mwh
+    req_longest = dual_gen.standalone_longest_run_hours if is_sa else dual_gen.coupled_longest_run_hours
+    req_runtime = dual_gen.standalone_runtime_hours if is_sa else dual_gen.coupled_runtime_hours
+    req_tank = dual_gen.standalone_fuel_tank_liters if is_sa else dual_gen.coupled_fuel_tank_liters
+
+    # 4 Metric Cards
+    gm1, gm2, gm3, gm4 = st.columns(4)
+    with gm1:
+        st.metric("Min. Required Generator Power", f"{req_kw:,.1f} kW")
+    with gm2:
+        st.metric("Annual Energy to Supply", f"{req_mwh:,.1f} MWh/yr")
+    with gm3:
+        st.metric(
+            "Longest Continuous Run",
+            f"{req_longest:,.1f} hrs",
+            delta=f"Total: {req_runtime:,.1f} hrs/yr",
         )
-        st.dataframe(
-            bottleneck_df,
+    with gm4:
+        st.metric(
+            "Recommended Fuel Tank",
+            f"{req_tank:,.0f} L",
+            delta="Includes 48h emergency reserve",
+        )
+
+    # 3 Quick Apply Buttons
+    st.caption(f"Apply Quick Size ({'Standalone: Full Peak' if is_sa else 'Coupled: Remaining Peak after Solar/Battery'}):")
+    gq1, gq2, gq3 = st.columns(3)
+    with gq1:
+        if st.button(
+            f"Apply 100% Zero-Overload ({req_kw:,.1f} kW)",
+            icon=":material/bolt:",
+            type="primary",
             use_container_width=True,
-            hide_index=True,
-        )
+            disabled=not is_active,
+            key="comb_gen_btn_apply_100",
+        ):
+            _apply_gen_quick_size(req_kw)
+            st.rerun()
+    with gq2:
+        q80_kw = round(req_kw * 0.80, 1)
+        if st.button(
+            f"Apply 80% Quick-Size ({q80_kw:,.1f} kW)",
+            use_container_width=True,
+            disabled=not is_active,
+            key="comb_gen_btn_apply_80",
+        ):
+            _apply_gen_quick_size(q80_kw)
+            st.rerun()
+    with gq3:
+        q50_kw = round(req_kw * 0.50, 1)
+        if st.button(
+            f"Apply 50% Quick-Size ({q50_kw:,.1f} kW)",
+            use_container_width=True,
+            disabled=not is_active,
+            key="comb_gen_btn_apply_50",
+        ):
+            _apply_gen_quick_size(q50_kw)
+            st.rerun()
 
-
-# ======================================================================================
-# LEVEL 2 — SUBTAB 4: Generator (With Dual-Sizing)
-# ======================================================================================
 
 def render_subtab4_generator(load_series: LoadSeries2025) -> None:
     """
     Renders Subtab 4: Generator
       - 1-Click Activate button if inactive
-      - 1. Dual Sizing System (Mode A: Standalone vs. Mode B: Coupled) with 100%, 80%, 50% buttons
-      - 2. Minimalist Core Inputs: Generator Power (kW), Minimum Load (%), Fuel Type
+      - Block 1: Minimum Required Generator Sizing (100% Zero-Overload Reference) with 4 metrics & quick apply
+      - Block 2: Standard Generator Models Preset Mini-Form (encapsulated to prevent intermediate reruns)
+      - Block 3: Generator Hardware & Operating Limits Form
     """
     cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cur_rules: InteractionRulesConfig = st.session_state["comb_rules_cfg"]
@@ -965,84 +1313,63 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
 
     dual_gen = st.session_state["comb_cached_dual_gen"]
 
+    # Block 1: Minimum Required Generator Sizing Reference Box
     with st.container(border=True):
-        st.markdown("##### :material/power: 1. Dual Quick-Sizing & Generator Configuration")
+        _render_generator_reference_fragment(dual_gen=dual_gen, is_active=is_active)
 
-        gm1, gm2 = st.columns([1.6, 1.8])
-        with gm1:
-            gen_mode = st.radio(
-                "Generator Sizing Mode",
-                options=[
-                    "Mode A – Standalone (Generator only)",
-                    "Mode B – Coupled (With active Solar / Battery & Rules)",
-                ],
-                index=1,
-                disabled=not is_active,
-                key="comb_gen_sizing_mode_radio",
-            )
-            is_gen_standalone = gen_mode.startswith("Mode A")
-            if is_gen_standalone:
-                g100, g80, g50 = dual_gen.standalone_100_kw, dual_gen.standalone_80_kw, dual_gen.standalone_50_kw
-            else:
-                g100, g80, g50 = dual_gen.coupled_100_kw, dual_gen.coupled_80_kw, dual_gen.coupled_50_kw
+    # Block 2: Standard Generator Models Preset Mini-Form
+    with st.container(border=True):
+        st.markdown("##### :material/category: 2. Standard Generator Models (Quick Presets)")
+        with st.form("comb_gen_preset_form"):
+            gp_c1, gp_btn = st.columns([2.5, 1.2])
+            with gp_c1:
+                preset_keys = list(GENERATOR_MODEL_PRESETS.keys())
+                sel_preset = st.selectbox(
+                    "Standard Generator Models",
+                    options=preset_keys,
+                    index=0,
+                    disabled=not is_active,
+                    key="comb_gen_preset_select",
+                    help="Loads standard commercial power ratings and fuel configurations.",
+                )
+            with gp_btn:
+                st.write("")
+                apply_preset_submitted = st.form_submit_button(
+                    "Apply Generator Model",
+                    icon=":material/done:",
+                    use_container_width=True,
+                    disabled=not is_active,
+                )
 
-        with gm2:
-            st.caption(
-                f"Apply Quick Size ({'Standalone: Full Peak' if is_gen_standalone else 'Coupled: Remaining Peak after Solar/Battery'}):"
-            )
-            gq1, gq2, gq3 = st.columns(3)
-            gq1.button(
-                f"100% ({g100:,.1f} kW)",
-                use_container_width=True,
-                disabled=not is_active,
-                key="comb_gen_q100",
-                on_click=_apply_gen_quick_size,
-                args=(g100,),
-            )
-            gq2.button(
-                f"80% ({g80:,.1f} kW)",
-                use_container_width=True,
-                disabled=not is_active,
-                key="comb_gen_q80",
-                on_click=_apply_gen_quick_size,
-                args=(g80,),
-            )
-            gq3.button(
-                f"50% ({g50:,.1f} kW)",
-                use_container_width=True,
-                disabled=not is_active,
-                key="comb_gen_q50",
-                on_click=_apply_gen_quick_size,
-                args=(g50,),
-            )
-            st.caption(
-                f"100% Reference — **Standalone:** {dual_gen.standalone_100_kw:,.1f} kW | "
-                f"**Coupled (Remaining Peak):** {dual_gen.coupled_100_kw:,.1f} kW"
-            )
+        if apply_preset_submitted and sel_preset in GENERATOR_MODEL_PRESETS:
+            p_data = GENERATOR_MODEL_PRESETS[sel_preset]
+            if p_data:
+                cur_sys.generator_rated_kw = float(p_data["kw"])
+                cur_sys.fuel_type = str(p_data["fuel"])
+                cur_sys.generator_min_load_pct = float(p_data["min_load"])
+                st.session_state["comb_generator_rated_kw_num"] = cur_sys.generator_rated_kw
+                st.session_state["comb_generator_fuel_type_select"] = cur_sys.fuel_type
+                st.session_state["comb_generator_min_load_num"] = cur_sys.generator_min_load_pct
+                st.session_state.pop("comb_cached_excel_bytes", None)
+                st.rerun()
 
+    # Block 3: Generator Hardware & Operating Limits Form
+    with st.container(border=True):
+        st.markdown("##### :material/tune: 3. Generator Hardware & Operating Limits")
         with st.form("comb_generator_form"):
-            gc1, gc2, gc3, gc_btn = st.columns([1.2, 1.3, 1.0, 0.9])
+            gc1, gc2, gc3 = st.columns(3)
             with gc1:
                 gen_kw_val = st.number_input(
                     "Generator Power (kW)",
                     min_value=10.0,
-                    max_value=20000.0,
+                    max_value=25000.0,
                     value=float(cur_sys.generator_rated_kw),
                     step=10.0,
                     disabled=not is_active,
                     key="comb_generator_rated_kw_num",
+                    help="Rated continuous prime power output of the generator.",
                 )
             with gc2:
-                gen_min_pct_val = st.number_input(
-                    "Minimum Load (%) — Wet-Stacking Protection",
-                    min_value=0.0,
-                    max_value=80.0,
-                    value=float(cur_sys.generator_min_load_pct),
-                    step=5.0,
-                    disabled=not is_active,
-                    key="comb_generator_min_load_num",
-                )
-            with gc3:
                 fuel_keys = list(FUEL_SPECS.keys())
                 fuel_idx = fuel_keys.index(cur_sys.fuel_type) if cur_sys.fuel_type in fuel_keys else 0
                 fuel_type_val = st.selectbox(
@@ -1052,13 +1379,26 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
                     disabled=not is_active,
                     key="comb_generator_fuel_type_select",
                 )
-            with gc_btn:
-                st.write("")
-                gen_submitted = st.form_submit_button(
-                    "Apply Generator Settings",
-                    use_container_width=True,
+            with gc3:
+                gen_min_pct_val = st.slider(
+                    "Minimum Load (%) — Wet-Stacking Protection",
+                    min_value=15,
+                    max_value=50,
+                    value=int(round(cur_sys.generator_min_load_pct)),
+                    step=5,
                     disabled=not is_active,
+                    key="comb_generator_min_load_num",
+                    help="Prevents engine damage from light-load operation by enforcing minimum loading.",
                 )
+
+            st.write("")
+            gen_submitted = st.form_submit_button(
+                "Update Generator Settings & Run Simulation",
+                icon=":material/refresh:",
+                type="primary",
+                use_container_width=True,
+                disabled=not is_active,
+            )
 
         if gen_submitted:
             cur_sys.generator_rated_kw = float(gen_kw_val)
@@ -1207,6 +1547,61 @@ def render_subtab6_financials(sim_res) -> None:
                 )
         return
 
+    # 1-Click Utility Tariff Preset Mini-Form (Encapsulated to eliminate multi-dropdown intermediate reruns)
+    with st.container(border=True):
+        st.markdown("##### :material/account_balance: Standard Utility Tariff Templates (1-Click Loader)")
+        with st.form("comb_utility_preset_form"):
+            dso_opts = get_dso_preset_options()
+            supp_opts = get_supplier_preset_options()
+            meter_opts = get_metering_preset_options()
+
+            u_c1, u_c2, u_c3, u_btn = st.columns([1.3, 1.3, 1.3, 1.1])
+            with u_c1:
+                dso_list = list(dso_opts.keys())
+                sel_dso = st.selectbox("Grid Operator (DSO)", options=dso_list, index=0, key="comb_preset_dso_sel")
+                tier_list = dso_opts.get(sel_dso, ["MS-D (125 t/m 1.500 kW)"])
+                sel_tier = st.selectbox("Voltage & Capacity Tier", options=tier_list, index=0, key="comb_preset_tier_sel")
+            with u_c2:
+                supp_list = list(supp_opts.keys())
+                sel_supp = st.selectbox("Energy Supplier", options=supp_list, index=0, key="comb_preset_supp_sel")
+                plan_list = supp_opts.get(sel_supp, ["Vast 1 Jaar (Dubbeltarief HT/NT)"])
+                sel_plan = st.selectbox("Contract Tariff Plan", options=plan_list, index=0, key="comb_preset_plan_sel")
+            with u_c3:
+                meter_list = list(meter_opts.keys())
+                sel_meter = st.selectbox("Metering Company", options=meter_list, index=0, key="comb_preset_meter_sel")
+                m_plan_list = meter_opts.get(sel_meter, ["Kwartierdata Telemetrie MS (Grootverbruik RLM)"])
+                sel_m_plan = st.selectbox("Metering Package", options=m_plan_list, index=0, key="comb_preset_mplan_sel")
+            with u_btn:
+                st.write("")
+                st.write("")
+                apply_tariffs = st.form_submit_button(
+                    "Load Selected Utility Tariffs",
+                    icon=":material/download:",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+        if apply_tariffs:
+            apply_utility_tariff_presets(
+                dso_choice=sel_dso,
+                tier_choice=sel_tier,
+                supp_choice=sel_supp,
+                supp_plan=sel_plan,
+                meter_choice=sel_meter,
+                meter_tier=sel_m_plan,
+                fin_cfg=cur_fin,
+            )
+            st.session_state["comb_fin_supp_kwh"] = cur_fin.supplier_energy_price_eur_kwh
+            st.session_state["comb_fin_supp_fix"] = cur_fin.supplier_fixed_fee_eur_month
+            st.session_state["comb_fin_dso_cap"] = cur_fin.dso_capacity_fee_eur_kw_month
+            st.session_state["comb_fin_dso_peak"] = cur_fin.dso_peak_demand_fee_eur_kw_month
+            st.session_state["comb_fin_dso_pen"] = cur_fin.grid_overload_penalty_eur_kw
+            st.session_state["comb_fin_dso_fix"] = cur_fin.dso_fixed_fee_eur_month
+            st.session_state["comb_fin_dso_vol"] = cur_fin.dso_transport_eur_kwh
+            st.session_state["comb_fin_meter_fix"] = cur_fin.metering_fixed_fee_eur_month
+            st.session_state.pop("comb_cached_excel_bytes", None)
+            st.rerun()
+
     with st.form("comb_financials_form"):
         # --- Block A: 4-Pillar Grid & Tariff Costs (Always visible when Financials active) ---
         with st.container(border=True):
@@ -1251,6 +1646,15 @@ def render_subtab6_financials(sim_res) -> None:
                     step=0.5,
                     key="comb_fin_dso_peak",
                 )
+                dso_vol = st.number_input(
+                    "Volumetric Transport Fee (€/kWh)",
+                    min_value=0.0,
+                    max_value=0.50,
+                    value=float(cur_fin.dso_transport_eur_kwh),
+                    step=0.005,
+                    format="%.3f",
+                    key="comb_fin_dso_vol",
+                )
                 dso_pen = st.number_input(
                     "Overload Penalty (€/kW)",
                     min_value=0.0,
@@ -1267,9 +1671,18 @@ def render_subtab6_financials(sim_res) -> None:
                     step=10.0,
                     key="comb_fin_dso_fix",
                 )
+                avoided_trafo = st.number_input(
+                    "Avoided Transformer Rent (€/mo)",
+                    min_value=0.0,
+                    max_value=50000.0,
+                    value=float(cur_fin.avoided_transformer_rent_eur_month),
+                    step=50.0,
+                    key="comb_fin_avoided_trafo",
+                    help="Transformer rental fee saved by avoiding grid upgrades with the combined system.",
+                )
 
             with p3_col:
-                st.markdown("**3. Metering**")
+                st.markdown("**3. Metering & Avoided CAPEX**")
                 meter_fix = st.number_input(
                     "Metering Fee (€/month)",
                     min_value=0.0,
@@ -1277,6 +1690,15 @@ def render_subtab6_financials(sim_res) -> None:
                     value=float(cur_fin.metering_fixed_fee_eur_month),
                     step=5.0,
                     key="comb_fin_meter_fix",
+                )
+                avoided_upgrade = st.number_input(
+                    "Avoided Grid Upgrade CAPEX (€)",
+                    min_value=0.0,
+                    max_value=5000000.0,
+                    value=float(cur_fin.avoided_grid_upgrade_capex_eur),
+                    step=5000.0,
+                    key="comb_fin_avoided_upgrade",
+                    help="Capital expenditure avoided by peak shaving instead of paying the DSO for a grid expansion.",
                 )
 
             with p4_col:
@@ -1441,9 +1863,12 @@ def render_subtab6_financials(sim_res) -> None:
         cur_fin.supplier_fixed_fee_eur_month = float(supp_fix)
         cur_fin.dso_capacity_fee_eur_kw_month = float(dso_cap)
         cur_fin.dso_peak_demand_fee_eur_kw_month = float(dso_peak)
+        cur_fin.dso_transport_eur_kwh = float(dso_vol)
         cur_fin.grid_overload_penalty_eur_kw = float(dso_pen)
         cur_fin.dso_fixed_fee_eur_month = float(dso_fix)
+        cur_fin.avoided_transformer_rent_eur_month = float(avoided_trafo)
         cur_fin.metering_fixed_fee_eur_month = float(meter_fix)
+        cur_fin.avoided_grid_upgrade_capex_eur = float(avoided_upgrade)
         cur_fin.energy_tax_eur_kwh = float(tax_kwh)
         cur_fin.tax_surcharge_pct = float(tax_pct)
         cur_fin.discount_rate_pct = float(disc_rate)
@@ -1481,14 +1906,15 @@ def render_subtab6_financials(sim_res) -> None:
 
     fk1, fk2, fk3, fk4 = st.columns(4)
     with fk1:
+        capex_subtext = (
+            f"Gross: €{fin_kpis.gross_capex_eur:,.0f} | Avoided: -€{fin_kpis.avoided_grid_upgrade_capex_eur:,.0f}"
+            if fin_kpis.avoided_grid_upgrade_capex_eur > 0
+            else f"Solar: €{fin_kpis.solar_capex_eur:,.0f} | Battery: €{fin_kpis.battery_capex_eur:,.0f} | Gen: €{fin_kpis.generator_capex_eur:,.0f}"
+        )
         render_kpi_card(
-            title="Total Combined CAPEX",
+            title="Total Turnkey Investment (CAPEX)",
             value=f"€{fin_kpis.total_capex_eur:,.0f}",
-            subtext=(
-                f"Solar: €{fin_kpis.solar_capex_eur:,.0f} | "
-                f"Battery: €{fin_kpis.battery_capex_eur:,.0f} | "
-                f"Gen: €{fin_kpis.generator_capex_eur:,.0f}"
-            ),
+            subtext=capex_subtext,
             status="default",
         )
     with fk2:
@@ -1534,6 +1960,48 @@ def render_subtab6_financials(sim_res) -> None:
 # ======================================================================================
 # LEVEL 3: Permanent Master Output (Always Visible Below Sub-Tabs)
 # ======================================================================================
+
+@st.fragment
+def _render_master_dispatch_chart_fragment(sim_res) -> None:
+    """Renders the 15-minute dispatch chart and timeframe selector inside an isolated fragment to prevent full app reruns."""
+    with st.container(border=True):
+        hdr1, hdr2, hdr3 = st.columns([2.2, 1.3, 1.3])
+        with hdr1:
+            st.markdown("##### :material/stacked_line_chart: 15-Minute Power Flow & Battery Level")
+        with hdr2:
+            if "comb_dispatch_timeframe" not in st.session_state or not st.session_state["comb_dispatch_timeframe"]:
+                st.session_state["comb_dispatch_timeframe"] = "7D"
+            disp_tf = st.segmented_control(
+                "Dispatch Window",
+                options=["7D", "1M", "3M", "All"],
+                default=st.session_state["comb_dispatch_timeframe"],
+                key="comb_dispatch_tf_ctrl",
+                label_visibility="collapsed",
+            )
+            if not disp_tf:
+                disp_tf = st.session_state.get("comb_dispatch_timeframe", "7D")
+            else:
+                st.session_state["comb_dispatch_timeframe"] = disp_tf
+        with hdr3:
+            if "comb_cached_excel_bytes" not in st.session_state:
+                st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
+            st.download_button(
+                label="Download Excel (.xlsx)",
+                data=st.session_state["comb_cached_excel_bytes"],
+                file_name="Combined_System_Verification.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                icon=":material/download:",
+                use_container_width=True,
+                type="primary",
+            )
+
+        fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res, timeframe=disp_tf)
+        st.plotly_chart(
+            fig_master,
+            use_container_width=True,
+            key=f"comb_master_dispatch_chart_{disp_tf}",
+        )
+
 
 def render_level3_permanent_master_output(sim_res) -> None:
     """
@@ -1612,44 +2080,8 @@ def render_level3_permanent_master_output(sim_res) -> None:
                 status="default",
             )
 
-    # 2. Shared Synchronized 15-Minute Master Chart + Timeframe Filter + Excel Download
-    with st.container(border=True):
-        hdr1, hdr2, hdr3 = st.columns([2.2, 1.3, 1.3])
-        with hdr1:
-            st.markdown("##### :material/stacked_line_chart: 15-Minute Power Flow & Battery Level")
-        with hdr2:
-            if "comb_dispatch_timeframe" not in st.session_state or not st.session_state["comb_dispatch_timeframe"]:
-                st.session_state["comb_dispatch_timeframe"] = "7D"
-            disp_tf = st.segmented_control(
-                "Dispatch Window",
-                options=["7D", "1M", "3M", "All"],
-                default=st.session_state["comb_dispatch_timeframe"],
-                key="comb_dispatch_tf_ctrl",
-                label_visibility="collapsed",
-            )
-            if not disp_tf:
-                disp_tf = st.session_state.get("comb_dispatch_timeframe", "7D")
-            else:
-                st.session_state["comb_dispatch_timeframe"] = disp_tf
-        with hdr3:
-            if "comb_cached_excel_bytes" not in st.session_state:
-                st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
-            st.download_button(
-                label="Download Excel (.xlsx)",
-                data=st.session_state["comb_cached_excel_bytes"],
-                file_name="Combined_System_Verification.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                icon=":material/download:",
-                use_container_width=True,
-                type="primary",
-            )
-
-        fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res, timeframe=disp_tf)
-        st.plotly_chart(
-            fig_master,
-            use_container_width=True,
-            key=f"comb_master_dispatch_chart_{disp_tf}",
-        )
+    # 2. Shared Synchronized 15-Minute Master Chart (isolated in fragment)
+    _render_master_dispatch_chart_fragment(sim_res=sim_res)
 
     # 3. Compact System Comparison Table
     with st.container(border=True):

@@ -253,35 +253,45 @@ The Combined System Sandbox serves as the official UX reference standard under t
 * **Level 2 (Middle — 6 Module Sub-Tabs with 1-Click Activation):**
   * If a sub-tab is inactive, its form controls are disabled/grayed out and a prominent primary button `Activate [Module]` inside the sub-tab enables immediate 1-click activation.
   * **Subtab 1: Consumption (Always Active):**
-    * CSV upload (selected as default, with delimiter sniffer, date filter, and 15-min `kWh -> kW` conversion) plus benchmark switcher and 4 Base KPIs (`Annual Consumption`, `Peak Demand`, `Average Load`, `Overload above Grid Limit`).
+    * 1-Click Standard Reference Scenarios (`Bakery 250 kW`, `Rotterdam WKO 110 kW`, `Heavy Logistics 550 kW`, `Salentein Mendoza 430 kW`) in `st.form("comb_ref_scenario_form")`.
+    * CSV upload (selected as default, with delimiter sniffer, date filter, and 15-min `kWh -> kW` conversion) plus 4 Base KPIs (`Annual Consumption`, `Peak Demand`, `Average Load`, `Overload above Grid Limit`).
   * **Subtab 2: Solar:**
     * City search & location presets encapsulated in `st.form("comb_solar_location_form")` (`Apply Location`, Default: `Amsterdam`) + data source line (`Data source: EU PVGIS (ERA5 15-min TMY) | Specific Yield: X kWh/kWp/year`).
-    * Dual Quick-Sizing (`% of Annual Consumption`: `20% | 40% | 60% | 100%`) outside the form for instant 1-click response; manual inputs (`Sizing Mode`, `Share of Consumption %`, `Direct Size kWp`, `Inverter AC Limit kW`, `Inverter Efficiency %`) encapsulated in `st.form("comb_solar_form")` (`Apply Solar Settings`), plus blue live calculation formula box.
-  * **Subtab 3: Battery (With Fingerprint-Cached Dual-Sizing & `O(1)` 4-Criterion Bottleneck Diagnostic Table):**
-    * **Dual Sizing System (`100% Zero-Overload`, `80%`, `50%`):**
-      * *Mode A – Standalone (Battery only):* Required battery size (`kWh / kW`) to eliminate grid overloads 100% on its own.
-      * *Mode B – Coupled (With active Solar / Generator & Rules):* Required battery size accounting for active Solar, active Generator, and the configured Interaction Rules.
-      * Cached via parameter fingerprint (`comb_bess_sizing_fp`) so `compute_dual_battery_sizing` only runs once when upstream parameters change.
-    * **4-Criterion Bottleneck Diagnostic Table:** Evaluates `1. Peak Discharge Power (kW)`, `2. Single Peak Event Energy (kWh)`, `3. Multi-Day Cluster Energy (kWh)`, and `4. Available Recharge Headroom` for Standalone vs. Coupled vs. Configured Battery, refreshing the `Configured Battery` & `Status` columns in `O(1)` via `refresh_bottleneck_table_configured_status`.
-    * **Core Technical Parameters (`st.form("comb_battery_form")` / `Apply Battery Settings`):** `Battery Capacity (kWh)`, `Battery Power (kW)`, `Min SoC (%)` (`10%`), `Max SoC (%)` (`90%`), and `Round-Trip Efficiency (%)` (`88%`).
-  * **Subtab 4: Generator (With Fingerprint-Cached Dual-Sizing):**
-    * **Dual Sizing System (`100%`, `80%`, `50%`):** *Mode A – Standalone (Generator only)* vs. *Mode B – Coupled (Remaining peak after Solar & Battery)*, cached via `comb_gen_sizing_fp` / `comb_cached_dual_gen`.
-    * **Minimalist Core Inputs (`st.form("comb_generator_form")` / `Apply Generator Settings`):** `Generator Power (kW)`, `Minimum Load (%)` (`25%` wet-stacking protection), and `Fuel Type` (`Diesel`, `Natural Gas`, `HVO`).
+    * Clean 3-Column Sizing Form (`st.form("comb_solar_form")`) focusing strictly on core simulation inputs: Column 1 (Sizing Mode `% of Annual Consumption` vs `Direct kWp`, Share of Consumption %), Column 2 (Direct Size kWp, Inverter AC Limit kW), Column 3 (Inverter Efficiency % slider default 98%, `Update Solar Settings & Run Simulation` submit button).
+    * Dynamic live calculation box: `Calculation: (Annual kWh × Share %) / Specific Yield = Installed kWp (Panel Count @ Panel Wp)`.
+  * **Subtab 3: Battery (1:1 with BESS Sandbox Physics & Layout):**
+    * **Block 1: Minimum Required Battery Sizing (100% Zero-Deficit Reference):**
+      * Mode Switcher (`Mode A – Standalone (Battery only)` vs. `Mode B – Coupled (With active Solar / Generator & Rules)`) wrapped inside `@st.fragment` for instantaneous <10ms switching without full page reruns.
+      * 4 Metric Cards: `Min. Required Gross Capacity (kWh)`, `Min. Required Usable Energy (kWh)`, `Min. Required Discharge Power (kW)`, and `Worst Multi-Peak Cluster Duration (hrs)`.
+      * 1-Click Quick Apply Buttons: `Apply 100% Zero-Deficit Sizing` (primary), `Apply 80% Quick-Size`, and `Apply 50% Quick-Size`.
+    * **Block 2: Hardware Specification & Operating Limits (`st.form("comb_battery_form")`):**
+      * `Lock to Standard 0.5 C (2-Hour Storage: Capacity kWh = 2 × Battery Power kW)` checkbox.
+      * 3-Column Clean Form:
+        * Column 1 — Modular Storage Units: `Modular Unit Count`, `Capacity per Unit (kWh)`, live `Configured Gross Nameplate: X kWh`.
+        * Column 2 — Inverter Power & Efficiency: Unified bidirectional `Battery Power (kW)` (for charge & discharge) and `Round-Trip Efficiency (RTE %)` slider (70%–98%).
+        * Column 3 — State of Charge Boundaries: `SoC Minimum Buffer (%)` (0%–40%), `SoC Maximum Limit (%)` (60%–100%), and `Usable DoD Window: X%`.
+      * Form Submit Button: `Update Battery Settings & Run Simulation`.
+    * **Block 3: Simultaneous Bottleneck Audit & Physical Constraints:**
+      * Green/Amber Feasibility Status Banner (`100% Physically Feasible: Zero Remaining Deficit` vs `Active Physical Bottlenecks Detected`).
+      * 4 Simultaneous Diagnostic Metric Cards: `Inverter Discharge Power`, `Storage Capacity (Multi-Peak Clusters)`, `Recharge Inverter Power`, and `Grid Recharge Headroom`.
+      * Expandable Standalone vs. Coupled Sizing Comparison Table.
+  * **Subtab 4: Generator (With Dual-Sizing & Model Presets):**
+    * **Block 1: Minimum Required Generator Sizing Reference Box:** Mode A/B switcher inside `@st.fragment`, 4 Diagnostic Cards (`Min. Required Power kW`, `Annual Peaking Energy MWh`, `Longest Continuous Run hrs`, `Recommended Fuel Tank L`), and 100%/80%/50% quick buttons.
+    * **Block 2: 1-Click Generator Model Presets (`st.form("comb_gen_preset_form")`):** 7 commercial models (`50 kW Small Diesel`, `100 kW CAT DE110`, `200 kW CAT DE220`, `500 kW Cummins QSK19`, `150 kW Volvo Penta HVO100`, `250 kW INNIO Jenbacher Natural Gas`, `Custom`).
+    * **Block 3: Generator Hardware Specification (`st.form("comb_generator_form")`):** 3 clean columns: `Generator Power (kW)`, `Fuel Type` (`Diesel`, `Natural Gas`, `HVO`), and `Minimum Loading Ratio (%)` (0–50% wet-stacking protection).
   * **Subtab 5: Interaction Rules (`st.form("comb_rules_form")` / `Apply Interaction Rules`):**
     * Explicit callout banner explaining that active **Solar** always feeds Consumption directly first, automatically lowering demand and daytime peaks before Battery or Generator step in.
     * All 3 rules and the `Peak Reserve SoC %` slider are encapsulated in `st.form("comb_rules_form")` to eliminate intermediate reruns while adjusting policies.
     * **Rule 1 – Peak Shaving Priority (Above Grid Limit):** `Battery first, Generator as backup` vs. `Generator first, Battery for small/fast peaks`.
     * **Rule 2 – Normal Load Coverage (Below Grid Limit):** `Peak Shaving only` vs. `Self-Consumption + Peak Reserve` (with `Peak Reserve SoC %` slider).
     * **Rule 3 – Battery Charging Sources & Timing:** `Option A: Solar surplus only`, `Option B: Solar surplus + Grid headroom`, `Option C: Solar surplus + Generator excess (Cycle Charging)`, and `Option D: Solar + Grid + Generator excess`.
-  * **Subtab 6: Financials (Lazy-Loaded, `st.form("comb_financials_form")` Encapsulated, 4-Pillar Tariff & Cost Comparison Chart):**
-    * All cost blocks are wrapped inside `st.form("comb_financials_form")` with primary button `Calculate Financials`.
-    * **Block A – Grid & Tariff Costs (Always in the 4-Pillar Tariff Module):** `1. Energy Supply (Supplier)`, `2. Grid Network (DSO & Overload Penalty)`, `3. Metering`, and `4. Taxes & Discount Rate`.
-    * **Block B – Solar Turnkey CAPEX & O&M (if Solar active):** `Modules (€/Wp)`, `Inverter (€/W)`, `Mounting & Installation (€/Wp)`, and `Annual O&M (%/yr)`.
-    * **Block C – Battery Turnkey CAPEX, O&M & Augmentation (if Battery active):** `Storage Racks (€/kWh)`, `Inverter (€/kW)`, `Installation & Cabling (€)`, `Annual O&M (%/yr)`, plus optional `Mid-Life Cell Replacement (Year 11)`.
-    * **Block D – Generator Purchase vs. Rental & Fuel OPEX (if Generator active):** `Purchase (CAPEX €)` vs. `Monthly Rental (OPEX €/month)`, `Fuel Price`, and `Maintenance (€/operating hour)`.
-    * **Consolidated Financial Evaluation:** 4 Financial KPIs (`Total Combined CAPEX`, `Annual Total OPEX`, `Annual Net Savings vs. Current situation`, `Payback Period & 15Y NPV`), interactive **Annual Cost Comparison Chart (`Current situation` vs. `Combined system`)**, and **15-Year Lifecycle Cashflow Table**.
+  * **Subtab 6: Financials (Lazy-Loaded, `st.form` Encapsulated, 4-Pillar Utility Presets & Cost Comparison):**
+    * **1-Click Utility Tariff Preset Form (`st.form("comb_utility_preset_form")`):** 3 independent selectboxes (`DSO Network Operator`, `Retail Energy Supplier`, `Metering & Data Provider`) for instant auto-fill of Dutch/European commercial tariffs (Liander, Enexis, Stedin, Vattenfall, Eneco, Fudura) with zero premature script reruns.
+    * **Avoided Grid Upgrade CAPEX & Avoided Transformer Rent:** Dedicated fields in Pillar 2 to directly credit capital expenditure avoidance against the turnkey project investment.
+    * **Consolidated Financial Evaluation Form (`st.form("comb_financials_form")`):** 4-Pillar Grid Tariffs, Solar Turnkey CAPEX/OPEX, Battery Turnkey CAPEX/OPEX/Augmentation, Generator CAPEX/Rental/Fuel OPEX, 4 Financial KPIs (`Net Initial Investment`, `Annual Total OPEX`, `Annual Net Savings`, `Simple Payback & 15Y NPV`), interactive **Annual Cost Comparison Chart**, and **15-Year Lifecycle Cashflow Table**.
 * **Level 3 (Bottom — Permanent Master Output, Always Visible Below Sub-Tabs):**
-  * **Central Physical Dispatch Caching:** `simulate_combined_system_dispatch` is cached via `comb_dispatch_fp` so switching the chart timeframe (`7D / 1M / 3M / All`) or editing financials does not re-trigger the 35,040-step simulation.
+  * **Central Physical Dispatch Caching:** `simulate_combined_system_dispatch` is cached via `comb_dispatch_fp` so switching the chart timeframe or editing financials does not re-trigger the 35,040-step simulation.
+  * **Client-Side Master Chart Timeframe Filter (`@st.fragment`):** Timeframe selector (`7D | 1M | 3M | All`) wrapped in `@st.fragment` for instantaneous browser-side window updates without re-running upstream Python calculations.
   * **4 Compact Master KPIs:** `Grid Peak Demand`, `Remaining Overload`, `Energy Supply Split`, and `System Operation / Financials`.
-  * **Synchronized 15-Minute Master Chart:** Upper subplot (`Power Flow in kW`: Consumption, red Grid Limit line, and stacked areas of active sources) + Lower subplot (`Battery Level SoC % & kWh`, Reserve threshold, and Generator active runtime bands), timeframe filter (`7D | 1M | 3M | All`), Range-Slider, and cached `Download Excel (.xlsx)` button (`comb_cached_excel_bytes` with strict Lazy-Financials protection).
+  * **Synchronized 15-Minute Master Chart:** Upper subplot (`Power Flow in kW`: Consumption, red Grid Limit line, and stacked areas of active sources) + Lower subplot (`Battery Level SoC % & kWh`, Reserve threshold, and Generator active runtime bands), Range-Slider, and cached `Download Excel (.xlsx)` button (`comb_cached_excel_bytes` with strict Lazy-Financials protection).
   * **Compact System Comparison Table:** Side-by-side comparison of active components against `Current situation`.

@@ -476,7 +476,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(len(norm_series.power_kw), 35040)
 
     def test_all_subtab_forms_encapsulated(self):
-        """Verifies that all 7 heavy input sections are encapsulated in st.form to eliminate intermediate reruns."""
+        """Verifies that all heavy input sections are encapsulated in st.form or st.fragment to eliminate intermediate reruns."""
         app_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "app.py")
         )
@@ -485,11 +485,14 @@ class TestCombinedSandbox(unittest.TestCase):
 
         required_forms = [
             'st.form("comb_grid_limit_form")',
+            'st.form("comb_ref_scenario_form")',
             'st.form("comb_solar_location_form")',
             'st.form("comb_solar_form")',
             'st.form("comb_battery_form")',
+            'st.form("comb_gen_preset_form")',
             'st.form("comb_generator_form")',
             'st.form("comb_rules_form")',
+            'st.form("comb_utility_preset_form")',
             'st.form("comb_financials_form")',
         ]
         for form_str in required_forms:
@@ -498,6 +501,105 @@ class TestCombinedSandbox(unittest.TestCase):
                 code,
                 f"Required form '{form_str}' missing from Combined_sandbox/app.py",
             )
+
+        # Check fragment wrappers
+        self.assertIn("@st.fragment\ndef _render_battery_reference_fragment", code)
+        self.assertIn("@st.fragment\ndef _render_generator_reference_fragment", code)
+        self.assertIn("@st.fragment\ndef _render_master_dispatch_chart_fragment", code)
+
+    def test_battery_exact_cluster_and_usable_kwh(self):
+        """Verifies exact 100% Zero-Overload battery sizing with usable chemical energy and cluster duration."""
+        cfg = CombinedSystemConfig(grid_limit_kw=140.0, enable_solar=True, solar_kwp=50.0)
+        rules = InteractionRulesConfig()
+        dual_bess = compute_dual_battery_sizing(
+            load_kw=self.load_kw,
+            system_cfg=cfg,
+            rules_cfg=rules,
+        )
+        self.assertGreater(dual_bess.standalone_100_kwh, 0.0)
+        self.assertGreater(dual_bess.standalone_usable_kwh, 0.0)
+        self.assertGreater(dual_bess.standalone_cluster_duration_hrs, 0.0)
+        self.assertGreater(dual_bess.coupled_100_kwh, 0.0)
+        self.assertGreater(dual_bess.coupled_usable_kwh, 0.0)
+        self.assertGreater(dual_bess.coupled_cluster_duration_hrs, 0.0)
+        # Usable energy must be less than or equal to gross capacity
+        self.assertLessEqual(dual_bess.standalone_usable_kwh, dual_bess.standalone_100_kwh)
+        self.assertLessEqual(dual_bess.coupled_usable_kwh, dual_bess.coupled_100_kwh)
+        # 100% capacity should be ceil-rounded
+        self.assertEqual(dual_bess.standalone_100_kwh, float(np.ceil(dual_bess.standalone_100_kwh)))
+        self.assertEqual(dual_bess.coupled_100_kwh, float(np.ceil(dual_bess.coupled_100_kwh)))
+
+    def test_generator_diagnostic_metrics(self):
+        """Verifies generator dual sizing returns energy, runtime, longest continuous run, and recommended fuel tank."""
+        cfg = CombinedSystemConfig(grid_limit_kw=180.0, enable_solar=True, solar_kwp=150.0, enable_battery=True)
+        rules = InteractionRulesConfig()
+        dual_gen = compute_dual_generator_sizing(
+            load_kw=self.load_kw,
+            timestamps=self.timestamps,
+            system_cfg=cfg,
+            rules_cfg=rules,
+        )
+        self.assertGreater(dual_gen.standalone_100_kw, 0.0)
+        self.assertGreater(dual_gen.standalone_energy_mwh, 0.0)
+        self.assertGreater(dual_gen.standalone_runtime_hours, 0.0)
+        self.assertGreater(dual_gen.standalone_longest_run_hours, 0.0)
+        self.assertGreater(dual_gen.standalone_fuel_tank_liters, 0.0)
+        # Longest run cannot exceed total runtime
+        self.assertLessEqual(dual_gen.standalone_longest_run_hours, dual_gen.standalone_runtime_hours)
+
+    def test_utility_tariff_presets_and_avoided_capex(self):
+        """Verifies 1-click utility presets and avoided grid upgrade CAPEX offsetting gross CAPEX."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            apply_utility_tariff_presets,
+            get_dso_preset_options,
+            get_supplier_preset_options,
+            get_metering_preset_options,
+        )
+        dso_opts = get_dso_preset_options()
+        self.assertIn("Enexis Netbeheer B.V.", dso_opts)
+        self.assertIn("Liander Netbeheer B.V.", dso_opts)
+
+        fin_cfg = CombinedFinancialConfig()
+        apply_utility_tariff_presets(
+            dso_choice="Enexis Netbeheer B.V.",
+            tier_choice="MS-D (125 t/m 1.500 kW)",
+            supp_choice="Vattenfall Zakelijk",
+            supp_plan="Vast 1 Jaar (Dubbeltarief HT/NT)",
+            meter_choice="Fudura B.V.",
+            meter_tier="Kwartierdata Telemetrie MS (Grootverbruik RLM)",
+            fin_cfg=fin_cfg,
+        )
+        self.assertAlmostEqual(fin_cfg.dso_capacity_fee_eur_kw_month, 2.44, places=2)
+        self.assertAlmostEqual(fin_cfg.supplier_energy_price_eur_kwh, 0.125, places=3)
+        self.assertAlmostEqual(fin_cfg.metering_fixed_fee_eur_month, 75.0, places=1)
+
+        # Test Avoided Grid Upgrade CAPEX offset
+        fin_cfg.avoided_grid_upgrade_capex_eur = 50000.0
+        fin_cfg.avoided_transformer_rent_eur_month = 500.0
+        sys_cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_kwp=100.0,
+            enable_battery=True,
+            battery_capacity_kwh=200.0,
+            battery_power_kw=100.0,
+        )
+        rules = InteractionRulesConfig()
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=self.load_kw,
+            timestamps=self.timestamps,
+            system_cfg=sys_cfg,
+            rules_cfg=rules,
+        )
+        res_fin = evaluate_combined_financials(sim_res, fin_cfg)
+        fin_kpis = res_fin.financial_kpis
+        self.assertGreater(fin_kpis.gross_capex_eur, 0.0)
+        self.assertEqual(fin_kpis.avoided_grid_upgrade_capex_eur, 50000.0)
+        self.assertAlmostEqual(
+            fin_kpis.total_capex_eur,
+            max(0.0, fin_kpis.gross_capex_eur - 50000.0),
+            places=1,
+        )
 
 
 if __name__ == "__main__":
