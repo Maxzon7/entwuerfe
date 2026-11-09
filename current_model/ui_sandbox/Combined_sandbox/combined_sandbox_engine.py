@@ -5,24 +5,29 @@ Combined System Sandbox Engine (ui_sandbox/Combined_sandbox/combined_sandbox_eng
 
 Physical 15-minute simulation engine (35,040 steps/year) uniting:
   - Grid (Contracted Grid Limit)
-  - Solar (Default GPS: Amsterdam 52.3676, 4.9041; EU PVGIS - ERA5 TMY 15-min generation)
-  - Battery (Capacity, Power, SoC envelope, Round-Trip Efficiency, Reserve management)
-  - Generator (Rated power, Minimum load wet-stacking limit, Willans curve, Min runtime)
+  - Solar (Default GPS: Amsterdam 52.3676, 4.9041; EU PVGIS - ERA5 TMY 15-min generation,
+    Inverter AC Limit & Inverter Efficiency)
+  - Battery (Dual Sizing: Standalone vs. Coupled, 4-Criterion Bottleneck Diagnostic Table,
+    Capacity, Power, SoC envelope, Round-Trip Efficiency, Reserve management)
+  - Generator (Dual Sizing: Standalone vs. Coupled, Rated power, Minimum load wet-stacking
+    limit, Willans fuel curve, Min runtime)
 
-Controlled via 3 explicit Operating & Interaction Rules:
-  - Rule 1: Peak Shaving Priority (Above Grid Limit)
+Controlled via 3 plain-language Operating & Interaction Rules:
+  - Rule 1: Peak Shaving Priority (Above Grid Limit, after direct Solar)
       * "battery_first": Battery first, Generator as backup
-      * "generator_first": Generator first, Battery for fast/small peaks
-  - Rule 2: Battery Usage Strategy (Below Grid Limit)
+      * "generator_first": Generator first, Battery for small/fast peaks
+  - Rule 2: Normal Load Coverage (Below Grid Limit)
       * "peak_shaving_only": Peak Shaving only
       * "self_consumption_reserve": Self-Consumption + Peak Reserve
-  - Rule 3: Battery Charging Sources
+  - Rule 3: Battery Charging Sources & Timing
       * "solar_only": Solar surplus only
       * "solar_and_grid": Solar surplus + Grid headroom
       * "solar_and_generator": Solar surplus + Generator excess (Cycle Charging)
+      * "all_sources": Solar + Grid + Generator excess
 
-Includes a decoupled Financial Evaluation Engine (`evaluate_combined_financials`) used by
-Tab 3 (`Financials`) and Sheet 4 of the Excel verification export.
+Includes a Lazy-Loaded Financial Evaluation Engine (`evaluate_combined_financials`) with
+the 4-Pillar Tariff model, itemized Solar/Battery/Generator costs, optional Year-11
+battery augmentation, 15-year cashflow table, and 15-year NPV.
 ========================================================================================
 """
 
@@ -126,7 +131,7 @@ FUEL_SPECS: Dict[str, Dict[str, Any]] = {
 # Rule Option Keys and Display Labels
 RULE1_OPTIONS: Dict[str, str] = {
     "battery_first": "Battery first, Generator as backup",
-    "generator_first": "Generator first, Battery for fast/small peaks",
+    "generator_first": "Generator first, Battery for small/fast peaks",
 }
 
 RULE2_OPTIONS: Dict[str, str] = {
@@ -138,6 +143,7 @@ RULE3_OPTIONS: Dict[str, str] = {
     "solar_only": "Solar surplus only",
     "solar_and_grid": "Solar surplus + Grid headroom",
     "solar_and_generator": "Solar surplus + Generator excess (Cycle Charging)",
+    "all_sources": "Solar + Grid + Generator excess",
 }
 
 
@@ -147,12 +153,13 @@ RULE3_OPTIONS: Dict[str, str] = {
 
 @dataclass
 class CombinedSystemConfig:
-    """Purely physical/technical configuration for all 4 system sources."""
-    # Tile 1: Grid
+    """Physical/technical configuration for Grid, Solar, Battery, Generator, and Financials flag."""
+    # Overview / Grid
     enable_grid: bool = True
     grid_limit_kw: float = 180.0
+    enable_financials: bool = False
 
-    # Tile 2: Solar (Default GPS: Amsterdam 52.3676, 4.9041)
+    # Sub-Tab 2: Solar (Default GPS: Amsterdam 52.3676, 4.9041)
     enable_solar: bool = True
     site_preset: str = "Amsterdam (Default GPS)"
     latitude: float = 52.3676
@@ -165,8 +172,10 @@ class CombinedSystemConfig:
     panel_wp: float = 450.0
     dc_ac_ratio: float = 1.18
     target_consumption_share_pct: float = 60.0
+    inverter_ac_limit_kw: float = 0.0              # 0.0 = auto from installed_kwp / dc_ac_ratio; >0 = explicit AC limit
+    inverter_efficiency_pct: float = 98.0
 
-    # Tile 3: Battery
+    # Sub-Tab 3: Battery
     enable_battery: bool = True
     battery_capacity_kwh: float = 300.0
     battery_power_kw: float = 150.0
@@ -174,7 +183,7 @@ class CombinedSystemConfig:
     max_soc_pct: float = 90.0
     round_trip_efficiency_pct: float = 88.0
 
-    # Tile 4: Generator
+    # Sub-Tab 4: Generator
     enable_generator: bool = True
     generator_rated_kw: float = 100.0
     generator_min_load_pct: float = 25.0
@@ -190,52 +199,101 @@ class InteractionRulesConfig:
     rule1_peak_priority: str = "battery_first"                # "battery_first" | "generator_first"
     rule2_battery_strategy: str = "self_consumption_reserve"  # "peak_shaving_only" | "self_consumption_reserve"
     peak_reserve_soc_pct: float = 30.0                        # Reserved SoC (%) for peaks when rule2 == "self_consumption_reserve"
-    rule3_charging_sources: str = "solar_only"                # "solar_only" | "solar_and_grid" | "solar_and_generator"
+    rule3_charging_sources: str = "solar_only"                # "solar_only" | "solar_and_grid" | "solar_and_generator" | "all_sources"
 
 
 @dataclass
 class CombinedFinancialConfig:
-    """Financial parameters configured in Tab 3 (Financials)."""
-    # Grid Tariffs
-    grid_energy_price_eur_kwh: float = 0.20
-    grid_capacity_fee_eur_kw_month: float = 8.50
-    grid_fixed_fee_eur_month: float = 150.0
+    """
+    Financial parameters configured in Sub-Tab 6 (Financials).
+    Block A always uses the 4-Pillar Tariff structure:
+      - Pillar 1: Energy Supply (Supplier)
+      - Pillar 2: Grid Network (DSO)
+      - Pillar 3: Metering
+      - Pillar 4: Taxes & Levies
+    Also supports legacy flat tariff fields for backward compatibility.
+    """
+    # Pillar 1: Energy Supply (Supplier)
+    supplier_energy_price_eur_kwh: float = 0.15
+    supplier_fixed_fee_eur_month: float = 50.0
+
+    # Pillar 2: Grid Network (DSO)
+    dso_capacity_fee_eur_kw_month: float = 2.50
+    dso_peak_demand_fee_eur_kw_month: float = 6.00
+    dso_fixed_fee_eur_month: float = 100.0
     grid_overload_penalty_eur_kw: float = 15.00
 
-    # Solar Costs
-    solar_capex_eur_kwp: float = 850.0
+    # Pillar 3: Metering
+    metering_fixed_fee_eur_month: float = 45.0
+
+    # Pillar 4: Taxes & Levies
+    energy_tax_eur_kwh: float = 0.05
+    tax_surcharge_pct: float = 0.0
+
+    # Legacy / Aggregate Tariff Aliases (if set explicitly by tests, used as overrides)
+    grid_energy_price_eur_kwh: Optional[float] = None
+    grid_capacity_fee_eur_kw_month: Optional[float] = None
+    grid_fixed_fee_eur_month: Optional[float] = None
+
+    # Block B: Solar Turnkey Costs
+    solar_modules_eur_wp: float = 0.45
+    solar_inverter_eur_w: float = 0.12
+    solar_mounting_eur_wp: float = 0.28
+    solar_capex_eur_kwp: Optional[float] = None
     solar_om_pct_of_capex: float = 1.5
 
-    # Battery Costs
-    battery_capex_eur_kwh: float = 350.0
+    # Block C: Battery Turnkey Costs, O&M & Mid-Life Augmentation
+    battery_capex_eur_kwh: float = 280.0
     battery_capex_eur_kw: float = 150.0
+    battery_fixed_bop_eur: float = 15000.0
     battery_om_pct_of_capex: float = 1.5
+    enable_battery_augmentation: bool = True
+    battery_augmentation_year: int = 11
+    battery_augmentation_pct_of_racks: float = 60.0
 
-    # Generator Costs
-    generator_cost_model: str = "Purchase (CAPEX)"  # "Purchase (CAPEX)" or "Rental (OPEX)"
+    # Block D: Generator Purchase vs. Rental & Fuel OPEX
+    generator_cost_model: str = "Purchase (CAPEX)"  # "Purchase (CAPEX)" or "Monthly Rental (OPEX)"
     generator_capex_eur: float = 22000.0
     generator_rental_eur_month: float = 1200.0
     fuel_price_eur_per_unit: float = 1.45
     generator_maintenance_eur_per_hour: float = 4.50
 
+    # Lifecycle Discount Rate
+    discount_rate_pct: float = 6.0
+
+    @property
+    def effective_solar_capex_eur_kwp(self) -> float:
+        if self.solar_capex_eur_kwp is not None:
+            return float(self.solar_capex_eur_kwp)
+        return float((self.solar_modules_eur_wp + self.solar_inverter_eur_w + self.solar_mounting_eur_wp) * 1000.0)
+
 
 @dataclass
 class CombinedFinancialKPIs:
-    """Key financial results evaluated in Tab 3 (vs. Current situation)."""
+    """Key financial results evaluated in Sub-Tab 6 (vs. Current situation)."""
     # CAPEX
     solar_capex_eur: float = 0.0
     battery_capex_eur: float = 0.0
+    battery_augmentation_eur: float = 0.0
     generator_capex_eur: float = 0.0
     total_capex_eur: float = 0.0
 
-    # Baseline (Current situation) Annual OPEX
+    # Baseline (Current situation) 4-Pillar Annual Costs
+    baseline_pillar1_supply_eur: float = 0.0
+    baseline_pillar2_dso_eur: float = 0.0
+    baseline_pillar3_metering_eur: float = 0.0
+    baseline_pillar4_taxes_eur: float = 0.0
     baseline_energy_cost_eur: float = 0.0
     baseline_capacity_cost_eur: float = 0.0
     baseline_fixed_cost_eur: float = 0.0
     baseline_penalty_cost_eur: float = 0.0
     baseline_total_opex_eur: float = 0.0
 
-    # Combined System Annual OPEX
+    # Combined System 4-Pillar + Component Annual OPEX
+    combined_pillar1_supply_eur: float = 0.0
+    combined_pillar2_dso_eur: float = 0.0
+    combined_pillar3_metering_eur: float = 0.0
+    combined_pillar4_taxes_eur: float = 0.0
     combined_grid_energy_cost_eur: float = 0.0
     combined_grid_capacity_cost_eur: float = 0.0
     combined_grid_fixed_cost_eur: float = 0.0
@@ -249,9 +307,10 @@ class CombinedFinancialKPIs:
     generator_total_opex_eur: float = 0.0
     total_annual_opex_eur: float = 0.0
 
-    # Savings & Payback
+    # Savings, Payback & 15Y NPV
     annual_savings_eur: float = 0.0
     payback_years: Optional[float] = None
+    npv_15y_eur: float = 0.0
 
 
 @dataclass
@@ -267,6 +326,7 @@ class SolarDerivationInfo:
     panel_count: int
     panel_wp: float
     inverter_ac_kw: float
+    inverter_efficiency_pct: float
     expected_annual_yield_kwh: float
     formula_text: str
     source_info_text: str
@@ -329,9 +389,7 @@ class CombinedTechnicalKPIs:
 
 @dataclass
 class CombinedSimulationResult:
-    """
-    Complete 35,040-step simulation output for the Combined System.
-    """
+    """Complete 35,040-step simulation output for the Combined System."""
     system_config: CombinedSystemConfig
     rules_config: InteractionRulesConfig
     solar_derivation: SolarDerivationInfo
@@ -361,12 +419,14 @@ class CombinedSimulationResult:
     # Tables
     summary_table_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     monthly_balance_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    bess_bottleneck_df: pd.DataFrame = field(default_factory=pd.DataFrame)
 
-    # Financial Evaluation (populated via `evaluate_combined_financials`)
+    # Financial Evaluation (populated lazily via `evaluate_combined_financials`)
     financial_config: Optional[CombinedFinancialConfig] = None
     financial_kpis: Optional[CombinedFinancialKPIs] = None
     financial_table_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     monthly_cost_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    cashflow_15y_df: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 # ======================================================================================
@@ -441,15 +501,18 @@ def derive_solar_sizing_and_formula(
     panel_wp: float = 450.0,
     dc_ac_ratio: float = 1.18,
     enable_solar: bool = True,
+    inverter_ac_limit_kw: float = 0.0,
+    inverter_efficiency_pct: float = 98.0,
 ) -> SolarDerivationInfo:
     """
-    Computes the installed Solar kWp, panel count, expected annual yield, and the
-    single-line live calculation formula required by the Clean Screen Policy.
+    Computes the installed Solar kWp, panel count, expected annual yield, inverter AC limit,
+    and the single-line live calculation formula.
     """
     spec_yield = max(100.0, float(specific_yield_kwh_per_kwp))
     p_wp = max(100.0, float(panel_wp))
     ann_load = max(0.0, float(annual_consumption_kwh))
     ratio = max(1.0, float(dc_ac_ratio))
+    inv_eff = float(np.clip(inverter_efficiency_pct, 80.0, 100.0))
 
     source_info_text = (
         f"Data source: EU PVGIS (ERA5 TMY, 15-min resolution) | "
@@ -468,6 +531,7 @@ def derive_solar_sizing_and_formula(
             panel_count=0,
             panel_wp=p_wp,
             inverter_ac_kw=0.0,
+            inverter_efficiency_pct=inv_eff,
             expected_annual_yield_kwh=0.0,
             formula_text="Solar disabled (0.0 kWp)",
             source_info_text=source_info_text,
@@ -478,7 +542,7 @@ def derive_solar_sizing_and_formula(
         raw_kwp = (ann_load * (share_pct / 100.0)) / spec_yield if ann_load > 0 else float(direct_kwp)
         installed_kwp = round(max(0.0, raw_kwp), 1)
         panel_count = int(round((installed_kwp * 1000.0) / p_wp))
-        expected_yield_kwh = round(installed_kwp * spec_yield, 0)
+        expected_yield_kwh = round(installed_kwp * spec_yield * (inv_eff / 98.0), 0)
         eff_share_pct = (expected_yield_kwh / ann_load * 100.0) if ann_load > 0 else share_pct
         formula_text = (
             f"Calculation: ({ann_load:,.0f} kWh × {share_pct:.0f}%) / "
@@ -488,7 +552,7 @@ def derive_solar_sizing_and_formula(
     else:
         installed_kwp = round(max(0.0, float(direct_kwp)), 1)
         panel_count = int(round((installed_kwp * 1000.0) / p_wp))
-        expected_yield_kwh = round(installed_kwp * spec_yield, 0)
+        expected_yield_kwh = round(installed_kwp * spec_yield * (inv_eff / 98.0), 0)
         eff_share_pct = (expected_yield_kwh / ann_load * 100.0) if ann_load > 0 else 0.0
         formula_text = (
             f"Calculation: {installed_kwp:,.1f} kWp ({panel_count:,} panels @ {p_wp:.0f} Wp) × "
@@ -496,7 +560,10 @@ def derive_solar_sizing_and_formula(
             f"({eff_share_pct:.1f}% of consumption)"
         )
 
-    inv_ac_kw = round(installed_kwp / ratio, 1)
+    if inverter_ac_limit_kw and float(inverter_ac_limit_kw) > 0.0:
+        inv_ac_kw = round(float(inverter_ac_limit_kw), 1)
+    else:
+        inv_ac_kw = round(installed_kwp / ratio, 1)
 
     return SolarDerivationInfo(
         data_source_label="EU PVGIS (ERA5 TMY, 15-min resolution)",
@@ -509,6 +576,7 @@ def derive_solar_sizing_and_formula(
         panel_count=panel_count,
         panel_wp=p_wp,
         inverter_ac_kw=inv_ac_kw,
+        inverter_efficiency_pct=inv_eff,
         expected_annual_yield_kwh=expected_yield_kwh,
         formula_text=formula_text,
         source_info_text=source_info_text,
@@ -516,7 +584,7 @@ def derive_solar_sizing_and_formula(
 
 
 # ======================================================================================
-# 3b. Quick Sizing Presets & Share Split
+# 3b. Dual Sizing & 4-Criterion BESS Bottleneck Diagnostics
 # ======================================================================================
 
 QUICK_PRESET_OPTIONS: List[str] = ["20%", "40%", "60%", "100%", "Custom"]
@@ -534,6 +602,66 @@ class QuickSizingResult:
     battery_power_kw: float
     battery_capacity_kwh: float
     generator_rated_kw: float
+
+
+@dataclass
+class DualBatterySizingResult:
+    """
+    Dual Battery Sizing Result comparing:
+      - Mode A (Standalone: Battery only)
+      - Mode B (Coupled: With active Solar / Generator & Interaction Rules)
+    Plus the 4 physical sizing criteria for both modes.
+    """
+    # Mode A: Standalone (Battery only)
+    standalone_100_kw: float
+    standalone_100_kwh: float
+    standalone_80_kw: float
+    standalone_80_kwh: float
+    standalone_50_kw: float
+    standalone_50_kwh: float
+
+    # Mode B: Coupled (With active Solar / Generator & Rules)
+    coupled_100_kw: float
+    coupled_100_kwh: float
+    coupled_80_kw: float
+    coupled_80_kwh: float
+    coupled_50_kw: float
+    coupled_50_kwh: float
+
+    # 4 Physical Criteria (Standalone vs. Coupled)
+    standalone_peak_discharge_kw: float
+    coupled_peak_discharge_kw: float
+
+    standalone_single_event_kwh: float
+    coupled_single_event_kwh: float
+
+    standalone_multiday_cluster_kwh: float
+    coupled_multiday_cluster_kwh: float
+
+    standalone_recharge_headroom_kw: float
+    standalone_recharge_headroom_kwh: float
+    coupled_recharge_headroom_kw: float
+    coupled_recharge_headroom_kwh: float
+
+    controlling_driver_standalone: str
+    controlling_driver_coupled: str
+    bottleneck_table_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+
+@dataclass
+class DualGeneratorSizingResult:
+    """
+    Dual Generator Sizing Result comparing:
+      - Mode A (Standalone: Generator only, sized to full unmitigated peak above Grid Limit)
+      - Mode B (Coupled: Sized to residual peak remaining after active Solar & Battery)
+    """
+    standalone_100_kw: float
+    standalone_80_kw: float
+    standalone_50_kw: float
+
+    coupled_100_kw: float
+    coupled_80_kw: float
+    coupled_50_kw: float
 
 
 def compute_overload_reference(
@@ -555,6 +683,354 @@ def compute_overload_reference(
             current = 0.0
     largest = max(largest, current)
     return max_kw, float(largest)
+
+
+def _evaluate_bess_criteria_for_profile(
+    net_load_kw: np.ndarray,
+    grid_limit_kw: float,
+    min_soc_pct: float,
+    max_soc_pct: float,
+    round_trip_efficiency_pct: float,
+    usable_dod_frac: float,
+    extra_recharge_kw: Optional[np.ndarray] = None,
+    allow_grid_recharge: bool = True,
+    step_hours: float = 0.25,
+) -> Tuple[float, float, float, float, float, str]:
+    """
+    Evaluates the 4 physical BESS sizing criteria on a given net load profile:
+      1. Peak Discharge Power (kW)
+      2. Single Peak Event Gross Energy (kWh)
+      3. Multi-Day Cluster Gross Energy (kWh)
+      4. Available Recharge Headroom (max kW, annual kWh)
+    Returns (peak_kw, single_gross_kwh, cluster_gross_kwh, max_rech_kw, total_rech_kwh, driver_label).
+    """
+    p = np.maximum(0.0, np.nan_to_num(np.asarray(net_load_kw, dtype=float), nan=0.0))
+    n = len(p)
+    dt = float(step_hours)
+    lim = float(grid_limit_kw)
+
+    rte = float(np.clip(round_trip_efficiency_pct, 50.0, 100.0)) / 100.0
+    eta_dis = math.sqrt(rte)
+    eta_chg = math.sqrt(rte)
+    dod = max(0.05, float(usable_dod_frac))
+
+    peak_kw, single_net_kwh = compute_overload_reference(p, lim, dt)
+    single_gross_kwh = (single_net_kwh / (eta_dis * dod)) * 1.05 if single_net_kwh > 0.0 else 0.0
+
+    extra_chg = (
+        np.maximum(0.0, np.asarray(extra_recharge_kw, dtype=float))
+        if extra_recharge_kw is not None and len(extra_recharge_kw) == n
+        else np.zeros(n, dtype=float)
+    )
+    grid_headroom_arr = np.maximum(0.0, lim - p) if allow_grid_recharge else np.zeros(n, dtype=float)
+    avail_rech_kw_arr = np.where(p <= lim, grid_headroom_arr + extra_chg, extra_chg)
+
+    max_rech_kw = float(np.max(avail_rech_kw_arr)) if n > 0 else 0.0
+    total_rech_kwh = float(np.sum(avail_rech_kw_arr) * eta_chg * dt)
+    total_req_chem_kwh = float(np.sum(np.maximum(0.0, p - lim) / eta_dis) * dt)
+
+    cum_def = 0.0
+    max_cum_def = 0.0
+    for i in range(n):
+        nl = p[i]
+        if nl > lim:
+            cum_def += ((nl - lim) / eta_dis) * dt
+            if cum_def > max_cum_def:
+                max_cum_def = cum_def
+        else:
+            rech_e = avail_rech_kw_arr[i] * eta_chg * dt
+            cum_def = max(0.0, cum_def - rech_e)
+
+    cluster_gross_kwh = (max_cum_def / dod) * 1.05 if max_cum_def > 0.0 else 0.0
+    cluster_gross_kwh = max(cluster_gross_kwh, single_gross_kwh)
+
+    if peak_kw <= 0.05:
+        driver = "No Overload"
+    elif total_rech_kwh < total_req_chem_kwh:
+        driver = "Available Recharge Headroom"
+    elif cluster_gross_kwh > single_gross_kwh * 1.05:
+        driver = "Multi-Day Cluster Energy"
+    else:
+        driver = "Single Peak Event Energy"
+
+    return (
+        round(peak_kw, 1),
+        round(single_gross_kwh, 1),
+        round(cluster_gross_kwh, 1),
+        round(max_rech_kw, 1),
+        round(total_rech_kwh, 0),
+        driver,
+    )
+
+
+def compute_dual_battery_sizing(
+    load_kw: np.ndarray,
+    system_cfg: CombinedSystemConfig,
+    rules_cfg: InteractionRulesConfig,
+    step_hours: float = 0.25,
+) -> DualBatterySizingResult:
+    """
+    Computes both Mode A (Standalone: Battery only) and Mode B (Coupled: With active Solar,
+    active Generator, and Interaction Rules) battery sizing along with the 4-Criterion
+    Bottleneck Diagnostic Table.
+    """
+    p_load = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
+    n_steps = len(p_load)
+    dt = float(step_hours)
+    grid_limit = float(system_cfg.grid_limit_kw) if system_cfg.enable_grid else 0.0
+
+    min_soc = float(np.clip(system_cfg.min_soc_pct, 0.0, 50.0))
+    max_soc = float(np.clip(system_cfg.max_soc_pct, min_soc + 5.0, 100.0))
+    rte = float(np.clip(system_cfg.round_trip_efficiency_pct, 50.0, 100.0))
+    full_dod = max(0.05, (max_soc - min_soc) / 100.0)
+
+    # 1. Mode A: Standalone (Battery only, full DoD window, grid headroom recharge allowed)
+    (
+        sa_peak_kw,
+        sa_single_kwh,
+        sa_cluster_kwh,
+        sa_rech_kw,
+        sa_rech_kwh,
+        sa_driver,
+    ) = _evaluate_bess_criteria_for_profile(
+        net_load_kw=p_load,
+        grid_limit_kw=grid_limit,
+        min_soc_pct=min_soc,
+        max_soc_pct=max_soc,
+        round_trip_efficiency_pct=rte,
+        usable_dod_frac=full_dod,
+        extra_recharge_kw=None,
+        allow_grid_recharge=True,
+        step_hours=dt,
+    )
+    sa_100_kw = round(math.ceil(sa_peak_kw * 10.0) / 10.0, 1) if sa_peak_kw > 0.05 else 0.0
+    sa_100_kwh = round(sa_cluster_kwh, 1)
+
+    # 2. Mode B: Coupled (With active Solar, active Generator, and Rules 1-3)
+    if system_cfg.enable_solar and n_steps > 0:
+        azim = 180.0 if system_cfg.latitude >= 0.0 else 0.0
+        unit_solar_kw, spec_yield, _ = get_unit_solar_generation_profile(
+            latitude=system_cfg.latitude,
+            longitude=system_cfg.longitude,
+            tilt_deg=system_cfg.tilt_deg,
+            azimuth_deg=azim,
+            dc_ac_ratio=system_cfg.dc_ac_ratio,
+        )
+        if len(unit_solar_kw) != n_steps:
+            reps = int(math.ceil(n_steps / max(1, len(unit_solar_kw))))
+            unit_solar_kw = np.tile(unit_solar_kw, reps)[:n_steps]
+        ann_kwh = float(np.sum(p_load) * dt)
+        deriv = derive_solar_sizing_and_formula(
+            annual_consumption_kwh=ann_kwh,
+            specific_yield_kwh_per_kwp=spec_yield,
+            sizing_method=system_cfg.solar_sizing_method,
+            direct_kwp=system_cfg.solar_kwp,
+            target_share_pct=system_cfg.target_consumption_share_pct,
+            panel_wp=system_cfg.panel_wp,
+            dc_ac_ratio=system_cfg.dc_ac_ratio,
+            enable_solar=True,
+            inverter_ac_limit_kw=system_cfg.inverter_ac_limit_kw,
+            inverter_efficiency_pct=system_cfg.inverter_efficiency_pct,
+        )
+        p_solar = unit_solar_kw * deriv.installed_kwp * (deriv.inverter_efficiency_pct / 98.0)
+        if deriv.inverter_ac_kw > 0.0:
+            p_solar = np.minimum(p_solar, deriv.inverter_ac_kw)
+    else:
+        p_solar = np.zeros(n_steps, dtype=float)
+
+    p_direct = np.minimum(p_load, p_solar)
+    p_after_solar = np.maximum(0.0, p_load - p_direct)
+    p_surplus = np.maximum(0.0, p_solar - p_direct)
+
+    # Account for active Generator if enabled
+    gen_Excess_chg = np.zeros(n_steps, dtype=float)
+    if system_cfg.enable_generator and system_cfg.generator_rated_kw > 0.0:
+        g_rated = float(system_cfg.generator_rated_kw)
+        g_min = g_rated * (float(system_cfg.generator_min_load_pct) / 100.0)
+        p_for_bess = p_after_solar.copy()
+        over_arr = np.maximum(0.0, p_after_solar - grid_limit)
+        if rules_cfg.rule1_peak_priority == "generator_first":
+            # Generator takes peaks >= g_min up to g_rated; Battery handles small peaks < g_min and peaks > g_rated
+            for idx in range(n_steps):
+                ov = over_arr[idx]
+                if ov >= g_min:
+                    g_out = min(ov, g_rated)
+                    p_for_bess[idx] = grid_limit + max(0.0, ov - g_out)
+        else:
+            # Battery first, Generator as backup: Generator caps overload above what it can cover
+            for idx in range(n_steps):
+                ov = over_arr[idx]
+                if ov > 0.0:
+                    g_assist = min(ov, g_rated)
+                    p_for_bess[idx] = grid_limit + max(0.0, ov - g_assist)
+                    if g_assist < g_min and rules_cfg.rule3_charging_sources in ("solar_and_generator", "all_sources"):
+                        gen_Excess_chg[idx] = g_min - g_assist
+    else:
+        p_for_bess = p_after_solar
+
+    if rules_cfg.rule2_battery_strategy == "self_consumption_reserve" and system_cfg.enable_solar:
+        coupled_dod = max(0.05, ( float(rules_cfg.peak_reserve_soc_pct) - min_soc ) / 100.0)
+    else:
+        coupled_dod = full_dod
+
+    allow_grid_rech_coupled = (
+        rules_cfg.rule3_charging_sources in ("solar_and_grid", "all_sources")
+        or not system_cfg.enable_solar
+    )
+    extra_rech_coupled = p_surplus + gen_Excess_chg
+
+    (
+        cp_peak_kw,
+        cp_single_kwh,
+        cp_cluster_kwh,
+        cp_rech_kw,
+        cp_rech_kwh,
+        cp_driver,
+    ) = _evaluate_bess_criteria_for_profile(
+        net_load_kw=p_for_bess,
+        grid_limit_kw=grid_limit,
+        min_soc_pct=min_soc,
+        max_soc_pct=max_soc,
+        round_trip_efficiency_pct=rte,
+        usable_dod_frac=coupled_dod,
+        extra_recharge_kw=extra_rech_coupled,
+        allow_grid_recharge=allow_grid_rech_coupled,
+        step_hours=dt,
+    )
+    cp_100_kw = round(math.ceil(cp_peak_kw * 10.0) / 10.0, 1) if cp_peak_kw > 0.05 else 0.0
+    cp_100_kwh = round(cp_cluster_kwh, 1)
+
+    # Build the 4-Criterion Bottleneck Diagnostic Table
+    cfg_kw = float(system_cfg.battery_power_kw) if system_cfg.enable_battery else 0.0
+    cfg_kwh = float(system_cfg.battery_capacity_kwh) if system_cfg.enable_battery else 0.0
+
+    rows = [
+        {
+            "Criterion": "1. Peak Discharge Power (kW)",
+            "What It Checks": "Highest power spike above the Grid Limit",
+            "Standalone Required": f"{sa_100_kw:,.1f} kW",
+            "Coupled Required": f"{cp_100_kw:,.1f} kW",
+            "Configured Battery": f"{cfg_kw:,.1f} kW",
+            "Status": "Pass" if cfg_kw >= cp_100_kw - 0.1 else f"Bottleneck (-{max(0.0, cp_100_kw - cfg_kw):,.1f} kW)",
+        },
+        {
+            "Criterion": "2. Single Peak Event Energy (kWh)",
+            "What It Checks": "Largest single continuous overload event",
+            "Standalone Required": f"{sa_single_kwh:,.1f} kWh",
+            "Coupled Required": f"{cp_single_kwh:,.1f} kWh",
+            "Configured Battery": f"{cfg_kwh:,.1f} kWh",
+            "Status": "Pass" if cfg_kwh >= cp_single_kwh - 0.5 else f"Bottleneck (-{max(0.0, cp_single_kwh - cfg_kwh):,.1f} kWh)",
+        },
+        {
+            "Criterion": "3. Multi-Day Cluster Energy (kWh)",
+            "What It Checks": "Consecutive peak days without enough time to recharge in between",
+            "Standalone Required": f"{sa_100_kwh:,.1f} kWh",
+            "Coupled Required": f"{cp_100_kwh:,.1f} kWh",
+            "Configured Battery": f"{cfg_kwh:,.1f} kWh",
+            "Status": "Pass" if cfg_kwh >= cp_100_kwh - 0.5 else f"Bottleneck (-{max(0.0, cp_100_kwh - cfg_kwh):,.1f} kWh)",
+        },
+        {
+            "Criterion": "4. Available Recharge Headroom",
+            "What It Checks": "Charging room available below Grid Limit & from Solar surplus",
+            "Standalone Required": f"{sa_rech_kw:,.0f} kW max ({sa_rech_kwh:,.0f} kWh/yr)",
+            "Coupled Required": f"{cp_rech_kw:,.0f} kW max ({cp_rech_kwh:,.0f} kWh/yr)",
+            "Configured Battery": f"{cfg_kw:,.1f} kW charge limit",
+            "Status": "Pass" if cp_driver != "Available Recharge Headroom" else "Bottleneck (Low Recharge Room)",
+        },
+    ]
+
+    return DualBatterySizingResult(
+        standalone_100_kw=sa_100_kw,
+        standalone_100_kwh=sa_100_kwh,
+        standalone_80_kw=round(sa_100_kw * 0.80, 1),
+        standalone_80_kwh=round(sa_100_kwh * 0.80, 1),
+        standalone_50_kw=round(sa_100_kw * 0.50, 1),
+        standalone_50_kwh=round(sa_100_kwh * 0.50, 1),
+        coupled_100_kw=cp_100_kw,
+        coupled_100_kwh=cp_100_kwh,
+        coupled_80_kw=round(cp_100_kw * 0.80, 1),
+        coupled_80_kwh=round(cp_100_kwh * 0.80, 1),
+        coupled_50_kw=round(cp_100_kw * 0.50, 1),
+        coupled_50_kwh=round(cp_100_kwh * 0.50, 1),
+        standalone_peak_discharge_kw=sa_peak_kw,
+        coupled_peak_discharge_kw=cp_peak_kw,
+        standalone_single_event_kwh=sa_single_kwh,
+        coupled_single_event_kwh=cp_single_kwh,
+        standalone_multiday_cluster_kwh=sa_cluster_kwh,
+        coupled_multiday_cluster_kwh=cp_cluster_kwh,
+        standalone_recharge_headroom_kw=sa_rech_kw,
+        standalone_recharge_headroom_kwh=sa_rech_kwh,
+        coupled_recharge_headroom_kw=cp_rech_kw,
+        coupled_recharge_headroom_kwh=cp_rech_kwh,
+        controlling_driver_standalone=sa_driver,
+        controlling_driver_coupled=cp_driver,
+        bottleneck_table_df=pd.DataFrame(rows),
+    )
+
+
+def compute_dual_generator_sizing(
+    load_kw: np.ndarray,
+    timestamps: pd.DatetimeIndex,
+    system_cfg: CombinedSystemConfig,
+    rules_cfg: InteractionRulesConfig,
+    step_hours: float = 0.25,
+) -> DualGeneratorSizingResult:
+    """
+    Computes Dual Sizing for the Generator:
+      - Mode A (Standalone: Generator only): Sized to full unmitigated peak overload above Grid Limit.
+      - Mode B (Coupled: With active Solar / Battery & Interaction Rules): Sized to the residual peak
+        that remains after Solar and Battery dispatch.
+    """
+    p_load = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
+    grid_limit = float(system_cfg.grid_limit_kw) if system_cfg.enable_grid else 0.0
+    raw_over_kw, _ = compute_overload_reference(p_load, grid_limit, step_hours)
+    sa_100 = round(math.ceil(raw_over_kw * 10.0) / 10.0, 1) if raw_over_kw > 0.05 else 0.0
+
+    # Simulate with Generator disabled to measure exact residual peak left after active Solar & Battery
+    cfg_no_gen = CombinedSystemConfig(
+        enable_grid=system_cfg.enable_grid,
+        grid_limit_kw=system_cfg.grid_limit_kw,
+        enable_solar=system_cfg.enable_solar,
+        site_preset=system_cfg.site_preset,
+        latitude=system_cfg.latitude,
+        longitude=system_cfg.longitude,
+        elevation_m=system_cfg.elevation_m,
+        tilt_deg=system_cfg.tilt_deg,
+        azimuth_deg=system_cfg.azimuth_deg,
+        solar_sizing_method=system_cfg.solar_sizing_method,
+        solar_kwp=system_cfg.solar_kwp,
+        panel_wp=system_cfg.panel_wp,
+        dc_ac_ratio=system_cfg.dc_ac_ratio,
+        target_consumption_share_pct=system_cfg.target_consumption_share_pct,
+        inverter_ac_limit_kw=system_cfg.inverter_ac_limit_kw,
+        inverter_efficiency_pct=system_cfg.inverter_efficiency_pct,
+        enable_battery=system_cfg.enable_battery,
+        battery_capacity_kwh=system_cfg.battery_capacity_kwh,
+        battery_power_kw=system_cfg.battery_power_kw,
+        min_soc_pct=system_cfg.min_soc_pct,
+        max_soc_pct=system_cfg.max_soc_pct,
+        round_trip_efficiency_pct=system_cfg.round_trip_efficiency_pct,
+        enable_generator=False,
+        generator_rated_kw=0.0,
+    )
+    res_no_gen = simulate_combined_system_dispatch(
+        load_kw=p_load,
+        timestamps=timestamps,
+        system_cfg=cfg_no_gen,
+        rules_cfg=rules_cfg,
+        step_hours=step_hours,
+    )
+    rem_over_kw = float(res_no_gen.kpis.remaining_overload_kw)
+    cp_100 = round(math.ceil(rem_over_kw * 10.0) / 10.0, 1) if rem_over_kw > 0.05 else 0.0
+
+    return DualGeneratorSizingResult(
+        standalone_100_kw=sa_100,
+        standalone_80_kw=round(sa_100 * 0.80, 1),
+        standalone_50_kw=round(sa_100 * 0.50, 1),
+        coupled_100_kw=cp_100,
+        coupled_80_kw=round(cp_100 * 0.80, 1),
+        coupled_50_kw=round(cp_100 * 0.50, 1),
+    )
 
 
 def derive_quick_sizing(
@@ -636,7 +1112,7 @@ def derive_quick_sizing(
     else:
         usable_dod = max(0.05, (max_soc - min_soc) / 100.0)
 
-    allow_grid_rech = (rule3 == "solar_and_grid") or (sol_share <= 0.0)
+    allow_grid_rech = (rule3 in ("solar_and_grid", "all_sources")) or (sol_share <= 0.0)
 
     # 4. 35,040-Step Cumulative Deficit Integration
     cum_deficit = 0.0
@@ -733,10 +1209,15 @@ def simulate_combined_system_dispatch(
         panel_wp=system_cfg.panel_wp,
         dc_ac_ratio=system_cfg.dc_ac_ratio,
         enable_solar=system_cfg.enable_solar,
+        inverter_ac_limit_kw=getattr(system_cfg, "inverter_ac_limit_kw", 0.0),
+        inverter_efficiency_pct=getattr(system_cfg, "inverter_efficiency_pct", 98.0),
     )
 
     if system_cfg.enable_solar and solar_derivation.installed_kwp > 0.0:
-        solar_gen_kw = unit_solar_kw * solar_derivation.installed_kwp
+        eff_scale = solar_derivation.inverter_efficiency_pct / 98.0
+        solar_gen_kw = unit_solar_kw * solar_derivation.installed_kwp * eff_scale
+        if solar_derivation.inverter_ac_kw > 0.0:
+            solar_gen_kw = np.minimum(solar_gen_kw, solar_derivation.inverter_ac_kw)
     else:
         solar_gen_kw = np.zeros(n_steps, dtype=float)
 
@@ -803,11 +1284,18 @@ def simulate_combined_system_dispatch(
     grid_import_kw = np.zeros(n_steps, dtype=float)
     unmet_overload_kw = np.zeros(n_steps, dtype=float)
 
+    rule1 = rules_cfg.rule1_peak_priority
+    rule2 = rules_cfg.rule2_battery_strategy
+    rule3 = rules_cfg.rule3_charging_sources
+
+    allow_grid_chg = rule3 in ("solar_and_grid", "all_sources")
+    allow_gen_chg = rule3 in ("solar_and_generator", "all_sources")
+
     if enable_bess:
-        if rules_cfg.rule2_battery_strategy == "peak_shaving_only":
+        if rule2 == "peak_shaving_only":
             cur_e_kwh = (
                 e_max_kwh
-                if rules_cfg.rule3_charging_sources == "solar_and_grid"
+                if allow_grid_chg
                 else (0.5 * (e_min_kwh + e_max_kwh))
             )
         else:
@@ -817,13 +1305,9 @@ def simulate_combined_system_dispatch(
 
     solar_energy_in_bess_kwh = (
         cur_e_kwh
-        if (system_cfg.enable_solar and rules_cfg.rule3_charging_sources == "solar_only")
+        if (system_cfg.enable_solar and rule3 == "solar_only")
         else 0.0
     )
-
-    rule1 = rules_cfg.rule1_peak_priority
-    rule2 = rules_cfg.rule2_battery_strategy
-    rule3 = rules_cfg.rule3_charging_sources
 
     gen_Forced_steps_remaining = 0
 
@@ -882,7 +1366,7 @@ def simulate_combined_system_dispatch(
 
                     gen_excess_kw = max(0.0, actual_gen_kw - step_gen_to_load)
                     if gen_excess_kw > 0.0:
-                        if rule3 == "solar_and_generator" and enable_bess and step_bess_dis == 0.0 and cur_e_kwh < e_max_kwh:
+                        if allow_gen_chg and enable_bess and step_bess_dis == 0.0 and cur_e_kwh < e_max_kwh:
                             room_ac_kw = (e_max_kwh - cur_e_kwh) / (dt * eta_chg)
                             step_bess_chg_gen = min(gen_excess_kw, rem_bess_chg_power_kw, room_ac_kw)
                             cur_e_kwh += step_bess_chg_gen * dt * eta_chg
@@ -929,7 +1413,7 @@ def simulate_combined_system_dispatch(
 
                         gen_excess_kw = max(0.0, actual_gen_kw - step_gen_to_load)
                         if gen_excess_kw > 0.0:
-                            if rule3 == "solar_and_generator" and enable_bess and cur_e_kwh < e_max_kwh:
+                            if allow_gen_chg and enable_bess and cur_e_kwh < e_max_kwh:
                                 room_ac_kw = (e_max_kwh - cur_e_kwh) / (dt * eta_chg)
                                 step_bess_chg_gen = min(gen_excess_kw, rem_bess_chg_power_kw, room_ac_kw)
                                 cur_e_kwh += step_bess_chg_gen * dt * eta_chg
@@ -961,11 +1445,10 @@ def simulate_combined_system_dispatch(
 
         else:
             # --- BELOW OR AT GRID LIMIT (Normal Load Region) ---
-            # Check if generator must finish its minimum runtime
             if gen_Forced_steps_remaining > 0 and enable_gen:
                 actual_gen_kw = min(gen_rated_kw, gen_min_kw)
                 step_gen_out = actual_gen_kw
-                if rule3 == "solar_and_generator" and enable_bess and cur_e_kwh < e_max_kwh:
+                if allow_gen_chg and enable_bess and cur_e_kwh < e_max_kwh:
                     room_ac_kw = (e_max_kwh - cur_e_kwh) / (dt * eta_chg)
                     step_bess_chg_gen = min(actual_gen_kw, rem_bess_chg_power_kw, room_ac_kw)
                     cur_e_kwh += step_bess_chg_gen * dt * eta_chg
@@ -997,7 +1480,7 @@ def simulate_combined_system_dispatch(
 
             # Rule 3: Battery Grid Recharging within Grid Limit
             if (
-                rule3 == "solar_and_grid"
+                allow_grid_chg
                 and enable_bess
                 and step_bess_dis == 0.0
                 and step_bess_chg_gen == 0.0
@@ -1165,6 +1648,13 @@ def simulate_combined_system_dispatch(
         step_hours=dt,
     )
 
+    bess_dual = compute_dual_battery_sizing(
+        load_kw=p_load,
+        system_cfg=system_cfg,
+        rules_cfg=rules_cfg,
+        step_hours=dt,
+    )
+
     return CombinedSimulationResult(
         system_config=system_cfg,
         rules_config=rules_cfg,
@@ -1191,6 +1681,7 @@ def simulate_combined_system_dispatch(
         unmet_overload_kw=unmet_overload_kw,
         summary_table_df=summary_df,
         monthly_balance_df=monthly_df,
+        bess_bottleneck_df=bess_dual.bottleneck_table_df,
     )
 
 
@@ -1207,7 +1698,7 @@ def build_component_summary_table(
     gen_output_kw: np.ndarray,
 ) -> pd.DataFrame:
     """
-    Builds the purely physical/technical Component & Scenario Summary Table for Tab 2.
+    Builds the physical/technical Component & Scenario Summary Table.
     Rows: Grid, Solar, Battery, Generator, Combined system, Current situation.
     """
     denom = max(1.0, kpis.annual_consumption_kwh)
@@ -1355,7 +1846,7 @@ def build_monthly_balance_table(
 
 
 # ======================================================================================
-# 6. Decoupled Financial Evaluation Engine (Tab 3 & Excel Sheet 4)
+# 6. Lazy-Loaded Financial Evaluation Engine (4-Pillar Tariff + 15-Year Lifecycle)
 # ======================================================================================
 
 def evaluate_combined_financials(
@@ -1363,36 +1854,76 @@ def evaluate_combined_financials(
     fin_cfg: CombinedFinancialConfig,
 ) -> CombinedSimulationResult:
     """
-    Evaluates CAPEX, OPEX, Annual Savings vs. Current situation, Payback, and
-    12-month cost comparison for the simulated CombinedSimulationResult.
+    Evaluates the 4-Pillar Tariff costs (Supplier, DSO, Metering, Taxes), itemized component
+    CAPEX & OPEX, Annual Net Savings vs. Current situation, Simple Payback, 15-Year NPV, and
+    the 15-Year Cashflow Table.
     """
     cfg = sim_res.system_config
     kpis = sim_res.kpis
     solar_deriv = sim_res.solar_derivation
 
-    # 1. CAPEX
-    solar_capex = (solar_deriv.installed_kwp * fin_cfg.solar_capex_eur_kwp) if cfg.enable_solar else 0.0
-    battery_capex = (
-        cfg.battery_capacity_kwh * fin_cfg.battery_capex_eur_kwh
-        + cfg.battery_power_kw * fin_cfg.battery_capex_eur_kw
-    ) if cfg.enable_battery else 0.0
+    # 1. Itemized Turnkey CAPEX
+    solar_capex_kwp = fin_cfg.effective_solar_capex_eur_kwp
+    solar_capex = (solar_deriv.installed_kwp * solar_capex_kwp) if cfg.enable_solar else 0.0
+
+    battery_rack_capex = cfg.battery_capacity_kwh * fin_cfg.battery_capex_eur_kwh if cfg.enable_battery else 0.0
+    battery_inv_capex = cfg.battery_power_kw * fin_cfg.battery_capex_eur_kw if cfg.enable_battery else 0.0
+    battery_bop_capex = fin_cfg.battery_fixed_bop_eur if (cfg.enable_battery and cfg.battery_capacity_kwh > 0) else 0.0
+    battery_capex = (battery_rack_capex + battery_inv_capex + battery_bop_capex) if cfg.enable_battery else 0.0
+
+    battery_aug_eur = (
+        battery_rack_capex * (fin_cfg.battery_augmentation_pct_of_racks / 100.0)
+        if (cfg.enable_battery and fin_cfg.enable_battery_augmentation)
+        else 0.0
+    )
+
     gen_is_purchase = fin_cfg.generator_cost_model == "Purchase (CAPEX)"
     generator_capex = fin_cfg.generator_capex_eur if (cfg.enable_generator and gen_is_purchase) else 0.0
     total_capex = solar_capex + battery_capex + generator_capex
 
-    # 2. Monthly Grid & Operational Costs (12 Months)
+    # 2. Resolve 4-Pillar Rates
+    if fin_cfg.grid_energy_price_eur_kwh is not None:
+        supp_kwh_rate = float(fin_cfg.grid_energy_price_eur_kwh)
+        tax_kwh_rate = 0.0
+    else:
+        supp_kwh_rate = float(fin_cfg.supplier_energy_price_eur_kwh)
+        tax_kwh_rate = float(fin_cfg.energy_tax_eur_kwh)
+
+    if fin_cfg.grid_capacity_fee_eur_kw_month is not None:
+        dso_cap_rate = float(fin_cfg.grid_capacity_fee_eur_kw_month)
+        dso_peak_rate = 0.0
+    else:
+        dso_cap_rate = float(fin_cfg.dso_capacity_fee_eur_kw_month)
+        dso_peak_rate = float(fin_cfg.dso_peak_demand_fee_eur_kw_month)
+
+    if fin_cfg.grid_fixed_fee_eur_month is not None:
+        supp_fixed_mo = 0.0
+        dso_fixed_mo = float(fin_cfg.grid_fixed_fee_eur_month)
+        meter_fixed_mo = 0.0
+    else:
+        supp_fixed_mo = float(fin_cfg.supplier_fixed_fee_eur_month)
+        dso_fixed_mo = float(fin_cfg.dso_fixed_fee_eur_month)
+        meter_fixed_mo = float(fin_cfg.metering_fixed_fee_eur_month)
+
+    pen_rate_kw = float(fin_cfg.grid_overload_penalty_eur_kw)
+    tax_pct = float(fin_cfg.tax_surcharge_pct) / 100.0
+
+    # 3. Monthly 4-Pillar Grid & Operational Costs (12 Months)
     mb_df = sim_res.monthly_balance_df
     monthly_cost_rows = []
 
-    base_energy_sum = 0.0
-    base_cap_sum = 0.0
-    base_fixed_sum = 0.0
+    base_p1_sum = 0.0
+    base_p2_sum = 0.0
+    base_p3_sum = 0.0
+    base_p4_sum = 0.0
     base_pen_sum = 0.0
 
-    comb_energy_sum = 0.0
-    comb_cap_sum = 0.0
-    comb_fixed_sum = 0.0
+    comb_p1_sum = 0.0
+    comb_p2_sum = 0.0
+    comb_p3_sum = 0.0
+    comb_p4_sum = 0.0
     comb_pen_sum = 0.0
+
     gen_fuel_cost_sum = 0.0
     gen_maint_cost_sum = 0.0
     gen_rental_cost_sum = 0.0
@@ -1404,50 +1935,59 @@ def evaluate_combined_financials(
     for _, row in mb_df.iterrows():
         m_name = str(row["Month"])
         cons_kwh = float(row["Consumption (kWh)"])
+        base_peak_kw = float(row["Current situation Peak (kW)"])
         base_over_kw = float(row["Current situation Overload (kW)"])
+
         comb_imp_kwh = float(row["Combined Grid Import (kWh)"])
+        comb_peak_kw = float(row["Combined Grid Peak (kW)"])
         comb_over_kw = float(row["Remaining Overload (kW)"])
         gen_hrs = float(row["Generator Runtime (hrs)"])
         gen_fuel = float(row["Generator Fuel"])
 
-        # Baseline (Current situation)
-        b_energy = cons_kwh * fin_cfg.grid_energy_price_eur_kwh
-        b_cap = cfg.grid_limit_kw * fin_cfg.grid_capacity_fee_eur_kw_month
-        b_fixed = fin_cfg.grid_fixed_fee_eur_month
-        b_pen = base_over_kw * fin_cfg.grid_overload_penalty_eur_kw
-        b_tot = b_energy + b_cap + b_fixed + b_pen
+        # Baseline (Current situation) 4 Pillars
+        b_p1 = cons_kwh * supp_kwh_rate + supp_fixed_mo
+        b_pen = base_over_kw * pen_rate_kw
+        b_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (base_peak_kw * dso_peak_rate) + dso_fixed_mo + b_pen
+        b_p3 = meter_fixed_mo
+        b_p4 = (cons_kwh * tax_kwh_rate) + (b_p1 + b_p2 + b_p3) * tax_pct
+        b_tot = b_p1 + b_p2 + b_p3 + b_p4
 
-        # Combined system
-        c_energy = comb_imp_kwh * fin_cfg.grid_energy_price_eur_kwh
-        c_cap = cfg.grid_limit_kw * fin_cfg.grid_capacity_fee_eur_kw_month
-        c_fixed = fin_cfg.grid_fixed_fee_eur_month
-        c_pen = comb_over_kw * fin_cfg.grid_overload_penalty_eur_kw
+        # Combined system 4 Pillars + Component OPEX
+        c_p1 = comb_imp_kwh * supp_kwh_rate + supp_fixed_mo
+        c_pen = comb_over_kw * pen_rate_kw
+        c_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (comb_peak_kw * dso_peak_rate) + dso_fixed_mo + c_pen
+        c_p3 = meter_fixed_mo
+        c_p4 = (comb_imp_kwh * tax_kwh_rate) + (c_p1 + c_p2 + c_p3) * tax_pct
+
         c_fuel = (gen_fuel * fin_cfg.fuel_price_eur_per_unit) if cfg.enable_generator else 0.0
         c_maint = (gen_hrs * fin_cfg.generator_maintenance_eur_per_hour) if cfg.enable_generator else 0.0
         c_rent = fin_cfg.generator_rental_eur_month if (cfg.enable_generator and not gen_is_purchase) else 0.0
-        c_tot = c_energy + c_cap + c_fixed + c_pen + c_fuel + c_maint + c_rent + om_monthly
+        c_tot = c_p1 + c_p2 + c_p3 + c_p4 + c_fuel + c_maint + c_rent + om_monthly
 
-        base_energy_sum += b_energy
-        base_cap_sum += b_cap
-        base_fixed_sum += b_fixed
+        base_p1_sum += b_p1
+        base_p2_sum += b_p2
+        base_p3_sum += b_p3
+        base_p4_sum += b_p4
         base_pen_sum += b_pen
 
-        comb_energy_sum += c_energy
-        comb_cap_sum += c_cap
-        comb_fixed_sum += c_fixed
+        comb_p1_sum += c_p1
+        comb_p2_sum += c_p2
+        comb_p3_sum += c_p3
+        comb_p4_sum += c_p4
         comb_pen_sum += c_pen
+
         gen_fuel_cost_sum += c_fuel
         gen_maint_cost_sum += c_maint
         gen_rental_cost_sum += c_rent
 
         monthly_cost_rows.append({
             "Month": m_name,
-            "Current situation Energy (€)": round(b_energy, 2),
-            "Current situation Capacity & Fixed (€)": round(b_cap + b_fixed, 2),
+            "Current situation Energy & Taxes (€)": round(b_p1 - supp_fixed_mo + b_p4, 2),
+            "Current situation Network & Standing (€)": round(b_p2 - b_pen + supp_fixed_mo + b_p3, 2),
             "Current situation Overload Penalty (€)": round(b_pen, 2),
             "Current situation Total (€)": round(b_tot, 2),
-            "Combined Grid Energy (€)": round(c_energy, 2),
-            "Combined Capacity & Fixed (€)": round(c_cap + c_fixed, 2),
+            "Combined Grid Energy & Taxes (€)": round(c_p1 - supp_fixed_mo + c_p4, 2),
+            "Combined Network & Standing (€)": round(c_p2 - c_pen + supp_fixed_mo + c_p3, 2),
             "Combined Overload Penalty (€)": round(c_pen, 2),
             "Generator Fuel & Maint & Rental (€)": round(c_fuel + c_maint + c_rent, 2),
             "Solar & Battery O&M (€)": round(om_monthly, 2),
@@ -1455,8 +1995,8 @@ def evaluate_combined_financials(
             "Monthly Savings (€)": round(b_tot - c_tot, 2),
         })
 
-    baseline_total_opex = base_energy_sum + base_cap_sum + base_fixed_sum + base_pen_sum
-    combined_grid_total = comb_energy_sum + comb_cap_sum + comb_fixed_sum + comb_pen_sum
+    baseline_total_opex = base_p1_sum + base_p2_sum + base_p3_sum + base_p4_sum
+    combined_grid_total = comb_p1_sum + comb_p2_sum + comb_p3_sum + comb_p4_sum
     gen_total_opex = gen_fuel_cost_sum + gen_maint_cost_sum + gen_rental_cost_sum
     total_annual_opex = combined_grid_total + solar_om_annual + battery_om_annual + gen_total_opex
     annual_savings = baseline_total_opex - total_annual_opex
@@ -1468,19 +2008,63 @@ def evaluate_combined_financials(
     else:
         payback_years = None
 
+    # 4. 15-Year Lifecycle Cashflow & NPV Calculation
+    r_disc = max(0.0, float(fin_cfg.discount_rate_pct)) / 100.0
+    aug_yr = int(fin_cfg.battery_augmentation_year)
+    cashflow_rows = []
+    cum_cf = -total_capex
+    npv_acc = -total_capex
+
+    cashflow_rows.append({
+        "Year": 0,
+        "Investment & Augmentation (€)": round(-total_capex, 0),
+        "Current situation Bill (€)": 0.0,
+        "Combined System OPEX (€)": 0.0,
+        "Annual Net Savings (€)": 0.0,
+        "Net Cashflow (€)": round(-total_capex, 0),
+        "Cumulative Cashflow (€)": round(cum_cf, 0),
+        "Discounted Cashflow (€)": round(-total_capex, 0),
+    })
+
+    for yr in range(1, 16):
+        yr_aug = -battery_aug_eur if (battery_aug_eur > 0.0 and yr == aug_yr) else 0.0
+        net_cf = annual_savings + yr_aug
+        cum_cf += net_cf
+        disc_cf = net_cf / ((1.0 + r_disc) ** yr)
+        npv_acc += disc_cf
+        cashflow_rows.append({
+            "Year": yr,
+            "Investment & Augmentation (€)": round(yr_aug, 0),
+            "Current situation Bill (€)": round(baseline_total_opex, 0),
+            "Combined System OPEX (€)": round(total_annual_opex, 0),
+            "Annual Net Savings (€)": round(annual_savings, 0),
+            "Net Cashflow (€)": round(net_cf, 0),
+            "Cumulative Cashflow (€)": round(cum_cf, 0),
+            "Discounted Cashflow (€)": round(disc_cf, 0),
+        })
+
     fin_kpis = CombinedFinancialKPIs(
         solar_capex_eur=round(solar_capex, 0),
         battery_capex_eur=round(battery_capex, 0),
+        battery_augmentation_eur=round(battery_aug_eur, 0),
         generator_capex_eur=round(generator_capex, 0),
         total_capex_eur=round(total_capex, 0),
-        baseline_energy_cost_eur=round(base_energy_sum, 0),
-        baseline_capacity_cost_eur=round(base_cap_sum, 0),
-        baseline_fixed_cost_eur=round(base_fixed_sum, 0),
+        baseline_pillar1_supply_eur=round(base_p1_sum, 0),
+        baseline_pillar2_dso_eur=round(base_p2_sum, 0),
+        baseline_pillar3_metering_eur=round(base_p3_sum, 0),
+        baseline_pillar4_taxes_eur=round(base_p4_sum, 0),
+        baseline_energy_cost_eur=round(base_p1_sum + base_p4_sum - 12.0 * supp_fixed_mo, 0),
+        baseline_capacity_cost_eur=round(base_p2_sum - base_pen_sum - 12.0 * dso_fixed_mo, 0),
+        baseline_fixed_cost_eur=round(12.0 * (supp_fixed_mo + dso_fixed_mo + meter_fixed_mo), 0),
         baseline_penalty_cost_eur=round(base_pen_sum, 0),
         baseline_total_opex_eur=round(baseline_total_opex, 0),
-        combined_grid_energy_cost_eur=round(comb_energy_sum, 0),
-        combined_grid_capacity_cost_eur=round(comb_cap_sum, 0),
-        combined_grid_fixed_cost_eur=round(comb_fixed_sum, 0),
+        combined_pillar1_supply_eur=round(comb_p1_sum, 0),
+        combined_pillar2_dso_eur=round(comb_p2_sum, 0),
+        combined_pillar3_metering_eur=round(comb_p3_sum, 0),
+        combined_pillar4_taxes_eur=round(comb_p4_sum, 0),
+        combined_grid_energy_cost_eur=round(comb_p1_sum + comb_p4_sum - 12.0 * supp_fixed_mo, 0),
+        combined_grid_capacity_cost_eur=round(comb_p2_sum - comb_pen_sum - 12.0 * dso_fixed_mo, 0),
+        combined_grid_fixed_cost_eur=round(12.0 * (supp_fixed_mo + dso_fixed_mo + meter_fixed_mo), 0),
         combined_grid_penalty_cost_eur=round(comb_pen_sum, 0),
         combined_grid_total_eur=round(combined_grid_total, 0),
         solar_om_eur=round(solar_om_annual, 0),
@@ -1492,6 +2076,7 @@ def evaluate_combined_financials(
         total_annual_opex_eur=round(total_annual_opex, 0),
         annual_savings_eur=round(annual_savings, 0),
         payback_years=payback_years,
+        npv_15y_eur=round(npv_acc, 0),
     )
 
     denom = max(1.0, kpis.annual_consumption_kwh)
@@ -1563,4 +2148,5 @@ def evaluate_combined_financials(
     sim_res.financial_kpis = fin_kpis
     sim_res.financial_table_df = pd.DataFrame(fin_rows)
     sim_res.monthly_cost_df = pd.DataFrame(monthly_cost_rows)
+    sim_res.cashflow_15y_df = pd.DataFrame(cashflow_rows)
     return sim_res

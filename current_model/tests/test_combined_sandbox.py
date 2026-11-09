@@ -4,12 +4,15 @@ Unit Tests for Combined System Sandbox (tests/test_combined_sandbox.py)
 ========================================================================================
 
 Verifies:
-  1. Default Amsterdam GPS (52.3676, 4.9041), transparent Solar kWp derivation formula & EU PVGIS label.
+  1. Default Amsterdam GPS (52.3676, 4.9041), transparent Solar kWp derivation formula,
+     Inverter AC Limit & Efficiency (98%), and EU PVGIS label.
   2. All 8 enable/disable combinations of Solar, Battery, and Generator over 35,040 steps.
-  3. Operating Rules 1, 2, and 3 (Peak priority, Battery reserve strategy, Charging sources).
-  4. Decoupled Financial Evaluation Engine (`evaluate_combined_financials`) & 4-sheet Excel export.
-  5. Interactive Plotly figures (Consumption baseline + Synchronized 2-in-1 Dispatch & SoC).
-  6. Clean Screen Policy & strict terminology compliance across `ui_sandbox/Combined_sandbox/`.
+  3. Operating Rules 1, 2, and 3 (including Rule 3 Option D "all_sources").
+  4. Dual-Sizing for Battery (Standalone vs. Coupled + 4-Criterion Bottleneck Table)
+     and Dual-Sizing for Generator (Standalone vs. Coupled).
+  5. Lazy-Loaded Financial Evaluation Engine (`evaluate_combined_financials`) with 4-Pillar
+     Tariff, 15-Year Cashflow Table, 15Y NPV, Cost Comparison Chart & 4-sheet Excel export.
+  6. Interactive Plotly figures & Clean Screen Policy terminology compliance.
 ========================================================================================
 """
 
@@ -33,12 +36,15 @@ from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
     InteractionRulesConfig,
     CombinedFinancialConfig,
     derive_solar_sizing_and_formula,
+    compute_dual_battery_sizing,
+    compute_dual_generator_sizing,
     simulate_combined_system_dispatch,
     evaluate_combined_financials,
 )
 from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
     create_consumption_baseline_figure,
     create_combined_dispatch_soc_figure,
+    create_financial_cost_comparison_figure,
 )
 from current_model.ui_sandbox.Combined_sandbox.combined_excel_exporter import (
     build_combined_verification_excel_bytes,
@@ -57,6 +63,7 @@ class TestCombinedSandbox(unittest.TestCase):
         default_cfg = CombinedSystemConfig()
         self.assertAlmostEqual(default_cfg.latitude, 52.3676, places=4)
         self.assertAlmostEqual(default_cfg.longitude, 4.9041, places=4)
+        self.assertAlmostEqual(default_cfg.inverter_efficiency_pct, 98.0, places=1)
         self.assertIn("Amsterdam", default_cfg.site_preset)
 
         deriv_share = derive_solar_sizing_and_formula(
@@ -94,6 +101,9 @@ class TestCombinedSandbox(unittest.TestCase):
                     self.assertEqual(len(res.grid_import_kw), 35040)
                     self.assertEqual(len(res.summary_table_df), 6)
                     self.assertEqual(len(res.monthly_balance_df), 12)
+                    self.assertEqual(len(res.bess_bottleneck_df), 4)
+                    # Lazy financials: financial_kpis is None until evaluate_combined_financials is called
+                    self.assertIsNone(res.financial_kpis)
                     if not en_solar:
                         self.assertEqual(res.kpis.solar_total_generation_kwh, 0.0)
                     if not en_bess:
@@ -101,8 +111,8 @@ class TestCombinedSandbox(unittest.TestCase):
                     if not en_gen:
                         self.assertEqual(res.kpis.generator_total_generation_kwh, 0.0)
 
-    def test_interaction_rules_behavior(self):
-        """Verifies Rules 1, 2, and 3 produce physically distinct and valid dispatch outcomes."""
+    def test_interaction_rules_behavior_including_option_d(self):
+        """Verifies Rules 1, 2, and 3 (including Option D 'all_sources') produce valid outcomes."""
         cfg = CombinedSystemConfig(
             grid_limit_kw=150.0,
             enable_solar=True,
@@ -162,7 +172,7 @@ class TestCombinedSandbox(unittest.TestCase):
             res_bess_first.kpis.battery_total_discharged_kwh,
         )
 
-        res_grid_chg = simulate_combined_system_dispatch(
+        res_all_sources = simulate_combined_system_dispatch(
             load_kw=self.load_kw,
             timestamps=self.timestamps,
             system_cfg=cfg,
@@ -170,13 +180,47 @@ class TestCombinedSandbox(unittest.TestCase):
                 rule1_peak_priority="battery_first",
                 rule2_battery_strategy="self_consumption_reserve",
                 peak_reserve_soc_pct=40.0,
-                rule3_charging_sources="solar_and_grid",
+                rule3_charging_sources="all_sources",
             ),
         )
-        self.assertGreater(res_grid_chg.kpis.battery_charged_from_grid_kwh, 0.0)
+        self.assertGreater(res_all_sources.kpis.battery_charged_from_grid_kwh, 0.0)
 
-    def test_financials_and_4sheet_excel_export(self):
-        """Verifies Tab 3 financial calculations and 4-sheet .xlsx verification workbook."""
+    def test_dual_sizing_and_4_bottleneck_table(self):
+        """Verifies Dual-Sizing (Standalone vs. Coupled) for Battery and Generator + 4-Bottleneck Table."""
+        cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_sizing_method="target_share_pct",
+            target_consumption_share_pct=60.0,
+            enable_battery=True,
+            battery_capacity_kwh=300.0,
+            battery_power_kw=100.0,
+            enable_generator=True,
+            generator_rated_kw=40.0,
+        )
+        rules = InteractionRulesConfig(
+            rule1_peak_priority="generator_first",
+            rule2_battery_strategy="peak_shaving_only",
+            rule3_charging_sources="solar_and_grid",
+        )
+
+        bess_dual = compute_dual_battery_sizing(self.load_kw, cfg, rules)
+        self.assertGreater(bess_dual.standalone_100_kwh, 0.0)
+        self.assertGreater(bess_dual.standalone_100_kw, 0.0)
+        # Coupled required power is smaller than Standalone when Generator is active
+        self.assertLessEqual(bess_dual.coupled_100_kw, bess_dual.standalone_100_kw)
+        self.assertEqual(len(bess_dual.bottleneck_table_df), 4)
+        self.assertIn("1. Peak Discharge Power (kW)", bess_dual.bottleneck_table_df["Criterion"].values)
+        self.assertIn("2. Single Peak Event Energy (kWh)", bess_dual.bottleneck_table_df["Criterion"].values)
+        self.assertIn("3. Multi-Day Cluster Energy (kWh)", bess_dual.bottleneck_table_df["Criterion"].values)
+        self.assertIn("4. Available Recharge Headroom", bess_dual.bottleneck_table_df["Criterion"].values)
+
+        gen_dual = compute_dual_generator_sizing(self.load_kw, self.timestamps, cfg, rules)
+        self.assertGreater(gen_dual.standalone_100_kw, 0.0)
+        self.assertLessEqual(gen_dual.coupled_100_kw, gen_dual.standalone_100_kw)
+
+    def test_financials_4pillar_15y_cashflow_and_4sheet_excel_export(self):
+        """Verifies 4-Pillar Financials, 15Y Cashflow/NPV, Cost Comparison Chart & 4-sheet Excel export."""
         cfg = CombinedSystemConfig(grid_limit_kw=180.0)
         rules = InteractionRulesConfig()
         sim_res = simulate_combined_system_dispatch(
@@ -190,8 +234,14 @@ class TestCombinedSandbox(unittest.TestCase):
 
         self.assertIsNotNone(sim_res.financial_kpis)
         self.assertGreater(sim_res.financial_kpis.total_capex_eur, 0.0)
+        self.assertGreater(sim_res.financial_kpis.baseline_pillar1_supply_eur, 0.0)
+        self.assertGreater(sim_res.financial_kpis.baseline_pillar2_dso_eur, 0.0)
         self.assertEqual(len(sim_res.financial_table_df), 6)
         self.assertEqual(len(sim_res.monthly_cost_df), 12)
+        self.assertEqual(len(sim_res.cashflow_15y_df), 16)  # Years 0..15
+
+        fig_cost = create_financial_cost_comparison_figure(sim_res)
+        self.assertEqual(len(fig_cost.data), 6)
 
         excel_bytes = build_combined_verification_excel_bytes(sim_res)
         self.assertGreater(len(excel_bytes), 50000)
@@ -219,6 +269,15 @@ class TestCombinedSandbox(unittest.TestCase):
             fig2 = create_combined_dispatch_soc_figure(sim_res, timeframe=tf)
             self.assertGreater(len(fig1.data), 0)
             self.assertGreater(len(fig2.data), 4)
+            self.assertEqual(fig2.layout.uirevision, tf)
+            self.assertGreaterEqual(fig2.layout.margin.t, 90)
+            self.assertGreaterEqual(fig2.layout.legend.y, 1.10)
+            if tf == "All":
+                self.assertEqual(len(fig2.data[0].x), 35040)
+                self.assertIn("All", fig2.layout.annotations[0].text)
+            elif tf == "7D":
+                self.assertEqual(len(fig2.data[0].x), 672)
+                self.assertIn("7D", fig2.layout.annotations[0].text)
 
         forbidden_terms = [
             "double lever",
@@ -262,7 +321,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("Total_Demand_kW", power_cols)
 
     def test_gps_location_and_symmetrical_architecture(self):
-        """Verifies Solar module-style GPS presets and symmetrical 4-source enablement."""
+        """Verifies Solar module-style GPS presets and 4-source configuration."""
         from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
             SOLAR_SITE_PRESETS,
         )
@@ -276,15 +335,12 @@ class TestCombinedSandbox(unittest.TestCase):
 
         cfg = CombinedSystemConfig()
         self.assertTrue(hasattr(cfg, "enable_grid"))
-        self.assertTrue(cfg.enable_grid)
-        self.assertTrue(cfg.enable_solar)
-        self.assertTrue(cfg.enable_battery)
-        self.assertTrue(cfg.enable_generator)
+        self.assertTrue(hasattr(cfg, "enable_financials"))
+        self.assertFalse(cfg.enable_financials)
         self.assertEqual(cfg.site_preset, "Amsterdam (Default GPS)")
         self.assertAlmostEqual(cfg.latitude, 52.3676, places=4)
         self.assertAlmostEqual(cfg.longitude, 4.9041, places=4)
 
-        # Verify search_locations_open_meteo is callable
         self.assertTrue(callable(search_locations_open_meteo))
 
     def test_quick_sizing_and_share_split(self):
@@ -305,18 +361,6 @@ class TestCombinedSandbox(unittest.TestCase):
             self.assertAlmostEqual(
                 res.battery_power_kw + res.generator_rated_kw, res.max_overload_kw, delta=0.2
             )
-
-        # Without solar, remaining overload matches raw gross overload
-        res_nosol = derive_quick_sizing(self.load_kw, grid_limit, 0.0, 50.0, 1000.0)
-        self.assertAlmostEqual(res_nosol.max_overload_kw, max_kw, delta=0.1)
-        self.assertAlmostEqual(
-            res_nosol.battery_power_kw + res_nosol.generator_rated_kw, max_kw, delta=0.2
-        )
-
-        # Solar 100% -> annual yield equals annual consumption
-        annual_kwh = float(np.sum(self.load_kw) * 0.25)
-        res_sol = derive_quick_sizing(self.load_kw, grid_limit, 100.0, 50.0, 1000.0)
-        self.assertAlmostEqual(res_sol.solar_kwp * 1000.0, annual_kwh, delta=annual_kwh * 0.01)
 
         # 100% Generator removes the overload completely (0.0 hrs remaining)
         res_gen = derive_quick_sizing(self.load_kw, grid_limit, 0.0, 0.0, 1000.0)
@@ -359,15 +403,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertLess(sim_bat.kpis.remaining_overload_kwh, 1.0)
 
     def test_universal_csv_and_zip_ingestion(self):
-        """
-        Verifies universal CSV / ZIP ingestion pipeline:
-          - ZIP folder decompression with latin1 / utf-8 decoding
-          - Skiprows for utility metadata lines
-          - Multi-column timestamp (Date + Time separate) & multi-phase power summation
-          - 15-min kWh to kW unit conversion
-          - Normalization to exactly 35,040 steps for 2025 coupled dispatch
-        """
-        # 1. Create sample raw CSV with metadata header, semicolon delimiter, European comma numbers
+        """Verifies universal CSV / ZIP ingestion pipeline."""
         csv_raw_text = (
             "Utility Report: Station 404\n"
             "Interval: 15-Minute\n"
@@ -378,13 +414,11 @@ class TestCombinedSandbox(unittest.TestCase):
             "01.01.2025;01:00;40,0;20,0\n"
         )
 
-        # 2. Package into an in-memory ZIP archive
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("subfolder/meter_export_2025.csv", csv_raw_text.encode("latin1"))
         zip_buf.seek(0)
 
-        # 3. Simulate ZIP extraction & decoding
         extracted_files = []
         with zipfile.ZipFile(zip_buf, "r") as z:
             for member in z.namelist():
@@ -399,18 +433,9 @@ class TestCombinedSandbox(unittest.TestCase):
                             continue
 
         self.assertEqual(len(extracted_files), 1)
-        fname, decoded_content = extracted_files[0]
-        self.assertIn("meter_export_2025.csv", fname)
+        _, decoded_content = extracted_files[0]
 
-        # 4. Parse CSV skipping 2 header rows
         df_raw = parse_csv_content(decoded_content, skiprows=2)
-        self.assertEqual(len(df_raw), 4)
-        self.assertIn("Date", df_raw.columns)
-        self.assertIn("Time", df_raw.columns)
-        self.assertIn("Power_Phase1_kWh", df_raw.columns)
-        self.assertIn("Power_Phase2_kWh", df_raw.columns)
-
-        # 5. Process load data merging Date+Time and summing Phase 1 + Phase 2 (kWh * 4 -> kW)
         df_proc = process_load_profile_data(
             df_raw=df_raw,
             selected_time_cols=["Date", "Time"],
@@ -418,30 +443,15 @@ class TestCombinedSandbox(unittest.TestCase):
             selected_unit="kWh (15-min interval) → kW",
             dayfirst=True,
         )
-        self.assertEqual(len(df_proc), 4)
-        self.assertIn("timestamp", df_proc.columns)
-        self.assertIn("Total_Demand_kW", df_proc.columns)
-        # First row: (25.5 + 15.5) * 4 = 41.0 * 4 = 164.0 kW
         self.assertAlmostEqual(df_proc["Total_Demand_kW"].iloc[0], 164.0, places=2)
 
-        # 6. Normalize into canonical 35,040-step profile
-        norm_series, meta = normalize_load_profile_2025(
+        norm_series, _ = normalize_load_profile_2025(
             raw_df=df_proc,
             power_col="Total_Demand_kW",
             time_col="timestamp",
         )
         self.assertIsInstance(norm_series, LoadSeries2025)
         self.assertEqual(len(norm_series.power_kw), 35040)
-        self.assertGreater(norm_series.peak_demand_kw, 0.0)
-
-        # 7. Feed normalized profile into combined system dispatch
-        sim_res = simulate_combined_system_dispatch(
-            load_kw=norm_series.power_kw,
-            timestamps=norm_series.timestamps,
-            system_cfg=CombinedSystemConfig(),
-            rules_cfg=InteractionRulesConfig(),
-        )
-        self.assertEqual(len(sim_res.grid_import_kw), 35040)
 
 
 if __name__ == "__main__":

@@ -5,10 +5,12 @@ Combined System Excel Verification Exporter (ui_sandbox/Combined_sandbox/combine
 
 Generates a complete 4-sheet Excel workbook (.xlsx via openpyxl) for mathematical
 verification and auditing:
-  - Sheet 1 (`Summary & KPIs`): Model parameters, interaction rules, technical & financial KPIs
+  - Sheet 1 (`Summary & KPIs`): Model parameters, interaction rules, technical & financial KPIs,
+    Component Summary Table, and 4-Criterion BESS Bottleneck Table
   - Sheet 2 (`15-Min Dispatch`): All 35,040 15-minute intervals of the year
   - Sheet 3 (`Monthly Balance`): 12-month mirror of energy, peak demand, and generator metrics
-  - Sheet 4 (`Cost & Tariffs`): Monthly & annual comparison of network tariffs, OPEX, and savings
+  - Sheet 4 (`Cost & Tariffs`): Monthly & annual comparison of 4-Pillar tariffs, OPEX, savings,
+    and 15-Year Lifecycle Cashflow Table
 ========================================================================================
 """
 
@@ -66,6 +68,7 @@ def build_combined_verification_excel_bytes(
         {"Category": "Solar Input", "Parameter / Metric": "Weather Data Source", "Value": deriv.data_source_label},
         {"Category": "Solar Input", "Parameter / Metric": "Specific Yield (kWh/kWp/year)", "Value": deriv.specific_yield_kwh_per_kwp},
         {"Category": "Solar Input", "Parameter / Metric": "Installed Solar Size (kWp)", "Value": deriv.installed_kwp},
+        {"Category": "Solar Input", "Parameter / Metric": "Inverter AC Limit (kW) & Efficiency (%)", "Value": f"{deriv.inverter_ac_kw:.1f} kW @ {deriv.inverter_efficiency_pct:.1f}%"},
         {"Category": "Solar Input", "Parameter / Metric": "Panel Count & Wattage", "Value": f"{deriv.panel_count} panels @ {deriv.panel_wp:.0f} Wp"},
         {"Category": "Solar Input", "Parameter / Metric": "Derivation Formula", "Value": deriv.formula_text},
         {"Category": "Battery Input", "Parameter / Metric": "Enable Battery", "Value": str(cfg.enable_battery)},
@@ -79,7 +82,7 @@ def build_combined_verification_excel_bytes(
         {"Category": "Generator Input", "Parameter / Metric": "Fuel Type & Unit", "Value": f"{cfg.fuel_type} ({kpis.generator_fuel_unit})"},
         {"Category": "Generator Input", "Parameter / Metric": "Minimum Runtime (minutes)", "Value": cfg.gen_min_runtime_minutes},
         {"Category": "Operating Rules", "Parameter / Metric": "Rule 1 – Peak Shaving Priority", "Value": RULE1_OPTIONS.get(rules.rule1_peak_priority, rules.rule1_peak_priority)},
-        {"Category": "Operating Rules", "Parameter / Metric": "Rule 2 – Battery Usage Strategy", "Value": RULE2_OPTIONS.get(rules.rule2_battery_strategy, rules.rule2_battery_strategy)},
+        {"Category": "Operating Rules", "Parameter / Metric": "Rule 2 – Normal Load Coverage", "Value": RULE2_OPTIONS.get(rules.rule2_battery_strategy, rules.rule2_battery_strategy)},
         {"Category": "Operating Rules", "Parameter / Metric": "Peak Reserve SoC (%)", "Value": rules.peak_reserve_soc_pct},
         {"Category": "Operating Rules", "Parameter / Metric": "Rule 3 – Battery Charging Sources", "Value": RULE3_OPTIONS.get(rules.rule3_charging_sources, rules.rule3_charging_sources)},
         {"Category": "Technical KPIs", "Parameter / Metric": "New Grid Peak (kW)", "Value": kpis.new_grid_peak_kw},
@@ -100,6 +103,7 @@ def build_combined_verification_excel_bytes(
             {"Category": "Financial KPIs", "Parameter / Metric": "Combined System Annual OPEX (€/year)", "Value": fin_kpis.total_annual_opex_eur},
             {"Category": "Financial KPIs", "Parameter / Metric": "Annual Savings vs. Current situation (€/year)", "Value": fin_kpis.annual_savings_eur},
             {"Category": "Financial KPIs", "Parameter / Metric": "Payback Period (Years)", "Value": fin_kpis.payback_years if fin_kpis.payback_years is not None else "N/A"},
+            {"Category": "Financial KPIs", "Parameter / Metric": "15-Year NPV (€)", "Value": fin_kpis.npv_15y_eur},
         ])
 
     df_sheet1_meta = pd.DataFrame(summary_rows)
@@ -136,6 +140,9 @@ def build_combined_verification_excel_bytes(
     _append_df_to_ws(ws1, df_sheet1_meta)
     ws1.append([])
     _append_df_to_ws(ws1, sim_res.summary_table_df)
+    if not sim_res.bess_bottleneck_df.empty:
+        ws1.append([])
+        _append_df_to_ws(ws1, sim_res.bess_bottleneck_df)
 
     # Sheet 2: 15-Min Dispatch (35,040 rows)
     ws2 = wb.create_sheet(title="15-Min Dispatch")
@@ -151,6 +158,9 @@ def build_combined_verification_excel_bytes(
     if not sim_res.financial_table_df.empty:
         ws4.append([])
         _append_df_to_ws(ws4, sim_res.financial_table_df)
+    if not sim_res.cashflow_15y_df.empty:
+        ws4.append([])
+        _append_df_to_ws(ws4, sim_res.cashflow_15y_df)
 
     buffer = io.BytesIO()
     wb.save(buffer)

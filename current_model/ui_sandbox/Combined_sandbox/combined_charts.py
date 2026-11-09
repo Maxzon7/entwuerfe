@@ -3,12 +3,15 @@
 Combined System Sandbox Charts (ui_sandbox/Combined_sandbox/combined_charts.py)
 ========================================================================================
 
-Provides the two core interactive Plotly visualizations required under the Clean Screen Policy:
-  1. Tab 1: `create_consumption_baseline_figure` — 15-Minute Consumption Profile
+Provides the interactive Plotly visualizations for the Combined System Sandbox:
+  1. `create_consumption_baseline_figure` — 15-Minute Consumption Profile
      with timeframe switches (7D, 1M, 3M, All) and Range-Slider.
-  2. Tab 2: `create_combined_dispatch_soc_figure` — Synchronized 2-in-1 15-Minute
-     Dispatch (Grid Import, Solar Direct, Battery Discharge, Generator Output,
-     Consumption, Grid Limit) & Battery SoC (% and kWh) + Generator Active Phases.
+  2. `create_combined_dispatch_soc_figure` — Synchronized 2-in-1 15-Minute
+     Master Chart (Grid Import, Solar Direct, Battery Discharge, Generator Output,
+     Consumption, Grid Limit) & Battery Level (SoC % and kWh) + Generator Runtime.
+  3. `create_financial_cost_comparison_figure` — Side-by-side stacked bar chart comparing
+     annual costs of `Current situation` (Without System) vs. `Combined system` (With System)
+     across the 4 Tariff Pillars and system operating costs.
 ========================================================================================
 """
 
@@ -62,7 +65,7 @@ def create_consumption_baseline_figure(
     timeframe: str = "All",
 ) -> go.Figure:
     """
-    Creates the clean 15-minute Consumption Baseline chart for Tab 1 with Range-Slider.
+    Creates the clean 15-minute Consumption Baseline chart with Range-Slider.
     """
     s_idx, e_idx = _resolve_window_slice(timestamps, load_kw, timeframe=timeframe)
     ts_slice = timestamps[s_idx:e_idx]
@@ -147,13 +150,13 @@ def create_combined_dispatch_soc_figure(
     timeframe: str = "7D",
 ) -> go.Figure:
     """
-    Creates the Synchronized 2-in-1 15-Minute Interaction Chart for Tab 2:
-      - Upper Subplot (Power in kW):
-          * Stacked supply layers: Solar Direct, Battery Discharge, Generator Output, Grid Import
+    Creates the Synchronized 2-in-1 15-Minute Master Chart:
+      - Upper Subplot (Power Flow in kW):
+          * Stacked supply layers: Grid Import, Solar Direct, Battery Discharge, Generator Output
           * Consumption (kW) line
           * Dashed red Grid Limit (kW) line
       - Lower Subplot (Synchronized X-Axis):
-          * Battery State of Charge (SoC % and kWh)
+          * Battery Level (SoC % and kWh) + Reserve Threshold
           * Generator Active operating phases
     """
     s_idx, e_idx = _resolve_window_slice(
@@ -336,23 +339,38 @@ def create_combined_dispatch_soc_figure(
                 row=2,
                 col=1,
             )
+    else:
+        # Render a subtle zero-level baseline on row 2 when Battery is inactive so the shared x-axis remains synchronized
+        fig.add_trace(
+            go.Scatter(
+                x=ts,
+                y=np.zeros(len(ts)),
+                mode="lines",
+                name="Battery Level (Inactive)",
+                line=dict(color="#475569", width=1.0, dash="dot"),
+                hovertemplate="Battery Inactive (0%)<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
 
     fig.update_layout(
         template="plotly_dark",
         height=640,
-        margin=dict(l=55, r=25, t=65, b=45),
+        margin=dict(l=55, r=25, t=95, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.05,
+            y=1.12,
             xanchor="left",
             x=0.0,
             bgcolor="rgba(0,0,0,0)",
             font=dict(size=11),
         ),
         hovermode="x unified",
+        uirevision=timeframe,
     )
 
     fig.update_yaxes(
@@ -375,6 +393,122 @@ def create_combined_dispatch_soc_figure(
         rangeslider=dict(visible=True, thickness=0.05),
         row=2,
         col=1,
+    )
+
+    return fig
+
+
+def create_financial_cost_comparison_figure(
+    sim_res: CombinedSimulationResult,
+) -> go.Figure:
+    """
+    Creates the Side-by-Side Annual Cost Comparison Bar Chart for Sub-Tab 6 (Financials),
+    comparing `Current situation (Without System)` vs. `Combined system (With System)`
+    across the 4 Tariff Pillars and System Operations (O&M, Fuel, Rental).
+    """
+    fk = sim_res.financial_kpis
+    scenarios = ["Current situation (Without System)", "Combined system (With System)"]
+
+    if fk is None:
+        return go.Figure()
+
+    p1_vals = [fk.baseline_pillar1_supply_eur, fk.combined_pillar1_supply_eur]
+    p2_net_vals = [
+        max(0.0, fk.baseline_pillar2_dso_eur - fk.baseline_penalty_cost_eur),
+        max(0.0, fk.combined_pillar2_dso_eur - fk.combined_grid_penalty_cost_eur),
+    ]
+    pen_vals = [fk.baseline_penalty_cost_eur, fk.combined_grid_penalty_cost_eur]
+    p3_vals = [fk.baseline_pillar3_metering_eur, fk.combined_pillar3_metering_eur]
+    p4_vals = [fk.baseline_pillar4_taxes_eur, fk.combined_pillar4_taxes_eur]
+    sys_opex_vals = [
+        0.0,
+        fk.solar_om_eur + fk.battery_om_eur + fk.generator_total_opex_eur,
+    ]
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            name="Pillar 1: Energy Supply",
+            x=scenarios,
+            y=p1_vals,
+            marker_color="#3B82F6",
+            hovertemplate="%{x}<br>Energy Supply: €%{y:,.0f}/yr<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Pillar 2: Grid Network (DSO)",
+            x=scenarios,
+            y=p2_net_vals,
+            marker_color="#0EA5E9",
+            hovertemplate="%{x}<br>Grid Network (DSO): €%{y:,.0f}/yr<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Pillar 2: Overload Penalties",
+            x=scenarios,
+            y=pen_vals,
+            marker_color="#EF4444",
+            hovertemplate="%{x}<br>Overload Penalties: €%{y:,.0f}/yr<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Pillar 3: Metering",
+            x=scenarios,
+            y=p3_vals,
+            marker_color="#A855F7",
+            hovertemplate="%{x}<br>Metering: €%{y:,.0f}/yr<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Pillar 4: Taxes & Levies",
+            x=scenarios,
+            y=p4_vals,
+            marker_color="#F59E0B",
+            hovertemplate="%{x}<br>Taxes & Levies: €%{y:,.0f}/yr<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="System O&M, Fuel & Rental",
+            x=scenarios,
+            y=sys_opex_vals,
+            marker_color="#10B981",
+            hovertemplate="%{x}<br>System O&M, Fuel & Rental: €%{y:,.0f}/yr<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        barmode="stack",
+        template="plotly_dark",
+        height=420,
+        margin=dict(l=55, r=25, t=75, b=45),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        title=dict(
+            text="Annual Cost Comparison: Current situation vs. Combined system (€/year)",
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.0,
+        ),
+        yaxis=dict(
+            title="Annual Cost (€/year)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            rangemode="tozero",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.04,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+        hovermode="x unified",
     )
 
     return fig
