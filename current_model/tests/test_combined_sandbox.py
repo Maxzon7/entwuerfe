@@ -37,6 +37,7 @@ from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
     CombinedFinancialConfig,
     derive_solar_sizing_and_formula,
     compute_dual_battery_sizing,
+    refresh_bottleneck_table_configured_status,
     compute_dual_generator_sizing,
     simulate_combined_system_dispatch,
     evaluate_combined_financials,
@@ -101,7 +102,8 @@ class TestCombinedSandbox(unittest.TestCase):
                     self.assertEqual(len(res.grid_import_kw), 35040)
                     self.assertEqual(len(res.summary_table_df), 6)
                     self.assertEqual(len(res.monthly_balance_df), 12)
-                    self.assertEqual(len(res.bess_bottleneck_df), 4)
+                    # Pure dispatch simulation does not run sizing pre-calculations internally
+                    self.assertTrue(res.bess_bottleneck_df.empty)
                     # Lazy financials: financial_kpis is None until evaluate_combined_financials is called
                     self.assertIsNone(res.financial_kpis)
                     if not en_solar:
@@ -215,13 +217,25 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("3. Multi-Day Cluster Energy (kWh)", bess_dual.bottleneck_table_df["Criterion"].values)
         self.assertIn("4. Available Recharge Headroom", bess_dual.bottleneck_table_df["Criterion"].values)
 
+        # Verify O(1) bottleneck status column refresh without re-running 35,040-step loops
+        refreshed_df = refresh_bottleneck_table_configured_status(
+            bess_dual,
+            configured_kwh=5000.0,
+            configured_kw=500.0,
+            enable_battery=True,
+        )
+        self.assertEqual(len(refreshed_df), 4)
+        self.assertEqual(refreshed_df.iloc[0]["Configured Battery"], "500.0 kW")
+        self.assertEqual(refreshed_df.iloc[0]["Status"], "Pass")
+        self.assertEqual(refreshed_df.iloc[1]["Configured Battery"], "5,000.0 kWh")
+
         gen_dual = compute_dual_generator_sizing(self.load_kw, self.timestamps, cfg, rules)
         self.assertGreater(gen_dual.standalone_100_kw, 0.0)
         self.assertLessEqual(gen_dual.coupled_100_kw, gen_dual.standalone_100_kw)
 
     def test_financials_4pillar_15y_cashflow_and_4sheet_excel_export(self):
-        """Verifies 4-Pillar Financials, 15Y Cashflow/NPV, Cost Comparison Chart & 4-sheet Excel export."""
-        cfg = CombinedSystemConfig(grid_limit_kw=180.0)
+        """Verifies Lazy-Financials protection in Excel export, 4-Pillar Financials, 15Y Cashflow/NPV, and 4-sheet Excel export."""
+        cfg = CombinedSystemConfig(grid_limit_kw=180.0, enable_financials=False)
         rules = InteractionRulesConfig()
         sim_res = simulate_combined_system_dispatch(
             load_kw=self.load_kw,
@@ -229,6 +243,14 @@ class TestCombinedSandbox(unittest.TestCase):
             system_cfg=cfg,
             rules_cfg=rules,
         )
+
+        # 1. When Financials is disabled, Excel export must NOT secretly trigger evaluate_combined_financials
+        excel_bytes_no_fin = build_combined_verification_excel_bytes(sim_res)
+        self.assertIsNone(sim_res.financial_kpis)
+        self.assertGreater(len(excel_bytes_no_fin), 50000)
+
+        # 2. When Financials is enabled, evaluate_combined_financials populates all 4-Pillar & 15Y cashflow tables
+        sim_res.system_config.enable_financials = True
         fin_cfg = CombinedFinancialConfig()
         evaluate_combined_financials(sim_res, fin_cfg)
 

@@ -85,6 +85,7 @@ try:
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
         compute_dual_battery_sizing,
+        refresh_bottleneck_table_configured_status,
         compute_dual_generator_sizing,
         simulate_combined_system_dispatch,
         evaluate_combined_financials,
@@ -105,6 +106,7 @@ except (ImportError, AttributeError):
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
         compute_dual_battery_sizing,
+        refresh_bottleneck_table_configured_status,
         compute_dual_generator_sizing,
         simulate_combined_system_dispatch,
         evaluate_combined_financials,
@@ -202,23 +204,75 @@ def _get_active_load_series() -> Tuple[LoadSeries2025, str]:
     return load_bench, "Commercial Facility (250 kW Peak)"
 
 
+def _load_fingerprint(load_series: LoadSeries2025) -> Tuple[int, float, float]:
+    """Returns a fast O(1) tuple fingerprint of the active 35,040-step load profile."""
+    return (
+        len(load_series.power_kw),
+        round(float(load_series.total_energy_kwh), 2),
+        round(float(load_series.peak_demand_kw), 2),
+    )
+
+
+def _rules_tuple(rules_cfg: InteractionRulesConfig) -> Tuple:
+    """Returns an immutable tuple of the interaction rules for fingerprint comparison."""
+    return (
+        rules_cfg.rule1_peak_priority,
+        rules_cfg.rule2_battery_strategy,
+        round(float(rules_cfg.peak_reserve_soc_pct), 2),
+        rules_cfg.rule3_charging_sources,
+    )
+
+
+def _physical_sys_tuple(sys_cfg: CombinedSystemConfig) -> Tuple:
+    """Returns an immutable tuple of all physical system parameters (excluding financials)."""
+    return (
+        bool(sys_cfg.enable_grid),
+        round(float(sys_cfg.grid_limit_kw), 2),
+        bool(sys_cfg.enable_solar),
+        round(float(sys_cfg.latitude), 4),
+        round(float(sys_cfg.longitude), 4),
+        round(float(sys_cfg.tilt_deg), 2),
+        round(float(sys_cfg.azimuth_deg), 2),
+        sys_cfg.solar_sizing_method,
+        round(float(sys_cfg.solar_kwp), 2),
+        round(float(sys_cfg.panel_wp), 1),
+        round(float(sys_cfg.dc_ac_ratio), 3),
+        round(float(sys_cfg.target_consumption_share_pct), 2),
+        round(float(sys_cfg.inverter_ac_limit_kw), 2),
+        round(float(sys_cfg.inverter_efficiency_pct), 2),
+        bool(sys_cfg.enable_battery),
+        round(float(sys_cfg.battery_capacity_kwh), 2),
+        round(float(sys_cfg.battery_power_kw), 2),
+        round(float(sys_cfg.min_soc_pct), 2),
+        round(float(sys_cfg.max_soc_pct), 2),
+        round(float(sys_cfg.round_trip_efficiency_pct), 2),
+        bool(sys_cfg.enable_generator),
+        round(float(sys_cfg.generator_rated_kw), 2),
+        round(float(sys_cfg.generator_min_load_pct), 2),
+        str(sys_cfg.fuel_type),
+        round(float(sys_cfg.gen_min_runtime_minutes), 1),
+    )
+
+
 def _sync_shared_load_series() -> None:
     """Invalidates cached simulation outputs when the underlying load profile changes."""
     load_series, _ = _get_active_load_series()
-    fingerprint = (
-        len(load_series.power_kw),
-        round(float(np.sum(load_series.power_kw)), 3),
-        round(float(np.max(load_series.power_kw)), 3),
-    )
+    fingerprint = _load_fingerprint(load_series)
     if st.session_state.get("comb_load_fingerprint") != fingerprint:
         st.session_state["comb_load_fingerprint"] = fingerprint
         st.session_state.pop("comb_sandbox_result", None)
+        st.session_state.pop("comb_dispatch_fp", None)
+        st.session_state.pop("comb_bess_sizing_fp", None)
+        st.session_state.pop("comb_cached_dual_bess", None)
+        st.session_state.pop("comb_gen_sizing_fp", None)
+        st.session_state.pop("comb_cached_dual_gen", None)
         st.session_state.pop("comb_cached_excel_bytes", None)
 
 
 def _activate_module_callback(toggle_key: str) -> None:
     """Callback for 1-click module activation buttons inside inactive sub-tabs."""
     st.session_state[toggle_key] = True
+    st.session_state.pop("comb_cached_excel_bytes", None)
 
 
 def _apply_solar_quick_share(share_pct: float) -> None:
@@ -226,8 +280,11 @@ def _apply_solar_quick_share(share_pct: float) -> None:
     cfg: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cfg.solar_sizing_method = "target_share_pct"
     cfg.target_consumption_share_pct = float(share_pct)
+    cfg.inverter_ac_limit_kw = 0.0
     st.session_state["comb_solar_sizing_radio"] = "% of Annual Consumption"
     st.session_state["comb_solar_target_share_num"] = float(share_pct)
+    st.session_state.pop("comb_solar_inv_ac_limit_num", None)
+    st.session_state.pop("comb_cached_excel_bytes", None)
 
 
 def _apply_bess_quick_size(cap_kwh: float, p_kw: float) -> None:
@@ -237,6 +294,7 @@ def _apply_bess_quick_size(cap_kwh: float, p_kw: float) -> None:
     cfg.battery_power_kw = max(5.0, float(p_kw))
     st.session_state["comb_battery_capacity_kwh_num"] = cfg.battery_capacity_kwh
     st.session_state["comb_battery_power_kw_num"] = cfg.battery_power_kw
+    st.session_state.pop("comb_cached_excel_bytes", None)
 
 
 def _apply_gen_quick_size(p_kw: float) -> None:
@@ -244,6 +302,7 @@ def _apply_gen_quick_size(p_kw: float) -> None:
     cfg: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cfg.generator_rated_kw = max(10.0, float(p_kw))
     st.session_state["comb_generator_rated_kw_num"] = cfg.generator_rated_kw
+    st.session_state.pop("comb_cached_excel_bytes", None)
 
 
 # ======================================================================================
@@ -480,7 +539,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
 
         st.markdown("---")
 
-        # 2. Dual Quick-Sizing & Manual Input
+        # 2. Dual Quick-Sizing & Manual Input (st.form encapsulated)
         sz_m1, sz_m2 = st.columns([1.4, 2.0])
         with sz_m1:
             sizing_mode_label = st.radio(
@@ -511,33 +570,15 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 key="comb_sol_q100", on_click=_apply_solar_quick_share, args=(100.0,),
             )
 
-        in_c1, in_c2, in_c3, in_c4 = st.columns(4)
-        with in_c1:
-            target_share_val = st.number_input(
-                "Share of Consumption (%)",
-                min_value=5.0,
-                max_value=250.0,
-                value=float(cur_sys.target_consumption_share_pct),
-                step=5.0,
-                disabled=not is_active or sizing_mode_label != "% of Annual Consumption",
-                key="comb_solar_target_share_num",
-            )
-        with in_c2:
-            direct_kwp_val = st.number_input(
-                "Direct Size (kWp)",
-                min_value=1.0,
-                max_value=25000.0,
-                value=float(cur_sys.solar_kwp),
-                step=10.0,
-                disabled=not is_active or sizing_mode_label != "Direct Size (kWp)",
-                key="comb_solar_direct_kwp_num",
-            )
-
         sizing_method_key = "target_share_pct" if sizing_mode_label == "% of Annual Consumption" else "direct_kwp"
+        cur_sys.solar_sizing_method = sizing_method_key
+        cur_sys.latitude = eff_lat
+        cur_sys.longitude = eff_lon
+
         preview_kwp = (
-            round((ann_kwh * (float(target_share_val) / 100.0)) / max(100.0, spec_yield), 1)
+            round((ann_kwh * (float(cur_sys.target_consumption_share_pct) / 100.0)) / max(100.0, spec_yield), 1)
             if sizing_method_key == "target_share_pct"
-            else round(float(direct_kwp_val), 1)
+            else round(float(cur_sys.solar_kwp), 1)
         )
         default_inv_kw = (
             float(cur_sys.inverter_ac_limit_kw)
@@ -545,46 +586,73 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
             else round(preview_kwp / max(1.0, cur_sys.dc_ac_ratio), 1)
         )
 
-        with in_c3:
-            inv_ac_limit_val = st.number_input(
-                "Inverter AC Limit (kW)",
-                min_value=0.0,
-                max_value=25000.0,
-                value=max(0.0, default_inv_kw),
-                step=10.0,
-                disabled=not is_active,
-                key="comb_solar_inv_ac_limit_num",
-            )
-        with in_c4:
-            inv_eff_val = st.number_input(
-                "Inverter Efficiency (%)",
-                min_value=80.0,
-                max_value=100.0,
-                value=float(cur_sys.inverter_efficiency_pct),
-                step=0.5,
-                disabled=not is_active,
-                key="comb_solar_inv_eff_num",
-            )
+        with st.form("comb_solar_form"):
+            in_c1, in_c2, in_c3, in_c4, in_btn = st.columns([1.1, 1.1, 1.1, 1.1, 0.9])
+            with in_c1:
+                target_share_val = st.number_input(
+                    "Share of Consumption (%)",
+                    min_value=5.0,
+                    max_value=250.0,
+                    value=float(cur_sys.target_consumption_share_pct),
+                    step=5.0,
+                    disabled=not is_active or sizing_mode_label != "% of Annual Consumption",
+                    key="comb_solar_target_share_num",
+                )
+            with in_c2:
+                direct_kwp_val = st.number_input(
+                    "Direct Size (kWp)",
+                    min_value=1.0,
+                    max_value=25000.0,
+                    value=float(cur_sys.solar_kwp),
+                    step=10.0,
+                    disabled=not is_active or sizing_mode_label != "Direct Size (kWp)",
+                    key="comb_solar_direct_kwp_num",
+                )
+            with in_c3:
+                inv_ac_limit_val = st.number_input(
+                    "Inverter AC Limit (kW)",
+                    min_value=0.0,
+                    max_value=25000.0,
+                    value=max(0.0, default_inv_kw),
+                    step=10.0,
+                    disabled=not is_active,
+                    key="comb_solar_inv_ac_limit_num",
+                )
+            with in_c4:
+                inv_eff_val = st.number_input(
+                    "Inverter Efficiency (%)",
+                    min_value=80.0,
+                    max_value=100.0,
+                    value=float(cur_sys.inverter_efficiency_pct),
+                    step=0.5,
+                    disabled=not is_active,
+                    key="comb_solar_inv_eff_num",
+                )
+            with in_btn:
+                st.write("")
+                sol_submitted = st.form_submit_button(
+                    "Apply Solar Settings",
+                    use_container_width=True,
+                    disabled=not is_active,
+                )
 
-        cur_sys.latitude = eff_lat
-        cur_sys.longitude = eff_lon
-        cur_sys.solar_sizing_method = sizing_method_key
-        cur_sys.target_consumption_share_pct = float(target_share_val)
-        cur_sys.solar_kwp = float(direct_kwp_val)
-        cur_sys.inverter_ac_limit_kw = float(inv_ac_limit_val)
-        cur_sys.inverter_efficiency_pct = float(inv_eff_val)
+        if sol_submitted or is_active:
+            cur_sys.target_consumption_share_pct = float(target_share_val)
+            cur_sys.solar_kwp = float(direct_kwp_val)
+            cur_sys.inverter_ac_limit_kw = float(inv_ac_limit_val)
+            cur_sys.inverter_efficiency_pct = float(inv_eff_val)
 
         solar_deriv = derive_solar_sizing_and_formula(
             annual_consumption_kwh=ann_kwh,
             specific_yield_kwh_per_kwp=spec_yield,
             sizing_method=sizing_method_key,
-            direct_kwp=float(direct_kwp_val),
-            target_share_pct=float(target_share_val),
+            direct_kwp=float(cur_sys.solar_kwp),
+            target_share_pct=float(cur_sys.target_consumption_share_pct),
             panel_wp=cur_sys.panel_wp,
             dc_ac_ratio=cur_sys.dc_ac_ratio,
             enable_solar=True,
-            inverter_ac_limit_kw=float(inv_ac_limit_val),
-            inverter_efficiency_pct=float(inv_eff_val),
+            inverter_ac_limit_kw=float(cur_sys.inverter_ac_limit_kw),
+            inverter_efficiency_pct=float(cur_sys.inverter_efficiency_pct),
         )
         st.info(solar_deriv.formula_text, icon=":material/calculate:")
 
@@ -624,11 +692,39 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                     args=("comb_enable_battery_toggle",),
                 )
 
-    dual_bess = compute_dual_battery_sizing(
-        load_kw=load_series.power_kw,
-        system_cfg=cur_sys,
-        rules_cfg=cur_rules,
+    # Fingerprint-cached Dual Battery Sizing (runs 35,040-step loop only when upstream parameters change)
+    bess_sizing_fp = (
+        _load_fingerprint(load_series),
+        bool(cur_sys.enable_grid),
+        round(float(cur_sys.grid_limit_kw), 2),
+        bool(cur_sys.enable_solar),
+        round(float(cur_sys.latitude), 4),
+        round(float(cur_sys.longitude), 4),
+        cur_sys.solar_sizing_method,
+        round(float(cur_sys.solar_kwp), 2),
+        round(float(cur_sys.target_consumption_share_pct), 2),
+        round(float(cur_sys.inverter_ac_limit_kw), 2),
+        round(float(cur_sys.inverter_efficiency_pct), 2),
+        bool(cur_sys.enable_generator),
+        round(float(cur_sys.generator_rated_kw), 2),
+        round(float(cur_sys.generator_min_load_pct), 2),
+        round(float(cur_sys.min_soc_pct), 2),
+        round(float(cur_sys.max_soc_pct), 2),
+        round(float(cur_sys.round_trip_efficiency_pct), 2),
+        _rules_tuple(cur_rules),
     )
+    if (
+        st.session_state.get("comb_bess_sizing_fp") != bess_sizing_fp
+        or "comb_cached_dual_bess" not in st.session_state
+    ):
+        st.session_state["comb_cached_dual_bess"] = compute_dual_battery_sizing(
+            load_kw=load_series.power_kw,
+            system_cfg=cur_sys,
+            rules_cfg=cur_rules,
+        )
+        st.session_state["comb_bess_sizing_fp"] = bess_sizing_fp
+
+    dual_bess = st.session_state["comb_cached_dual_bess"]
 
     with st.container(border=True):
         st.markdown("##### :material/battery_charging_full: 1. Dual Quick-Sizing & Manual Configuration")
@@ -690,71 +786,94 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                 f"**Coupled:** {dual_bess.coupled_100_kwh:,.0f} kWh / {dual_bess.coupled_100_kw:,.1f} kW"
             )
 
-        # Manual Override & Core Technical Parameters
-        bc1, bc2, bc3, bc4, bc5 = st.columns([1.2, 1.2, 0.9, 0.9, 1.0])
-        with bc1:
-            bess_kwh = st.number_input(
-                "Battery Capacity (kWh)",
-                min_value=10.0,
-                max_value=50000.0,
-                value=float(cur_sys.battery_capacity_kwh),
-                step=25.0,
-                disabled=not is_active,
-                key="comb_battery_capacity_kwh_num",
-            )
-        with bc2:
-            bess_kw = st.number_input(
-                "Battery Power (kW)",
-                min_value=5.0,
-                max_value=25000.0,
-                value=float(cur_sys.battery_power_kw),
-                step=10.0,
-                disabled=not is_active,
-                key="comb_battery_power_kw_num",
-            )
-        with bc3:
-            min_soc = st.number_input(
-                "Min SoC (%)",
-                min_value=0.0,
-                max_value=50.0,
-                value=float(cur_sys.min_soc_pct),
-                step=5.0,
-                disabled=not is_active,
-                key="comb_battery_min_soc_num",
-            )
-        with bc4:
-            max_soc = st.number_input(
-                "Max SoC (%)",
-                min_value=55.0,
-                max_value=100.0,
-                value=float(cur_sys.max_soc_pct),
-                step=5.0,
-                disabled=not is_active,
-                key="comb_battery_max_soc_num",
-            )
-        with bc5:
-            rte_pct = st.number_input(
-                "Round-Trip Efficiency (%)",
-                min_value=60.0,
-                max_value=100.0,
-                value=float(cur_sys.round_trip_efficiency_pct),
-                step=1.0,
-                disabled=not is_active,
-                key="comb_battery_rte_num",
-            )
+        # Manual Override & Core Technical Parameters (encapsulated in st.form)
+        with st.form("comb_battery_form"):
+            bc1, bc2, bc3, bc4, bc5, bc_btn = st.columns([1.15, 1.15, 0.85, 0.85, 0.95, 0.95])
+            with bc1:
+                bess_kwh = st.number_input(
+                    "Battery Capacity (kWh)",
+                    min_value=10.0,
+                    max_value=50000.0,
+                    value=float(cur_sys.battery_capacity_kwh),
+                    step=25.0,
+                    disabled=not is_active,
+                    key="comb_battery_capacity_kwh_num",
+                )
+            with bc2:
+                bess_kw = st.number_input(
+                    "Battery Power (kW)",
+                    min_value=5.0,
+                    max_value=25000.0,
+                    value=float(cur_sys.battery_power_kw),
+                    step=10.0,
+                    disabled=not is_active,
+                    key="comb_battery_power_kw_num",
+                )
+            with bc3:
+                min_soc = st.number_input(
+                    "Min SoC (%)",
+                    min_value=0.0,
+                    max_value=50.0,
+                    value=float(cur_sys.min_soc_pct),
+                    step=5.0,
+                    disabled=not is_active,
+                    key="comb_battery_min_soc_num",
+                )
+            with bc4:
+                max_soc = st.number_input(
+                    "Max SoC (%)",
+                    min_value=55.0,
+                    max_value=100.0,
+                    value=float(cur_sys.max_soc_pct),
+                    step=5.0,
+                    disabled=not is_active,
+                    key="comb_battery_max_soc_num",
+                )
+            with bc5:
+                rte_pct = st.number_input(
+                    "Round-Trip Efficiency (%)",
+                    min_value=60.0,
+                    max_value=100.0,
+                    value=float(cur_sys.round_trip_efficiency_pct),
+                    step=1.0,
+                    disabled=not is_active,
+                    key="comb_battery_rte_num",
+                )
+            with bc_btn:
+                st.write("")
+                bess_submitted = st.form_submit_button(
+                    "Apply Battery Settings",
+                    use_container_width=True,
+                    disabled=not is_active,
+                )
 
-        cur_sys.battery_capacity_kwh = float(bess_kwh)
-        cur_sys.battery_power_kw = float(bess_kw)
-        cur_sys.min_soc_pct = float(min_soc)
-        cur_sys.max_soc_pct = float(max_soc)
-        cur_sys.round_trip_efficiency_pct = float(rte_pct)
+        if bess_submitted or is_active:
+            so_c_changed = (
+                abs(cur_sys.min_soc_pct - float(min_soc)) > 1e-4
+                or abs(cur_sys.max_soc_pct - float(max_soc)) > 1e-4
+                or abs(cur_sys.round_trip_efficiency_pct - float(rte_pct)) > 1e-4
+            )
+            cur_sys.battery_capacity_kwh = float(bess_kwh)
+            cur_sys.battery_power_kw = float(bess_kw)
+            cur_sys.min_soc_pct = float(min_soc)
+            cur_sys.max_soc_pct = float(max_soc)
+            cur_sys.round_trip_efficiency_pct = float(rte_pct)
+            if so_c_changed:
+                dual_bess = compute_dual_battery_sizing(
+                    load_kw=load_series.power_kw,
+                    system_cfg=cur_sys,
+                    rules_cfg=cur_rules,
+                )
+                st.session_state["comb_cached_dual_bess"] = dual_bess
 
-        # Recompute table with updated manual values
-        dual_bess = compute_dual_battery_sizing(
-            load_kw=load_series.power_kw,
-            system_cfg=cur_sys,
-            rules_cfg=cur_rules,
+        # Lightweight O(1) update of 'Configured Battery' & 'Status' columns (no 35,040-step re-run!)
+        bottleneck_df = refresh_bottleneck_table_configured_status(
+            dual_bess=dual_bess,
+            configured_kwh=cur_sys.battery_capacity_kwh,
+            configured_kw=cur_sys.battery_power_kw,
+            enable_battery=is_active,
         )
+        st.session_state["comb_latest_bottleneck_df"] = bottleneck_df
 
         st.markdown("---")
         st.markdown("##### :material/checklist: 2. 4-Criterion Bottleneck Diagnostic Table")
@@ -763,7 +882,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
             f"(Primary driver: **{dual_bess.controlling_driver_coupled}**)."
         )
         st.dataframe(
-            dual_bess.bottleneck_table_df,
+            bottleneck_df,
             use_container_width=True,
             hide_index=True,
         )
@@ -802,12 +921,40 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
                     args=("comb_enable_generator_toggle",),
                 )
 
-    dual_gen = compute_dual_generator_sizing(
-        load_kw=load_series.power_kw,
-        timestamps=load_series.timestamps,
-        system_cfg=cur_sys,
-        rules_cfg=cur_rules,
+    # Fingerprint-cached Dual Generator Sizing (runs only when upstream Solar/Battery/Grid/Rules change)
+    gen_sizing_fp = (
+        _load_fingerprint(load_series),
+        bool(cur_sys.enable_grid),
+        round(float(cur_sys.grid_limit_kw), 2),
+        bool(cur_sys.enable_solar),
+        round(float(cur_sys.latitude), 4),
+        round(float(cur_sys.longitude), 4),
+        cur_sys.solar_sizing_method,
+        round(float(cur_sys.solar_kwp), 2),
+        round(float(cur_sys.target_consumption_share_pct), 2),
+        round(float(cur_sys.inverter_ac_limit_kw), 2),
+        round(float(cur_sys.inverter_efficiency_pct), 2),
+        bool(cur_sys.enable_battery),
+        round(float(cur_sys.battery_capacity_kwh), 2),
+        round(float(cur_sys.battery_power_kw), 2),
+        round(float(cur_sys.min_soc_pct), 2),
+        round(float(cur_sys.max_soc_pct), 2),
+        round(float(cur_sys.round_trip_efficiency_pct), 2),
+        _rules_tuple(cur_rules),
     )
+    if (
+        st.session_state.get("comb_gen_sizing_fp") != gen_sizing_fp
+        or "comb_cached_dual_gen" not in st.session_state
+    ):
+        st.session_state["comb_cached_dual_gen"] = compute_dual_generator_sizing(
+            load_kw=load_series.power_kw,
+            timestamps=load_series.timestamps,
+            system_cfg=cur_sys,
+            rules_cfg=cur_rules,
+        )
+        st.session_state["comb_gen_sizing_fp"] = gen_sizing_fp
+
+    dual_gen = st.session_state["comb_cached_dual_gen"]
 
     with st.container(border=True):
         st.markdown("##### :material/power: 1. Dual Quick-Sizing & Generator Configuration")
@@ -864,41 +1011,50 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
                 f"**Coupled (Remaining Peak):** {dual_gen.coupled_100_kw:,.1f} kW"
             )
 
-        gc1, gc2, gc3 = st.columns(3)
-        with gc1:
-            gen_kw_val = st.number_input(
-                "Generator Power (kW)",
-                min_value=10.0,
-                max_value=20000.0,
-                value=float(cur_sys.generator_rated_kw),
-                step=10.0,
-                disabled=not is_active,
-                key="comb_generator_rated_kw_num",
-            )
-        with gc2:
-            gen_min_pct_val = st.number_input(
-                "Minimum Load (%) — Wet-Stacking Protection",
-                min_value=0.0,
-                max_value=80.0,
-                value=float(cur_sys.generator_min_load_pct),
-                step=5.0,
-                disabled=not is_active,
-                key="comb_generator_min_load_num",
-            )
-        with gc3:
-            fuel_keys = list(FUEL_SPECS.keys())
-            fuel_idx = fuel_keys.index(cur_sys.fuel_type) if cur_sys.fuel_type in fuel_keys else 0
-            fuel_type_val = st.selectbox(
-                "Fuel Type",
-                options=fuel_keys,
-                index=fuel_idx,
-                disabled=not is_active,
-                key="comb_generator_fuel_type_select",
-            )
+        with st.form("comb_generator_form"):
+            gc1, gc2, gc3, gc_btn = st.columns([1.2, 1.3, 1.0, 0.9])
+            with gc1:
+                gen_kw_val = st.number_input(
+                    "Generator Power (kW)",
+                    min_value=10.0,
+                    max_value=20000.0,
+                    value=float(cur_sys.generator_rated_kw),
+                    step=10.0,
+                    disabled=not is_active,
+                    key="comb_generator_rated_kw_num",
+                )
+            with gc2:
+                gen_min_pct_val = st.number_input(
+                    "Minimum Load (%) — Wet-Stacking Protection",
+                    min_value=0.0,
+                    max_value=80.0,
+                    value=float(cur_sys.generator_min_load_pct),
+                    step=5.0,
+                    disabled=not is_active,
+                    key="comb_generator_min_load_num",
+                )
+            with gc3:
+                fuel_keys = list(FUEL_SPECS.keys())
+                fuel_idx = fuel_keys.index(cur_sys.fuel_type) if cur_sys.fuel_type in fuel_keys else 0
+                fuel_type_val = st.selectbox(
+                    "Fuel Type",
+                    options=fuel_keys,
+                    index=fuel_idx,
+                    disabled=not is_active,
+                    key="comb_generator_fuel_type_select",
+                )
+            with gc_btn:
+                st.write("")
+                gen_submitted = st.form_submit_button(
+                    "Apply Generator Settings",
+                    use_container_width=True,
+                    disabled=not is_active,
+                )
 
-        cur_sys.generator_rated_kw = float(gen_kw_val)
-        cur_sys.generator_min_load_pct = float(gen_min_pct_val)
-        cur_sys.fuel_type = str(fuel_type_val)
+        if gen_submitted or is_active:
+            cur_sys.generator_rated_kw = float(gen_kw_val)
+            cur_sys.generator_min_load_pct = float(gen_min_pct_val)
+            cur_sys.fuel_type = str(fuel_type_val)
 
 
 # ======================================================================================
@@ -1043,105 +1199,236 @@ def render_subtab6_financials(sim_res) -> None:
                 )
         return
 
-    # --- Block A: 4-Pillar Grid & Tariff Costs (Always visible when Financials active) ---
-    with st.container(border=True):
-        st.markdown("##### :material/receipt_long: Block A – Grid & Tariff Costs (4-Pillar Tariff)")
-        p1_col, p2_col, p3_col, p4_col = st.columns(4)
+    with st.form("comb_financials_form"):
+        # --- Block A: 4-Pillar Grid & Tariff Costs (Always visible when Financials active) ---
+        with st.container(border=True):
+            st.markdown("##### :material/receipt_long: Block A – Grid & Tariff Costs (4-Pillar Tariff)")
+            p1_col, p2_col, p3_col, p4_col = st.columns(4)
 
-        with p1_col:
-            st.markdown("**1. Energy Supply (Supplier)**")
-            supp_kwh = st.number_input(
-                "Electricity Price (€/kWh)",
-                min_value=0.0,
-                max_value=2.0,
-                value=float(cur_fin.supplier_energy_price_eur_kwh),
-                step=0.01,
-                format="%.3f",
-                key="comb_fin_supp_kwh",
-            )
-            supp_fix = st.number_input(
-                "Supplier Standing Fee (€/month)",
-                min_value=0.0,
-                max_value=5000.0,
-                value=float(cur_fin.supplier_fixed_fee_eur_month),
-                step=10.0,
-                key="comb_fin_supp_fix",
-            )
+            with p1_col:
+                st.markdown("**1. Energy Supply (Supplier)**")
+                supp_kwh = st.number_input(
+                    "Electricity Price (€/kWh)",
+                    min_value=0.0,
+                    max_value=2.0,
+                    value=float(cur_fin.supplier_energy_price_eur_kwh),
+                    step=0.01,
+                    format="%.3f",
+                    key="comb_fin_supp_kwh",
+                )
+                supp_fix = st.number_input(
+                    "Supplier Standing Fee (€/month)",
+                    min_value=0.0,
+                    max_value=5000.0,
+                    value=float(cur_fin.supplier_fixed_fee_eur_month),
+                    step=10.0,
+                    key="comb_fin_supp_fix",
+                )
 
-        with p2_col:
-            st.markdown("**2. Grid Network (DSO)**")
-            dso_cap = st.number_input(
-                "Contracted Capacity Fee (€/kW/mo)",
-                min_value=0.0,
-                max_value=100.0,
-                value=float(cur_fin.dso_capacity_fee_eur_kw_month),
-                step=0.5,
-                key="comb_fin_dso_cap",
-            )
-            dso_peak = st.number_input(
-                "Monthly Peak Demand Fee (€/kW/mo)",
-                min_value=0.0,
-                max_value=100.0,
-                value=float(cur_fin.dso_peak_demand_fee_eur_kw_month),
-                step=0.5,
-                key="comb_fin_dso_peak",
-            )
-            dso_pen = st.number_input(
-                "Overload Penalty (€/kW)",
-                min_value=0.0,
-                max_value=500.0,
-                value=float(cur_fin.grid_overload_penalty_eur_kw),
-                step=1.0,
-                key="comb_fin_dso_pen",
-            )
-            dso_fix = st.number_input(
-                "Grid Standing Fee (€/month)",
-                min_value=0.0,
-                max_value=5000.0,
-                value=float(cur_fin.dso_fixed_fee_eur_month),
-                step=10.0,
-                key="comb_fin_dso_fix",
-            )
+            with p2_col:
+                st.markdown("**2. Grid Network (DSO)**")
+                dso_cap = st.number_input(
+                    "Contracted Capacity Fee (€/kW/mo)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cur_fin.dso_capacity_fee_eur_kw_month),
+                    step=0.5,
+                    key="comb_fin_dso_cap",
+                )
+                dso_peak = st.number_input(
+                    "Monthly Peak Demand Fee (€/kW/mo)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(cur_fin.dso_peak_demand_fee_eur_kw_month),
+                    step=0.5,
+                    key="comb_fin_dso_peak",
+                )
+                dso_pen = st.number_input(
+                    "Overload Penalty (€/kW)",
+                    min_value=0.0,
+                    max_value=500.0,
+                    value=float(cur_fin.grid_overload_penalty_eur_kw),
+                    step=1.0,
+                    key="comb_fin_dso_pen",
+                )
+                dso_fix = st.number_input(
+                    "Grid Standing Fee (€/month)",
+                    min_value=0.0,
+                    max_value=5000.0,
+                    value=float(cur_fin.dso_fixed_fee_eur_month),
+                    step=10.0,
+                    key="comb_fin_dso_fix",
+                )
 
-        with p3_col:
-            st.markdown("**3. Metering**")
-            meter_fix = st.number_input(
-                "Metering Fee (€/month)",
-                min_value=0.0,
-                max_value=2000.0,
-                value=float(cur_fin.metering_fixed_fee_eur_month),
-                step=5.0,
-                key="comb_fin_meter_fix",
-            )
+            with p3_col:
+                st.markdown("**3. Metering**")
+                meter_fix = st.number_input(
+                    "Metering Fee (€/month)",
+                    min_value=0.0,
+                    max_value=2000.0,
+                    value=float(cur_fin.metering_fixed_fee_eur_month),
+                    step=5.0,
+                    key="comb_fin_meter_fix",
+                )
 
-        with p4_col:
-            st.markdown("**4. Taxes & Discount Rate**")
-            tax_kwh = st.number_input(
-                "Energy Tax (€/kWh)",
-                min_value=0.0,
-                max_value=1.0,
-                value=float(cur_fin.energy_tax_eur_kwh),
-                step=0.005,
-                format="%.3f",
-                key="comb_fin_tax_kwh",
-            )
-            tax_pct = st.number_input(
-                "Levy / Tax Surcharge (%)",
-                min_value=0.0,
-                max_value=50.0,
-                value=float(cur_fin.tax_surcharge_pct),
-                step=1.0,
-                key="comb_fin_tax_pct",
-            )
-            disc_rate = st.number_input(
-                "Discount Rate for 15Y NPV (%)",
-                min_value=0.0,
-                max_value=20.0,
-                value=float(cur_fin.discount_rate_pct),
-                step=0.5,
-                key="comb_fin_disc_rate",
-            )
+            with p4_col:
+                st.markdown("**4. Taxes & Discount Rate**")
+                tax_kwh = st.number_input(
+                    "Energy Tax (€/kWh)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(cur_fin.energy_tax_eur_kwh),
+                    step=0.005,
+                    format="%.3f",
+                    key="comb_fin_tax_kwh",
+                )
+                tax_pct = st.number_input(
+                    "Levy / Tax Surcharge (%)",
+                    min_value=0.0,
+                    max_value=50.0,
+                    value=float(cur_fin.tax_surcharge_pct),
+                    step=1.0,
+                    key="comb_fin_tax_pct",
+                )
+                disc_rate = st.number_input(
+                    "Discount Rate for 15Y NPV (%)",
+                    min_value=0.0,
+                    max_value=20.0,
+                    value=float(cur_fin.discount_rate_pct),
+                    step=0.5,
+                    key="comb_fin_disc_rate",
+                )
 
+        # --- Conditional Technology Cost Blocks (Only shown for active modules) ---
+        if cur_sys.enable_solar:
+            with st.container(border=True):
+                st.markdown(
+                    f"##### :material/solar_power: Block B – Solar Costs ({sim_res.solar_derivation.installed_kwp:,.1f} kWp Active)"
+                )
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                with sc1:
+                    sol_mod = st.number_input(
+                        "Modules (€/Wp)",
+                        min_value=0.0, max_value=3.0, value=float(cur_fin.solar_modules_eur_wp), step=0.02, format="%.2f",
+                        key="comb_fin_sol_mod",
+                    )
+                with sc2:
+                    sol_inv = st.number_input(
+                        "Inverter (€/W)",
+                        min_value=0.0, max_value=2.0, value=float(cur_fin.solar_inverter_eur_w), step=0.01, format="%.2f",
+                        key="comb_fin_sol_inv",
+                    )
+                with sc3:
+                    sol_mnt = st.number_input(
+                        "Mounting & Installation (€/Wp)",
+                        min_value=0.0, max_value=3.0, value=float(cur_fin.solar_mounting_eur_wp), step=0.02, format="%.2f",
+                        key="comb_fin_sol_mnt",
+                    )
+                with sc4:
+                    sol_om = st.number_input(
+                        "Annual O&M (% of CAPEX/year)",
+                        min_value=0.0, max_value=15.0, value=float(cur_fin.solar_om_pct_of_capex), step=0.25,
+                        key="comb_fin_sol_om",
+                    )
+
+        if cur_sys.enable_battery:
+            with st.container(border=True):
+                st.markdown(
+                    f"##### :material/battery_charging_full: Block C – Battery Costs "
+                    f"({cur_sys.battery_capacity_kwh:,.0f} kWh / {cur_sys.battery_power_kw:,.0f} kW Active)"
+                )
+                bc1, bc2, bc3, bc4 = st.columns(4)
+                with bc1:
+                    bat_rack = st.number_input(
+                        "Storage Racks (€/kWh)",
+                        min_value=0.0, max_value=2000.0, value=float(cur_fin.battery_capex_eur_kwh), step=10.0,
+                        key="comb_fin_bat_rack",
+                    )
+                with bc2:
+                    bat_inv = st.number_input(
+                        "Inverter (€/kW)",
+                        min_value=0.0, max_value=2000.0, value=float(cur_fin.battery_capex_eur_kw), step=10.0,
+                        key="comb_fin_bat_inv",
+                    )
+                with bc3:
+                    bat_bop = st.number_input(
+                        "Installation & Cabling (€)",
+                        min_value=0.0, max_value=500000.0, value=float(cur_fin.battery_fixed_bop_eur), step=1000.0,
+                        key="comb_fin_bat_bop",
+                    )
+                with bc4:
+                    bat_om = st.number_input(
+                        "Annual O&M (% of CAPEX/year)",
+                        min_value=0.0, max_value=15.0, value=float(cur_fin.battery_om_pct_of_capex), step=0.25,
+                        key="comb_fin_bat_om",
+                    )
+
+                aug1, aug2, aug3 = st.columns([1.4, 1.1, 1.1])
+                with aug1:
+                    en_aug = st.checkbox(
+                        "Include Mid-Life Cell Replacement (Augmentation)",
+                        value=bool(cur_fin.enable_battery_augmentation),
+                        key="comb_fin_bat_aug_chk",
+                    )
+                with aug2:
+                    aug_yr = st.number_input(
+                        "Replacement Year",
+                        min_value=5, max_value=14, value=int(cur_fin.battery_augmentation_year), step=1,
+                        key="comb_fin_bat_aug_yr",
+                    )
+                with aug3:
+                    aug_pct = st.number_input(
+                        "Replacement Cost (% of Storage Racks)",
+                        min_value=10.0, max_value=100.0, value=float(cur_fin.battery_augmentation_pct_of_racks), step=5.0,
+                        key="comb_fin_bat_aug_pct",
+                    )
+
+        if cur_sys.enable_generator:
+            with st.container(border=True):
+                st.markdown(
+                    f"##### :material/power: Block D – Generator Costs "
+                    f"({cur_sys.generator_rated_kw:,.0f} kW {cur_sys.fuel_type} Active)"
+                )
+                gc1, gc2, gc3, gc4, gc5 = st.columns([1.2, 1.1, 1.1, 0.9, 1.0])
+                with gc1:
+                    gen_model = st.selectbox(
+                        "Acquisition Mode",
+                        options=["Purchase (CAPEX)", "Monthly Rental (OPEX)"],
+                        index=0 if cur_fin.generator_cost_model == "Purchase (CAPEX)" else 1,
+                        key="comb_fin_gen_model",
+                    )
+                with gc2:
+                    gen_capex = st.number_input(
+                        "Purchase Price (€)",
+                        min_value=0.0, max_value=2000000.0, value=float(cur_fin.generator_capex_eur), step=1000.0,
+                        key="comb_fin_gen_capex",
+                    )
+                with gc3:
+                    gen_rent = st.number_input(
+                        "Monthly Rental (€/month)",
+                        min_value=0.0, max_value=100000.0, value=float(cur_fin.generator_rental_eur_month), step=100.0,
+                        key="comb_fin_gen_rent",
+                    )
+                with gc4:
+                    fuel_pr = st.number_input(
+                        f"Fuel Price (€/{sim_res.kpis.generator_fuel_unit})",
+                        min_value=0.0, max_value=10.0, value=float(cur_fin.fuel_price_eur_per_unit), step=0.05, format="%.2f",
+                        key="comb_fin_gen_fuel",
+                    )
+                with gc5:
+                    gen_maint = st.number_input(
+                        "Maintenance (€/operating hour)",
+                        min_value=0.0, max_value=500.0, value=float(cur_fin.generator_maintenance_eur_per_hour), step=0.5,
+                        key="comb_fin_gen_maint",
+                    )
+
+        fin_submitted = st.form_submit_button(
+            "Calculate Financials",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if fin_submitted or sim_res.financial_kpis is None:
         cur_fin.supplier_energy_price_eur_kwh = float(supp_kwh)
         cur_fin.supplier_fixed_fee_eur_month = float(supp_fix)
         cur_fin.dso_capacity_fee_eur_kw_month = float(dso_cap)
@@ -1153,97 +1440,14 @@ def render_subtab6_financials(sim_res) -> None:
         cur_fin.tax_surcharge_pct = float(tax_pct)
         cur_fin.discount_rate_pct = float(disc_rate)
 
-    # --- Conditional Technology Cost Blocks (Only shown for active modules) ---
-    if cur_sys.enable_solar:
-        with st.container(border=True):
-            st.markdown(
-                f"##### :material/solar_power: Block B – Solar Costs ({sim_res.solar_derivation.installed_kwp:,.1f} kWp Active)"
-            )
-            sc1, sc2, sc3, sc4 = st.columns(4)
-            with sc1:
-                sol_mod = st.number_input(
-                    "Modules (€/Wp)",
-                    min_value=0.0, max_value=3.0, value=float(cur_fin.solar_modules_eur_wp), step=0.02, format="%.2f",
-                    key="comb_fin_sol_mod",
-                )
-            with sc2:
-                sol_inv = st.number_input(
-                    "Inverter (€/W)",
-                    min_value=0.0, max_value=2.0, value=float(cur_fin.solar_inverter_eur_w), step=0.01, format="%.2f",
-                    key="comb_fin_sol_inv",
-                )
-            with sc3:
-                sol_mnt = st.number_input(
-                    "Mounting & Installation (€/Wp)",
-                    min_value=0.0, max_value=3.0, value=float(cur_fin.solar_mounting_eur_wp), step=0.02, format="%.2f",
-                    key="comb_fin_sol_mnt",
-                )
-            with sc4:
-                sol_om = st.number_input(
-                    "Annual O&M (% of CAPEX/year)",
-                    min_value=0.0, max_value=15.0, value=float(cur_fin.solar_om_pct_of_capex), step=0.25,
-                    key="comb_fin_sol_om",
-                )
+        if cur_sys.enable_solar:
             cur_fin.solar_modules_eur_wp = float(sol_mod)
             cur_fin.solar_inverter_eur_w = float(sol_inv)
             cur_fin.solar_mounting_eur_wp = float(sol_mnt)
             cur_fin.solar_capex_eur_kwp = None
             cur_fin.solar_om_pct_of_capex = float(sol_om)
 
-    if cur_sys.enable_battery:
-        with st.container(border=True):
-            st.markdown(
-                f"##### :material/battery_charging_full: Block C – Battery Costs "
-                f"({cur_sys.battery_capacity_kwh:,.0f} kWh / {cur_sys.battery_power_kw:,.0f} kW Active)"
-            )
-            bc1, bc2, bc3, bc4 = st.columns(4)
-            with bc1:
-                bat_rack = st.number_input(
-                    "Storage Racks (€/kWh)",
-                    min_value=0.0, max_value=2000.0, value=float(cur_fin.battery_capex_eur_kwh), step=10.0,
-                    key="comb_fin_bat_rack",
-                )
-            with bc2:
-                bat_inv = st.number_input(
-                    "Inverter (€/kW)",
-                    min_value=0.0, max_value=2000.0, value=float(cur_fin.battery_capex_eur_kw), step=10.0,
-                    key="comb_fin_bat_inv",
-                )
-            with bc3:
-                bat_bop = st.number_input(
-                    "Installation & Cabling (€)",
-                    min_value=0.0, max_value=500000.0, value=float(cur_fin.battery_fixed_bop_eur), step=1000.0,
-                    key="comb_fin_bat_bop",
-                )
-            with bc4:
-                bat_om = st.number_input(
-                    "Annual O&M (% of CAPEX/year)",
-                    min_value=0.0, max_value=15.0, value=float(cur_fin.battery_om_pct_of_capex), step=0.25,
-                    key="comb_fin_bat_om",
-                )
-
-            aug1, aug2, aug3 = st.columns([1.4, 1.1, 1.1])
-            with aug1:
-                en_aug = st.checkbox(
-                    "Include Mid-Life Cell Replacement (Augmentation)",
-                    value=bool(cur_fin.enable_battery_augmentation),
-                    key="comb_fin_bat_aug_chk",
-                )
-            with aug2:
-                aug_yr = st.number_input(
-                    "Replacement Year",
-                    min_value=5, max_value=14, value=int(cur_fin.battery_augmentation_year), step=1,
-                    disabled=not en_aug,
-                    key="comb_fin_bat_aug_yr",
-                )
-            with aug3:
-                aug_pct = st.number_input(
-                    "Replacement Cost (% of Storage Racks)",
-                    min_value=10.0, max_value=100.0, value=float(cur_fin.battery_augmentation_pct_of_racks), step=5.0,
-                    disabled=not en_aug,
-                    key="comb_fin_bat_aug_pct",
-                )
-
+        if cur_sys.enable_battery:
             cur_fin.battery_capex_eur_kwh = float(bat_rack)
             cur_fin.battery_capex_eur_kw = float(bat_inv)
             cur_fin.battery_fixed_bop_eur = float(bat_bop)
@@ -1252,56 +1456,16 @@ def render_subtab6_financials(sim_res) -> None:
             cur_fin.battery_augmentation_year = int(aug_yr)
             cur_fin.battery_augmentation_pct_of_racks = float(aug_pct)
 
-    if cur_sys.enable_generator:
-        with st.container(border=True):
-            st.markdown(
-                f"##### :material/power: Block D – Generator Costs "
-                f"({cur_sys.generator_rated_kw:,.0f} kW {cur_sys.fuel_type} Active)"
-            )
-            gc1, gc2, gc3, gc4 = st.columns(4)
-            with gc1:
-                gen_model = st.selectbox(
-                    "Acquisition Mode",
-                    options=["Purchase (CAPEX)", "Monthly Rental (OPEX)"],
-                    index=0 if cur_fin.generator_cost_model == "Purchase (CAPEX)" else 1,
-                    key="comb_fin_gen_model",
-                )
-            with gc2:
-                if gen_model == "Purchase (CAPEX)":
-                    gen_capex = st.number_input(
-                        "Purchase Price (€)",
-                        min_value=0.0, max_value=2000000.0, value=float(cur_fin.generator_capex_eur), step=1000.0,
-                        key="comb_fin_gen_capex",
-                    )
-                    gen_rent = float(cur_fin.generator_rental_eur_month)
-                else:
-                    gen_rent = st.number_input(
-                        "Monthly Rental (€/month)",
-                        min_value=0.0, max_value=100000.0, value=float(cur_fin.generator_rental_eur_month), step=100.0,
-                        key="comb_fin_gen_rent",
-                    )
-                    gen_capex = float(cur_fin.generator_capex_eur)
-            with gc3:
-                fuel_pr = st.number_input(
-                    f"Fuel Price (€/{sim_res.kpis.generator_fuel_unit})",
-                    min_value=0.0, max_value=10.0, value=float(cur_fin.fuel_price_eur_per_unit), step=0.05, format="%.2f",
-                    key="comb_fin_gen_fuel",
-                )
-            with gc4:
-                gen_maint = st.number_input(
-                    "Maintenance (€/operating hour)",
-                    min_value=0.0, max_value=500.0, value=float(cur_fin.generator_maintenance_eur_per_hour), step=0.5,
-                    key="comb_fin_gen_maint",
-                )
-
+        if cur_sys.enable_generator:
             cur_fin.generator_cost_model = str(gen_model)
             cur_fin.generator_capex_eur = float(gen_capex)
             cur_fin.generator_rental_eur_month = float(gen_rent)
             cur_fin.fuel_price_eur_per_unit = float(fuel_pr)
             cur_fin.generator_maintenance_eur_per_hour = float(gen_maint)
 
-    # Evaluate Financials lazily (only here when Financials is active)
-    evaluate_combined_financials(sim_res, cur_fin)
+        evaluate_combined_financials(sim_res, cur_fin)
+        st.session_state.pop("comb_cached_excel_bytes", None)
+
     fin_kpis = sim_res.financial_kpis
 
     st.markdown("---")
@@ -1460,10 +1624,11 @@ def render_level3_permanent_master_output(sim_res) -> None:
             else:
                 st.session_state["comb_dispatch_timeframe"] = disp_tf
         with hdr3:
-            excel_bytes = build_combined_verification_excel_bytes(sim_res)
+            if "comb_cached_excel_bytes" not in st.session_state:
+                st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
             st.download_button(
                 label="Download Excel (.xlsx)",
-                data=excel_bytes,
+                data=st.session_state["comb_cached_excel_bytes"],
                 file_name="Combined_System_Verification.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 icon=":material/download:",
@@ -1541,16 +1706,34 @@ def main() -> None:
     with subtabs[4]:
         render_subtab5_interaction_rules()
 
-    # Run fast physical 15-minute simulation
+    # Run fast physical 15-minute simulation only when physical fingerprint changes
     cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cur_rules: InteractionRulesConfig = st.session_state["comb_rules_cfg"]
-    sim_res = simulate_combined_system_dispatch(
-        load_kw=load_series.power_kw,
-        timestamps=load_series.timestamps,
-        system_cfg=cur_sys,
-        rules_cfg=cur_rules,
+    dispatch_fp = (
+        _load_fingerprint(load_series),
+        _physical_sys_tuple(cur_sys),
+        _rules_tuple(cur_rules),
     )
-    st.session_state["comb_sandbox_result"] = sim_res
+    if (
+        st.session_state.get("comb_dispatch_fp") != dispatch_fp
+        or "comb_sandbox_result" not in st.session_state
+    ):
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=load_series.power_kw,
+            timestamps=load_series.timestamps,
+            system_cfg=cur_sys,
+            rules_cfg=cur_rules,
+        )
+        if "comb_latest_bottleneck_df" in st.session_state:
+            sim_res.bess_bottleneck_df = st.session_state["comb_latest_bottleneck_df"]
+        st.session_state["comb_sandbox_result"] = sim_res
+        st.session_state["comb_dispatch_fp"] = dispatch_fp
+        st.session_state.pop("comb_cached_excel_bytes", None)
+    else:
+        sim_res = st.session_state["comb_sandbox_result"]
+        sim_res.system_config.enable_financials = bool(cur_sys.enable_financials)
+        if "comb_latest_bottleneck_df" in st.session_state:
+            sim_res.bess_bottleneck_df = st.session_state["comb_latest_bottleneck_df"]
 
     with subtabs[5]:
         render_subtab6_financials(sim_res)

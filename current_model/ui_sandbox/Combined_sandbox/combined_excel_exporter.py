@@ -45,15 +45,17 @@ def build_combined_verification_excel_bytes(
     """
     Constructs the 4-sheet `.xlsx` verification workbook in memory using openpyxl's
     fast streaming `write_only=True` mode and returns raw bytes.
+    Respects Lazy Financials: only calls `evaluate_combined_financials` if
+    `sim_res.system_config.enable_financials` is True.
     """
-    if sim_res.financial_kpis is None or sim_res.financial_config is None:
+    cfg = sim_res.system_config
+    if cfg.enable_financials and (sim_res.financial_kpis is None or sim_res.financial_config is None):
         evaluate_combined_financials(sim_res, CombinedFinancialConfig())
 
-    cfg = sim_res.system_config
     rules = sim_res.rules_config
     deriv = sim_res.solar_derivation
     kpis = sim_res.kpis
-    fin_kpis = sim_res.financial_kpis
+    fin_kpis = sim_res.financial_kpis if cfg.enable_financials else None
 
     # 1. Sheet 1 DataFrames: Parameters, Rules, KPIs & Component Summary
     summary_rows: List[dict] = [
@@ -154,13 +156,16 @@ def build_combined_verification_excel_bytes(
 
     # Sheet 4: Cost & Tariffs
     ws4 = wb.create_sheet(title="Cost & Tariffs")
-    _append_df_to_ws(ws4, sim_res.monthly_cost_df)
-    if not sim_res.financial_table_df.empty:
-        ws4.append([])
-        _append_df_to_ws(ws4, sim_res.financial_table_df)
-    if not sim_res.cashflow_15y_df.empty:
-        ws4.append([])
-        _append_df_to_ws(ws4, sim_res.cashflow_15y_df)
+    if cfg.enable_financials and fin_kpis is not None:
+        _append_df_to_ws(ws4, sim_res.monthly_cost_df)
+        if not sim_res.financial_table_df.empty:
+            ws4.append([])
+            _append_df_to_ws(ws4, sim_res.financial_table_df)
+        if not sim_res.cashflow_15y_df.empty:
+            ws4.append([])
+            _append_df_to_ws(ws4, sim_res.cashflow_15y_df)
+    else:
+        _append_df_to_ws(ws4, pd.DataFrame([{"Status": "Financials disabled"}]))
 
     buffer = io.BytesIO()
     wb.save(buffer)

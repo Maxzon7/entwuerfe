@@ -763,6 +763,93 @@ def _evaluate_bess_criteria_for_profile(
     )
 
 
+def build_bess_bottleneck_table_df(
+    sa_100_kw: float,
+    cp_100_kw: float,
+    sa_single_kwh: float,
+    cp_single_kwh: float,
+    sa_100_kwh: float,
+    cp_100_kwh: float,
+    sa_rech_kw: float,
+    sa_rech_kwh: float,
+    cp_rech_kw: float,
+    cp_rech_kwh: float,
+    cp_driver: str,
+    cfg_kw: float,
+    cfg_kwh: float,
+) -> pd.DataFrame:
+    """
+    Constructs the 4-Criterion Bottleneck Diagnostic Table in O(1) time without running
+    any 35,040-step loops.
+    """
+    rows = [
+        {
+            "Criterion": "1. Peak Discharge Power (kW)",
+            "What It Checks": "Highest power spike above the Grid Limit",
+            "Standalone Required": f"{sa_100_kw:,.1f} kW",
+            "Coupled Required": f"{cp_100_kw:,.1f} kW",
+            "Configured Battery": f"{cfg_kw:,.1f} kW",
+            "Status": "Pass" if cfg_kw >= cp_100_kw - 0.1 else f"Bottleneck (-{max(0.0, cp_100_kw - cfg_kw):,.1f} kW)",
+        },
+        {
+            "Criterion": "2. Single Peak Event Energy (kWh)",
+            "What It Checks": "Largest single continuous overload event",
+            "Standalone Required": f"{sa_single_kwh:,.1f} kWh",
+            "Coupled Required": f"{cp_single_kwh:,.1f} kWh",
+            "Configured Battery": f"{cfg_kwh:,.1f} kWh",
+            "Status": "Pass" if cfg_kwh >= cp_single_kwh - 0.5 else f"Bottleneck (-{max(0.0, cp_single_kwh - cfg_kwh):,.1f} kWh)",
+        },
+        {
+            "Criterion": "3. Multi-Day Cluster Energy (kWh)",
+            "What It Checks": "Consecutive peak days without enough time to recharge in between",
+            "Standalone Required": f"{sa_100_kwh:,.1f} kWh",
+            "Coupled Required": f"{cp_100_kwh:,.1f} kWh",
+            "Configured Battery": f"{cfg_kwh:,.1f} kWh",
+            "Status": "Pass" if cfg_kwh >= cp_100_kwh - 0.5 else f"Bottleneck (-{max(0.0, cp_100_kwh - cfg_kwh):,.1f} kWh)",
+        },
+        {
+            "Criterion": "4. Available Recharge Headroom",
+            "What It Checks": "Charging room available below Grid Limit & from Solar surplus",
+            "Standalone Required": f"{sa_rech_kw:,.0f} kW max ({sa_rech_kwh:,.0f} kWh/yr)",
+            "Coupled Required": f"{cp_rech_kw:,.0f} kW max ({cp_rech_kwh:,.0f} kWh/yr)",
+            "Configured Battery": f"{cfg_kw:,.1f} kW charge limit",
+            "Status": "Pass" if cp_driver != "Available Recharge Headroom" else "Bottleneck (Low Recharge Room)",
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def refresh_bottleneck_table_configured_status(
+    dual_bess: DualBatterySizingResult,
+    configured_kwh: float,
+    configured_kw: float,
+    enable_battery: bool = True,
+) -> pd.DataFrame:
+    """
+    Updates only the 'Configured Battery' and 'Status' columns of an existing
+    DualBatterySizingResult in O(1) time without re-running the 35,040-step sizing loop.
+    """
+    cfg_kw = float(configured_kw) if enable_battery else 0.0
+    cfg_kwh = float(configured_kwh) if enable_battery else 0.0
+    df = build_bess_bottleneck_table_df(
+        sa_100_kw=dual_bess.standalone_100_kw,
+        cp_100_kw=dual_bess.coupled_100_kw,
+        sa_single_kwh=dual_bess.standalone_single_event_kwh,
+        cp_single_kwh=dual_bess.coupled_single_event_kwh,
+        sa_100_kwh=dual_bess.standalone_100_kwh,
+        cp_100_kwh=dual_bess.coupled_100_kwh,
+        sa_rech_kw=dual_bess.standalone_recharge_headroom_kw,
+        sa_rech_kwh=dual_bess.standalone_recharge_headroom_kwh,
+        cp_rech_kw=dual_bess.coupled_recharge_headroom_kw,
+        cp_rech_kwh=dual_bess.coupled_recharge_headroom_kwh,
+        cp_driver=dual_bess.controlling_driver_coupled,
+        cfg_kw=cfg_kw,
+        cfg_kwh=cfg_kwh,
+    )
+    dual_bess.bottleneck_table_df = df
+    return df
+
+
 def compute_dual_battery_sizing(
     load_kw: np.ndarray,
     system_cfg: CombinedSystemConfig,
@@ -904,40 +991,21 @@ def compute_dual_battery_sizing(
     cfg_kw = float(system_cfg.battery_power_kw) if system_cfg.enable_battery else 0.0
     cfg_kwh = float(system_cfg.battery_capacity_kwh) if system_cfg.enable_battery else 0.0
 
-    rows = [
-        {
-            "Criterion": "1. Peak Discharge Power (kW)",
-            "What It Checks": "Highest power spike above the Grid Limit",
-            "Standalone Required": f"{sa_100_kw:,.1f} kW",
-            "Coupled Required": f"{cp_100_kw:,.1f} kW",
-            "Configured Battery": f"{cfg_kw:,.1f} kW",
-            "Status": "Pass" if cfg_kw >= cp_100_kw - 0.1 else f"Bottleneck (-{max(0.0, cp_100_kw - cfg_kw):,.1f} kW)",
-        },
-        {
-            "Criterion": "2. Single Peak Event Energy (kWh)",
-            "What It Checks": "Largest single continuous overload event",
-            "Standalone Required": f"{sa_single_kwh:,.1f} kWh",
-            "Coupled Required": f"{cp_single_kwh:,.1f} kWh",
-            "Configured Battery": f"{cfg_kwh:,.1f} kWh",
-            "Status": "Pass" if cfg_kwh >= cp_single_kwh - 0.5 else f"Bottleneck (-{max(0.0, cp_single_kwh - cfg_kwh):,.1f} kWh)",
-        },
-        {
-            "Criterion": "3. Multi-Day Cluster Energy (kWh)",
-            "What It Checks": "Consecutive peak days without enough time to recharge in between",
-            "Standalone Required": f"{sa_100_kwh:,.1f} kWh",
-            "Coupled Required": f"{cp_100_kwh:,.1f} kWh",
-            "Configured Battery": f"{cfg_kwh:,.1f} kWh",
-            "Status": "Pass" if cfg_kwh >= cp_100_kwh - 0.5 else f"Bottleneck (-{max(0.0, cp_100_kwh - cfg_kwh):,.1f} kWh)",
-        },
-        {
-            "Criterion": "4. Available Recharge Headroom",
-            "What It Checks": "Charging room available below Grid Limit & from Solar surplus",
-            "Standalone Required": f"{sa_rech_kw:,.0f} kW max ({sa_rech_kwh:,.0f} kWh/yr)",
-            "Coupled Required": f"{cp_rech_kw:,.0f} kW max ({cp_rech_kwh:,.0f} kWh/yr)",
-            "Configured Battery": f"{cfg_kw:,.1f} kW charge limit",
-            "Status": "Pass" if cp_driver != "Available Recharge Headroom" else "Bottleneck (Low Recharge Room)",
-        },
-    ]
+    bottleneck_df = build_bess_bottleneck_table_df(
+        sa_100_kw=sa_100_kw,
+        cp_100_kw=cp_100_kw,
+        sa_single_kwh=sa_single_kwh,
+        cp_single_kwh=cp_single_kwh,
+        sa_100_kwh=sa_100_kwh,
+        cp_100_kwh=cp_100_kwh,
+        sa_rech_kw=sa_rech_kw,
+        sa_rech_kwh=sa_rech_kwh,
+        cp_rech_kw=cp_rech_kw,
+        cp_rech_kwh=cp_rech_kwh,
+        cp_driver=cp_driver,
+        cfg_kw=cfg_kw,
+        cfg_kwh=cfg_kwh,
+    )
 
     return DualBatterySizingResult(
         standalone_100_kw=sa_100_kw,
@@ -964,7 +1032,7 @@ def compute_dual_battery_sizing(
         coupled_recharge_headroom_kwh=cp_rech_kwh,
         controlling_driver_standalone=sa_driver,
         controlling_driver_coupled=cp_driver,
-        bottleneck_table_df=pd.DataFrame(rows),
+        bottleneck_table_df=bottleneck_df,
     )
 
 
@@ -1648,13 +1716,6 @@ def simulate_combined_system_dispatch(
         step_hours=dt,
     )
 
-    bess_dual = compute_dual_battery_sizing(
-        load_kw=p_load,
-        system_cfg=system_cfg,
-        rules_cfg=rules_cfg,
-        step_hours=dt,
-    )
-
     return CombinedSimulationResult(
         system_config=system_cfg,
         rules_config=rules_cfg,
@@ -1681,7 +1742,6 @@ def simulate_combined_system_dispatch(
         unmet_overload_kw=unmet_overload_kw,
         summary_table_df=summary_df,
         monthly_balance_df=monthly_df,
-        bess_bottleneck_df=bess_dual.bottleneck_table_df,
     )
 
 
