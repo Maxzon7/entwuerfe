@@ -475,6 +475,30 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIsInstance(norm_series, LoadSeries2025)
         self.assertEqual(len(norm_series.power_kw), 35040)
 
+    def test_all_subtab_forms_encapsulated(self):
+        """Verifies that all 7 heavy input sections are encapsulated in st.form to eliminate intermediate reruns."""
+        app_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "app.py")
+        )
+        with open(app_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        required_forms = [
+            'st.form("comb_grid_limit_form")',
+            'st.form("comb_solar_location_form")',
+            'st.form("comb_solar_form")',
+            'st.form("comb_battery_form")',
+            'st.form("comb_generator_form")',
+            'st.form("comb_rules_form")',
+            'st.form("comb_financials_form")',
+        ]
+        for form_str in required_forms:
+            self.assertIn(
+                form_str,
+                code,
+                f"Required form '{form_str}' missing from Combined_sandbox/app.py",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

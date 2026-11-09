@@ -247,7 +247,7 @@ The Generator Sandbox replicates the exact UI layout and proven calculation comp
 The Combined System Sandbox serves as the official UX reference standard under the **Clean Screen Policy**, uniting **Grid, Solar, Battery, Generator, and Lazy-Loaded Financials** in a **3-Level Modular Architecture**:
 
 * **Level 1 (Top — System Overview Bar):**
-  * **Grid Limit (kW) & Peak Demand:** Direct numerical input for the contracted Grid Limit (kW) displayed right next to the facility's measured Peak Demand (kW) and overload status.
+  * **Grid Limit (kW) & Peak Demand:** Form-encapsulated numerical input for the contracted Grid Limit (`st.form("comb_grid_limit_form")` with `Apply Limit` button) displayed right next to the facility's measured Peak Demand (kW) and overload status.
   * **Global Module Activation Switches:** Toggles for `Solar`, `Battery`, `Generator`, and `Financials`. All add-on modules start **deactivated (OFF)** by default.
   * **Lazy-Loaded Financials Performance Rule:** While `Financials` is deactivated, only the fast 35,040-step physical 15-minute simulation runs. The 4-Pillar tariff billing and 15-year lifecycle cashflow engine only execute when `Financials` is activated.
 * **Level 2 (Middle — 6 Module Sub-Tabs with 1-Click Activation):**
@@ -255,8 +255,8 @@ The Combined System Sandbox serves as the official UX reference standard under t
   * **Subtab 1: Consumption (Always Active):**
     * CSV upload (selected as default, with delimiter sniffer, date filter, and 15-min `kWh -> kW` conversion) plus benchmark switcher and 4 Base KPIs (`Annual Consumption`, `Peak Demand`, `Average Load`, `Overload above Grid Limit`).
   * **Subtab 2: Solar:**
-    * City search & location presets (Default: `Amsterdam`) + data source line (`Data source: EU PVGIS (ERA5 15-min TMY) | Specific Yield: X kWh/kWp/year`).
-    * Dual Quick-Sizing (`% of Annual Consumption`: `20% | 40% | 60% | 100%` vs. `Direct Size (kWp)`) outside the form for instant 1-click response; manual inputs (`Share of Consumption %`, `Direct Size kWp`, `Inverter AC Limit kW`, `Inverter Efficiency %`) encapsulated in `st.form("comb_solar_form")` (`Apply Solar Settings`), plus blue live calculation formula box.
+    * City search & location presets encapsulated in `st.form("comb_solar_location_form")` (`Apply Location`, Default: `Amsterdam`) + data source line (`Data source: EU PVGIS (ERA5 15-min TMY) | Specific Yield: X kWh/kWp/year`).
+    * Dual Quick-Sizing (`% of Annual Consumption`: `20% | 40% | 60% | 100%`) outside the form for instant 1-click response; manual inputs (`Sizing Mode`, `Share of Consumption %`, `Direct Size kWp`, `Inverter AC Limit kW`, `Inverter Efficiency %`) encapsulated in `st.form("comb_solar_form")` (`Apply Solar Settings`), plus blue live calculation formula box.
   * **Subtab 3: Battery (With Fingerprint-Cached Dual-Sizing & `O(1)` 4-Criterion Bottleneck Diagnostic Table):**
     * **Dual Sizing System (`100% Zero-Overload`, `80%`, `50%`):**
       * *Mode A – Standalone (Battery only):* Required battery size (`kWh / kW`) to eliminate grid overloads 100% on its own.
@@ -267,8 +267,9 @@ The Combined System Sandbox serves as the official UX reference standard under t
   * **Subtab 4: Generator (With Fingerprint-Cached Dual-Sizing):**
     * **Dual Sizing System (`100%`, `80%`, `50%`):** *Mode A – Standalone (Generator only)* vs. *Mode B – Coupled (Remaining peak after Solar & Battery)*, cached via `comb_gen_sizing_fp` / `comb_cached_dual_gen`.
     * **Minimalist Core Inputs (`st.form("comb_generator_form")` / `Apply Generator Settings`):** `Generator Power (kW)`, `Minimum Load (%)` (`25%` wet-stacking protection), and `Fuel Type` (`Diesel`, `Natural Gas`, `HVO`).
-  * **Subtab 5: Interaction Rules:**
+  * **Subtab 5: Interaction Rules (`st.form("comb_rules_form")` / `Apply Interaction Rules`):**
     * Explicit callout banner explaining that active **Solar** always feeds Consumption directly first, automatically lowering demand and daytime peaks before Battery or Generator step in.
+    * All 3 rules and the `Peak Reserve SoC %` slider are encapsulated in `st.form("comb_rules_form")` to eliminate intermediate reruns while adjusting policies.
     * **Rule 1 – Peak Shaving Priority (Above Grid Limit):** `Battery first, Generator as backup` vs. `Generator first, Battery for small/fast peaks`.
     * **Rule 2 – Normal Load Coverage (Below Grid Limit):** `Peak Shaving only` vs. `Self-Consumption + Peak Reserve` (with `Peak Reserve SoC %` slider).
     * **Rule 3 – Battery Charging Sources & Timing:** `Option A: Solar surplus only`, `Option B: Solar surplus + Grid headroom`, `Option C: Solar surplus + Generator excess (Cycle Charging)`, and `Option D: Solar + Grid + Generator excess`.

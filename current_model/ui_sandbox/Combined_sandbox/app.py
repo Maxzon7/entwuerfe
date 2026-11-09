@@ -319,20 +319,27 @@ def render_level1_overview_bar(load_series: LoadSeries2025, load_label: str) -> 
     orig_peak_kw = float(load_series.peak_demand_kw)
 
     with st.container(border=True):
-        c_grid, c_peak, c_sol, c_bat, c_gen, c_fin = st.columns([1.3, 1.3, 0.9, 0.9, 0.9, 0.9])
+        c_grid, c_peak, c_sol, c_bat, c_gen, c_fin = st.columns([1.4, 1.2, 0.85, 0.85, 0.85, 0.85])
 
         with c_grid:
-            grid_limit_val = st.number_input(
-                "Grid Limit (kW)",
-                min_value=10.0,
-                max_value=20000.0,
-                value=float(cur_sys.grid_limit_kw),
-                step=10.0,
-                key="comb_grid_limit_input",
-            )
-            cur_sys.grid_limit_kw = float(grid_limit_val)
+            with st.form("comb_grid_limit_form"):
+                grid_limit_val = st.number_input(
+                    "Grid Limit (kW)",
+                    min_value=10.0,
+                    max_value=20000.0,
+                    value=float(cur_sys.grid_limit_kw),
+                    step=10.0,
+                    key="comb_grid_limit_input",
+                )
+                gl_submitted = st.form_submit_button(
+                    "Apply Limit",
+                    use_container_width=True,
+                )
+            if gl_submitted:
+                cur_sys.grid_limit_kw = float(grid_limit_val)
+                st.session_state.pop("comb_cached_excel_bytes", None)
 
-        overload_kw = max(0.0, orig_peak_kw - float(grid_limit_val))
+        overload_kw = max(0.0, orig_peak_kw - float(cur_sys.grid_limit_kw))
         with c_peak:
             st.metric(
                 label="Peak Demand",
@@ -471,56 +478,51 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         st.markdown("##### :material/solar_power: Solar Configuration")
 
         # 1. Location: City Search & Presets (Default: Amsterdam)
-        loc_c1, loc_c2 = st.columns(2)
-        with loc_c1:
-            search_query = st.text_input(
-                "City Search",
-                placeholder="Type a city name (e.g. Amsterdam, Rotterdam, Berlin, Madrid)...",
-                disabled=not is_active,
-                key="comb_solar_search_input",
-            )
-            if is_active and search_query and len(search_query.strip()) >= 2:
-                search_results = search_locations_open_meteo(search_query.strip(), count=5)
-                if search_results:
-                    match_dict = {
-                        f"{r['display_name']} ({r['lat']}°, {r['lon']}°)": r
-                        for r in search_results
-                    }
-                    selected_match = st.selectbox(
-                        "Select matching city:",
-                        options=list(match_dict.keys()),
-                        key="comb_solar_search_match_select",
-                    )
-                    if selected_match in match_dict:
-                        chosen = match_dict[selected_match]
-                        if (
-                            abs(st.session_state.get("comb_solar_lat", 52.3676) - chosen["lat"]) > 0.001
-                            or abs(st.session_state.get("comb_solar_lon", 4.9041) - chosen["lon"]) > 0.001
-                        ):
-                            st.session_state["comb_solar_lat"] = float(chosen["lat"])
-                            st.session_state["comb_solar_lon"] = float(chosen["lon"])
-                            st.session_state["comb_solar_site_name"] = chosen["display_name"]
-                            st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
-                            st.rerun()
+        with st.form("comb_solar_location_form"):
+            loc_c1, loc_c2, loc_btn = st.columns([1.5, 1.5, 0.9])
+            with loc_c1:
+                search_query = st.text_input(
+                    "City Search",
+                    value=st.session_state.get("comb_solar_search_input", ""),
+                    placeholder="Type city (e.g. Amsterdam, Berlin, Madrid)...",
+                    disabled=not is_active,
+                    key="comb_solar_search_input",
+                )
+            with loc_c2:
+                preset_options = list(SOLAR_SITE_PRESETS.keys()) + ["Custom GPS Coordinates"]
+                curr_preset = st.session_state.get("comb_solar_preset_choice", "Amsterdam (Default GPS)")
+                preset_idx = preset_options.index(curr_preset) if curr_preset in preset_options else 0
+                preset_choice = st.selectbox(
+                    "Location Presets (Default: Amsterdam)",
+                    options=preset_options,
+                    index=preset_idx,
+                    disabled=not is_active,
+                    key="comb_solar_preset_select",
+                )
+            with loc_btn:
+                st.write("")
+                loc_submitted = st.form_submit_button(
+                    "Apply Location",
+                    use_container_width=True,
+                    disabled=not is_active,
+                )
 
-        with loc_c2:
-            preset_options = list(SOLAR_SITE_PRESETS.keys()) + ["Custom GPS Coordinates"]
-            curr_preset = st.session_state.get("comb_solar_preset_choice", "Amsterdam (Default GPS)")
-            preset_idx = preset_options.index(curr_preset) if curr_preset in preset_options else 0
-            preset_choice = st.selectbox(
-                "Location Presets (Default: Amsterdam)",
-                options=preset_options,
-                index=preset_idx,
-                disabled=not is_active,
-                key="comb_solar_preset_select",
-            )
-            if is_active and preset_choice in SOLAR_SITE_PRESETS and preset_choice != st.session_state.get("comb_solar_preset_choice"):
+        if loc_submitted:
+            if search_query and len(search_query.strip()) >= 2 and search_query.strip() != st.session_state.get("comb_solar_site_name", ""):
+                search_results = search_locations_open_meteo(search_query.strip(), count=1)
+                if search_results:
+                    chosen = search_results[0]
+                    st.session_state["comb_solar_lat"] = float(chosen["lat"])
+                    st.session_state["comb_solar_lon"] = float(chosen["lon"])
+                    st.session_state["comb_solar_site_name"] = chosen["display_name"]
+                    st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
+            elif preset_choice in SOLAR_SITE_PRESETS:
                 p_data = SOLAR_SITE_PRESETS[preset_choice]
                 st.session_state["comb_solar_lat"] = float(p_data["latitude"])
                 st.session_state["comb_solar_lon"] = float(p_data["longitude"])
                 st.session_state["comb_solar_site_name"] = p_data["name"]
                 st.session_state["comb_solar_preset_choice"] = preset_choice
-                st.rerun()
+            st.session_state.pop("comb_cached_excel_bytes", None)
 
         eff_lat = float(st.session_state.get("comb_solar_lat", 52.3676))
         eff_lon = float(st.session_state.get("comb_solar_lon", 4.9041))
@@ -540,44 +542,28 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         st.markdown("---")
 
         # 2. Dual Quick-Sizing & Manual Input (st.form encapsulated)
-        sz_m1, sz_m2 = st.columns([1.4, 2.0])
-        with sz_m1:
-            sizing_mode_label = st.radio(
-                "Sizing Mode",
-                options=["% of Annual Consumption", "Direct Size (kWp)"],
-                index=0 if cur_sys.solar_sizing_method == "target_share_pct" else 1,
-                horizontal=True,
-                disabled=not is_active,
-                key="comb_solar_sizing_radio",
-            )
-        with sz_m2:
-            st.caption("Quick Sizing (% of Annual Consumption):")
-            qb1, qb2, qb3, qb4 = st.columns(4)
-            qb1.button(
-                "20%", use_container_width=True, disabled=not is_active,
-                key="comb_sol_q20", on_click=_apply_solar_quick_share, args=(20.0,),
-            )
-            qb2.button(
-                "40%", use_container_width=True, disabled=not is_active,
-                key="comb_sol_q40", on_click=_apply_solar_quick_share, args=(40.0,),
-            )
-            qb3.button(
-                "60%", use_container_width=True, disabled=not is_active,
-                key="comb_sol_q60", on_click=_apply_solar_quick_share, args=(60.0,),
-            )
-            qb4.button(
-                "100%", use_container_width=True, disabled=not is_active,
-                key="comb_sol_q100", on_click=_apply_solar_quick_share, args=(100.0,),
-            )
-
-        sizing_method_key = "target_share_pct" if sizing_mode_label == "% of Annual Consumption" else "direct_kwp"
-        cur_sys.solar_sizing_method = sizing_method_key
-        cur_sys.latitude = eff_lat
-        cur_sys.longitude = eff_lon
+        st.caption("Quick Sizing Presets (% of Annual Consumption):")
+        qb1, qb2, qb3, qb4 = st.columns(4)
+        qb1.button(
+            "20%", use_container_width=True, disabled=not is_active,
+            key="comb_sol_q20", on_click=_apply_solar_quick_share, args=(20.0,),
+        )
+        qb2.button(
+            "40%", use_container_width=True, disabled=not is_active,
+            key="comb_sol_q40", on_click=_apply_solar_quick_share, args=(40.0,),
+        )
+        qb3.button(
+            "60%", use_container_width=True, disabled=not is_active,
+            key="comb_sol_q60", on_click=_apply_solar_quick_share, args=(60.0,),
+        )
+        qb4.button(
+            "100%", use_container_width=True, disabled=not is_active,
+            key="comb_sol_q100", on_click=_apply_solar_quick_share, args=(100.0,),
+        )
 
         preview_kwp = (
             round((ann_kwh * (float(cur_sys.target_consumption_share_pct) / 100.0)) / max(100.0, spec_yield), 1)
-            if sizing_method_key == "target_share_pct"
+            if cur_sys.solar_sizing_method == "target_share_pct"
             else round(float(cur_sys.solar_kwp), 1)
         )
         default_inv_kw = (
@@ -587,6 +573,22 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         )
 
         with st.form("comb_solar_form"):
+            sz_m1, sz_m2 = st.columns([1.5, 2.5])
+            with sz_m1:
+                sizing_mode_label = st.radio(
+                    "Sizing Mode",
+                    options=["% of Annual Consumption", "Direct Size (kWp)"],
+                    index=0 if cur_sys.solar_sizing_method == "target_share_pct" else 1,
+                    horizontal=True,
+                    disabled=not is_active,
+                    key="comb_solar_sizing_radio",
+                )
+            with sz_m2:
+                st.caption(
+                    "Select '% of Annual Consumption' to auto-size Solar from energy share, "
+                    "or 'Direct Size (kWp)' to specify exact installed capacity."
+                )
+
             in_c1, in_c2, in_c3, in_c4, in_btn = st.columns([1.1, 1.1, 1.1, 1.1, 0.9])
             with in_c1:
                 target_share_val = st.number_input(
@@ -595,7 +597,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     max_value=250.0,
                     value=float(cur_sys.target_consumption_share_pct),
                     step=5.0,
-                    disabled=not is_active or sizing_mode_label != "% of Annual Consumption",
+                    disabled=not is_active,
                     key="comb_solar_target_share_num",
                 )
             with in_c2:
@@ -605,7 +607,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     max_value=25000.0,
                     value=float(cur_sys.solar_kwp),
                     step=10.0,
-                    disabled=not is_active or sizing_mode_label != "Direct Size (kWp)",
+                    disabled=not is_active,
                     key="comb_solar_direct_kwp_num",
                 )
             with in_c3:
@@ -636,16 +638,22 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     disabled=not is_active,
                 )
 
-        if sol_submitted or is_active:
+        if sol_submitted:
+            sizing_method_key = "target_share_pct" if sizing_mode_label == "% of Annual Consumption" else "direct_kwp"
+            cur_sys.solar_sizing_method = sizing_method_key
             cur_sys.target_consumption_share_pct = float(target_share_val)
             cur_sys.solar_kwp = float(direct_kwp_val)
             cur_sys.inverter_ac_limit_kw = float(inv_ac_limit_val)
             cur_sys.inverter_efficiency_pct = float(inv_eff_val)
+            st.session_state.pop("comb_cached_excel_bytes", None)
+
+        cur_sys.latitude = eff_lat
+        cur_sys.longitude = eff_lon
 
         solar_deriv = derive_solar_sizing_and_formula(
             annual_consumption_kwh=ann_kwh,
             specific_yield_kwh_per_kwp=spec_yield,
-            sizing_method=sizing_method_key,
+            sizing_method=cur_sys.solar_sizing_method,
             direct_kwp=float(cur_sys.solar_kwp),
             target_share_pct=float(cur_sys.target_consumption_share_pct),
             panel_wp=cur_sys.panel_wp,
@@ -847,7 +855,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                     disabled=not is_active,
                 )
 
-        if bess_submitted or is_active:
+        if bess_submitted:
             so_c_changed = (
                 abs(cur_sys.min_soc_pct - float(min_soc)) > 1e-4
                 or abs(cur_sys.max_soc_pct - float(max_soc)) > 1e-4
@@ -865,6 +873,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                     rules_cfg=cur_rules,
                 )
                 st.session_state["comb_cached_dual_bess"] = dual_bess
+            st.session_state.pop("comb_cached_excel_bytes", None)
 
         # Lightweight O(1) update of 'Configured Battery' & 'Status' columns (no 35,040-step re-run!)
         bottleneck_df = refresh_bottleneck_table_configured_status(
@@ -1051,10 +1060,11 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
                     disabled=not is_active,
                 )
 
-        if gen_submitted or is_active:
+        if gen_submitted:
             cur_sys.generator_rated_kw = float(gen_kw_val)
             cur_sys.generator_min_load_pct = float(gen_min_pct_val)
             cur_sys.fuel_type = str(fuel_type_val)
+            st.session_state.pop("comb_cached_excel_bytes", None)
 
 
 # ======================================================================================
@@ -1068,6 +1078,7 @@ def render_subtab5_interaction_rules() -> None:
       - Rule 1: Peak Shaving Priority (Above Grid Limit)
       - Rule 2: Normal Load Coverage (Below Grid Limit)
       - Rule 3: Battery Charging Sources & Timing (Options A, B, C, D)
+      - Encapsulated in st.form("comb_rules_form") to prevent intermediate 20s reruns while adjusting
     """
     cur_rules: InteractionRulesConfig = st.session_state["comb_rules_cfg"]
 
@@ -1078,47 +1089,43 @@ def render_subtab5_interaction_rules() -> None:
         icon=":material/solar_power:",
     )
 
-    with st.container(border=True):
-        r_c1, r_c2, r_c3 = st.columns(3)
+    r1_keys = list(RULE1_OPTIONS.keys())
+    r2_keys = list(RULE2_OPTIONS.keys())
+    r3_keys = list(RULE3_OPTIONS.keys())
 
-        r1_keys = list(RULE1_OPTIONS.keys())
-        r2_keys = list(RULE2_OPTIONS.keys())
-        r3_keys = list(RULE3_OPTIONS.keys())
+    with st.form("comb_rules_form"):
+        with st.container(border=True):
+            r_c1, r_c2, r_c3 = st.columns(3)
 
-        with r_c1:
-            st.markdown("##### :material/priority_high: Rule 1 – Peak Shaving Priority")
-            st.caption("Who steps in first when remaining demand (after direct Solar) exceeds the Grid Limit?")
-            rule1_val = st.radio(
-                "Rule 1 Priority",
-                options=r1_keys,
-                index=r1_keys.index(cur_rules.rule1_peak_priority) if cur_rules.rule1_peak_priority in r1_keys else 0,
-                format_func=lambda k: RULE1_OPTIONS[k],
-                label_visibility="collapsed",
-                key="comb_rule1_select",
-            )
-            if rule1_val == "battery_first":
-                st.caption(
-                    "Battery absorbs peaks first; Generator starts only if the Battery is empty or the peak exceeds Battery power."
+            with r_c1:
+                st.markdown("##### :material/priority_high: Rule 1 – Peak Shaving Priority")
+                st.caption("Who steps in first when remaining demand (after direct Solar) exceeds the Grid Limit?")
+                rule1_val = st.radio(
+                    "Rule 1 Priority",
+                    options=r1_keys,
+                    index=r1_keys.index(cur_rules.rule1_peak_priority) if cur_rules.rule1_peak_priority in r1_keys else 0,
+                    format_func=lambda k: RULE1_OPTIONS[k],
+                    label_visibility="collapsed",
+                    key="comb_rule1_select",
                 )
-            else:
                 st.caption(
-                    "Generator covers large sustained peaks; Battery covers small peaks below the Generator's 25% minimum load and peaks above Generator power."
+                    "Battery first: Battery absorbs peaks first; Generator starts as backup. / "
+                    "Generator first: Generator covers sustained peaks; Battery covers small or excess peaks."
                 )
 
-        with r_c2:
-            st.markdown("##### :material/battery_saver: Rule 2 – Normal Load Coverage")
-            st.caption("May stored battery energy also be used when demand is below the Grid Limit?")
-            rule2_val = st.radio(
-                "Rule 2 Strategy",
-                options=r2_keys,
-                index=r2_keys.index(cur_rules.rule2_battery_strategy) if cur_rules.rule2_battery_strategy in r2_keys else 0,
-                format_func=lambda k: RULE2_OPTIONS[k],
-                label_visibility="collapsed",
-                key="comb_rule2_select",
-            )
-            if rule2_val == "self_consumption_reserve":
+            with r_c2:
+                st.markdown("##### :material/battery_saver: Rule 2 – Normal Load Coverage")
+                st.caption("May stored battery energy also be used when demand is below the Grid Limit?")
+                rule2_val = st.radio(
+                    "Rule 2 Strategy",
+                    options=r2_keys,
+                    index=r2_keys.index(cur_rules.rule2_battery_strategy) if cur_rules.rule2_battery_strategy in r2_keys else 0,
+                    format_func=lambda k: RULE2_OPTIONS[k],
+                    label_visibility="collapsed",
+                    key="comb_rule2_select",
+                )
                 reserve_val = st.slider(
-                    "Peak Reserve SoC (%) held strictly for peaks",
+                    "Peak Reserve SoC (%) — when Self-Consumption is active",
                     min_value=10,
                     max_value=90,
                     value=int(np.clip(cur_rules.peak_reserve_soc_pct, 10, 90)),
@@ -1126,36 +1133,37 @@ def render_subtab5_interaction_rules() -> None:
                     key="comb_rule2_reserve_slider",
                 )
                 st.caption(
-                    f"Shifts extra solar energy into evening/night demand, but keeps at least {reserve_val}% in reserve for peaks."
+                    "If Self-Consumption + Peak Reserve is active, extra solar energy shifts into evening load "
+                    "while protecting this SoC % exclusively for peak shaving."
                 )
-            else:
-                reserve_val = float(cur_rules.peak_reserve_soc_pct)
-                st.caption("Battery is held 100% in reserve for peaks above the Grid Limit.")
 
-        with r_c3:
-            st.markdown("##### :material/bolt: Rule 3 – Battery Charging Sources")
-            st.caption("Where and when does the Battery recharge?")
-            rule3_val = st.radio(
-                "Rule 3 Charging",
-                options=r3_keys,
-                index=r3_keys.index(cur_rules.rule3_charging_sources) if cur_rules.rule3_charging_sources in r3_keys else 0,
-                format_func=lambda k: RULE3_OPTIONS[k],
-                label_visibility="collapsed",
-                key="comb_rule3_select",
-            )
-            if rule3_val == "solar_only":
-                st.caption("Charges only when Solar produces more power than your facility currently uses.")
-            elif rule3_val == "solar_and_grid":
-                st.caption("Charges from Solar surplus and from the Grid whenever demand is below the Grid Limit.")
-            elif rule3_val == "solar_and_generator":
-                st.caption("Charges from Solar surplus and from excess Generator power caused by its 25% minimum load.")
-            else:
-                st.caption("Full coupling: Charges from Solar surplus, Grid headroom below the limit, and Generator excess.")
+            with r_c3:
+                st.markdown("##### :material/bolt: Rule 3 – Battery Charging Sources")
+                st.caption("Where and when does the Battery recharge?")
+                rule3_val = st.radio(
+                    "Rule 3 Charging",
+                    options=r3_keys,
+                    index=r3_keys.index(cur_rules.rule3_charging_sources) if cur_rules.rule3_charging_sources in r3_keys else 0,
+                    format_func=lambda k: RULE3_OPTIONS[k],
+                    label_visibility="collapsed",
+                    key="comb_rule3_select",
+                )
+                st.caption(
+                    "Options range from Solar only to full multi-source coupling (Solar surplus + Grid headroom + Generator excess)."
+                )
 
+        rules_submitted = st.form_submit_button(
+            "Apply Interaction Rules",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if rules_submitted:
         cur_rules.rule1_peak_priority = str(rule1_val)
         cur_rules.rule2_battery_strategy = str(rule2_val)
         cur_rules.peak_reserve_soc_pct = float(reserve_val)
         cur_rules.rule3_charging_sources = str(rule3_val)
+        st.session_state.pop("comb_cached_excel_bytes", None)
 
 
 # ======================================================================================
