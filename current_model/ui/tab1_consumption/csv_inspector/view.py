@@ -397,52 +397,188 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 else:
                     grid_limit_kw = None
 
-            st.subheader("4. Interactive Load Profile Curve")
-            fig = create_csv_inspector_figure(
-                df_clean=df_clean,
-                file_name=file_name,
-                selected_power_cols=selected_power_cols,
-                total_col="Total_Demand_kW",
-                peak_kw=kpis.peak_kw,
-                grid_limit_kw=grid_limit_kw
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            # Sub-Meter Selection & Profile Confirmation Workflow
+            conf_key = f"{key_prefix}_profile_confirmed_{file_name}"
+            submeter_key = f"{key_prefix}_active_submeters_{file_name}"
 
-            # Grid Limit Overload Analysis & Violation Cards
-            if enable_grid_limit and grid_limit_kw:
-                series = df_clean["Total_Demand_kW"]
-                overload_diff = (series - grid_limit_kw).clip(lower=0.0)
-                overload_peak_kw = float(overload_diff.max())
-                overload_hours = float((series > grid_limit_kw).sum() * 0.25)
-                overload_kwh = float(overload_diff.sum() * 0.25)
-                has_violation = overload_peak_kw > 0.0
+            available_pwr_cols = [c for c in selected_power_cols if c in df_clean.columns and c != "Total_Demand_kW"]
+            if not available_pwr_cols:
+                available_pwr_cols = [
+                    c for c in df_clean.columns
+                    if c not in ("timestamp", "Total_Demand_kW") and pd.api.types.is_numeric_dtype(df_clean[c])
+                ]
 
-                st.markdown("#### :material/warning: Grid Capacity Overload Analysis")
-                o_col1, o_col2, o_col3 = st.columns(3)
+            if submeter_key not in st.session_state:
+                st.session_state[submeter_key] = list(available_pwr_cols)
 
-                with o_col1:
-                    status_style = "alert" if has_violation else "ok"
-                    status_title = "Grid Overload Peak" if has_violation else "Grid Status"
-                    val_str = f"+{overload_peak_kw:.1f} kW" if has_violation else "Within Limit"
-                    render_kpi_card(status_title, val_str, f"Max Limit: {grid_limit_kw:.1f} kW", status=status_style)
+            is_confirmed = bool(st.session_state.get(conf_key, False))
 
-                with o_col2:
-                    render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", f"{int(overload_hours * 4)} intervals (15-min)")
+            if is_confirmed:
+                active_pwr_cols = st.session_state.get(submeter_key, available_pwr_cols)
+                if active_pwr_cols and set(active_pwr_cols).issubset(df_clean.columns):
+                    df_clean["Total_Demand_kW"] = df_clean[active_pwr_cols].sum(axis=1)
+                    kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
 
-                with o_col3:
-                    render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
+                # Clean Confirmed Banner
+                with st.container(border=True):
+                    conf_c1, conf_c2 = st.columns([3.4, 1.3])
+                    with conf_c1:
+                        m_desc = (
+                            f"{len(active_pwr_cols)} sub-meters ({', '.join(active_pwr_cols)})"
+                            if len(active_pwr_cols) > 1
+                            else f"Single Meter: {active_pwr_cols[0] if active_pwr_cols else 'Total Demand'}"
+                        )
+                        st.markdown(
+                            f"##### :material/check_circle: Active Consumption Profile Confirmed\n\n"
+                            f"**Dataset:** `{file_name}` | **Peak Demand:** `{kpis.peak_kw:,.1f} kW` | "
+                            f"**Total Energy:** `{kpis.total_kwh:,.0f} kWh` | **Average Power:** `{kpis.avg_kw:,.1f} kW`  \n"
+                            f":material/account_tree: **Included Sub-Meters in Total Demand:** {m_desc}"
+                        )
+                    with conf_c2:
+                        st.write("")
+                        if st.button(
+                            "Edit / Change Sub-Meters",
+                            icon=":material/edit:",
+                            type="secondary",
+                            use_container_width=True,
+                            key=f"{key_prefix}_btn_edit_profile_{file_name}",
+                        ):
+                            st.session_state[conf_key] = False
+                            st.session_state["comb_profile_confirmed"] = False
+                            st.rerun()
 
-            # 5. Standardized 365-Day Annual Baseline Profile & Calculation Basis
-            _render_annual_calculation_profile_section(
-                df_clean=df_clean,
-                total_col="Total_Demand_kW",
-                kpis=kpis,
-                file_name=file_name,
-                key_prefix=key_prefix
-            )
+                # Collapsed Raw Curve Expander (Zero DOM / scroll penalty unless opened)
+                with st.expander(":material/visibility: Inspect Raw Sub-Meter Curve & 365-Day Baseline (Optional)", expanded=False):
+                    fig = create_csv_inspector_figure(
+                        df_clean=df_clean,
+                        file_name=file_name,
+                        selected_power_cols=active_pwr_cols,
+                        total_col="Total_Demand_kW",
+                        peak_kw=kpis.peak_kw,
+                        grid_limit_kw=grid_limit_kw,
+                    )
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True,
+                        config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
+                    )
+                    _render_annual_calculation_profile_section(
+                        df_clean=df_clean,
+                        total_col="Total_Demand_kW",
+                        kpis=kpis,
+                        file_name=file_name,
+                        key_prefix=key_prefix,
+                    )
+                    st.dataframe(df_clean, use_container_width=True, height=220)
+            else:
+                with st.container(border=True):
+                    st.markdown("##### :material/account_tree: Sub-Meter Selection & Total Demand Confirmation")
+                    st.caption(
+                        "Verify the power streams detected in this dataset. You can include all sub-meters in the aggregated Total Demand, "
+                        "or deselect specific sub-meters (e.g. EV chargers or test equipment) to exclude them from downstream simulation."
+                    )
+                    if len(available_pwr_cols) > 1:
+                        chosen_submeters = st.multiselect(
+                            "Included Power / Sub-Meter Columns in Total Demand:",
+                            options=available_pwr_cols,
+                            default=st.session_state.get(submeter_key, available_pwr_cols),
+                            key=f"{key_prefix}_ms_submeters_{file_name}",
+                            help="Only checked sub-meters will be summed into the Total Demand curve used downstream.",
+                        )
+                        if not chosen_submeters:
+                            st.warning("Please select at least one sub-meter for the total demand calculation.")
+                            chosen_submeters = list(available_pwr_cols)
+                    else:
+                        chosen_submeters = list(available_pwr_cols)
+                        st.info(f":material/bolt: Active Power Stream: **{available_pwr_cols[0] if available_pwr_cols else 'Total_Demand_kW'}**")
 
-            with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
-                st.dataframe(df_clean, use_container_width=True, height=220)
+                    if chosen_submeters and set(chosen_submeters).issubset(df_clean.columns):
+                        df_clean["Total_Demand_kW"] = df_clean[chosen_submeters].sum(axis=1)
+                        kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
+                        st.session_state[submeter_key] = chosen_submeters
+
+                    conf_row1, conf_row2 = st.columns([2.5, 1.3])
+                    with conf_row1:
+                        st.caption(
+                            f":material/info: Resulting Total Demand: **{kpis.peak_kw:,.1f} kW Peak** | "
+                            f"**{kpis.total_kwh:,.0f} kWh/yr** across {len(chosen_submeters)} selected stream(s)."
+                        )
+                    with conf_row2:
+                        if st.button(
+                            "Confirm Total Demand for Simulation",
+                            icon=":material/check_circle:",
+                            type="primary",
+                            use_container_width=True,
+                            key=f"{key_prefix}_btn_confirm_{file_name}",
+                        ):
+                            st.session_state[conf_key] = True
+                            st.session_state["comb_profile_confirmed"] = True
+                            st.session_state[submeter_key] = chosen_submeters
+
+                            p_col = "Total_Demand_kW"
+                            t_col = "timestamp" if "timestamp" in df_clean.columns else None
+                            try:
+                                import importlib
+                                mod = importlib.import_module("ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline")
+                                normalize_fn = getattr(mod, "normalize_load_profile_2025", None)
+                                if normalize_fn:
+                                    load_2025, _ = normalize_fn(raw_df=df_clean, power_col=p_col, time_col=t_col)
+                                    st.session_state["active_load_series_2025"] = load_2025
+                                    st.session_state["comb_active_load_series"] = load_2025
+                            except Exception:
+                                pass
+                            st.rerun()
+
+                st.subheader("4. Interactive Load Profile Curve Preview")
+                fig = create_csv_inspector_figure(
+                    df_clean=df_clean,
+                    file_name=file_name,
+                    selected_power_cols=chosen_submeters,
+                    total_col="Total_Demand_kW",
+                    peak_kw=kpis.peak_kw,
+                    grid_limit_kw=grid_limit_kw,
+                )
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
+                )
+
+                # Grid Limit Overload Analysis & Violation Cards
+                if enable_grid_limit and grid_limit_kw:
+                    series = df_clean["Total_Demand_kW"]
+                    overload_diff = (series - grid_limit_kw).clip(lower=0.0)
+                    overload_peak_kw = float(overload_diff.max())
+                    overload_hours = float((series > grid_limit_kw).sum() * 0.25)
+                    overload_kwh = float(overload_diff.sum() * 0.25)
+                    has_violation = overload_peak_kw > 0.0
+
+                    st.markdown("#### :material/warning: Grid Capacity Overload Analysis")
+                    o_col1, o_col2, o_col3 = st.columns(3)
+
+                    with o_col1:
+                        status_style = "alert" if has_violation else "ok"
+                        status_title = "Grid Overload Peak" if has_violation else "Grid Status"
+                        val_str = f"+{overload_peak_kw:.1f} kW" if has_violation else "Within Limit"
+                        render_kpi_card(status_title, val_str, f"Max Limit: {grid_limit_kw:.1f} kW", status=status_style)
+
+                    with o_col2:
+                        render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", f"{int(overload_hours * 4)} intervals (15-min)")
+
+                    with o_col3:
+                        render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
+
+                # 5. Standardized 365-Day Annual Baseline Profile & Calculation Basis
+                _render_annual_calculation_profile_section(
+                    df_clean=df_clean,
+                    total_col="Total_Demand_kW",
+                    kpis=kpis,
+                    file_name=file_name,
+                    key_prefix=key_prefix,
+                )
+
+                with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
+                    st.dataframe(df_clean, use_container_width=True, height=220)
 
 
 def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
@@ -497,8 +633,7 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             f":material/history: **Multi-Year Timeseries Detected ({cal_days:.0f} calendar days):** "
             f"Full period is utilized for high-resolution historical baseline evaluation. "
             f"For subsequent multi-year project horizons and life-cycle simulations, an annualized 365-day base profile "
-            f"is established to project forward while preserving authentic load dynamics. "
-            f"*(See Section 4 below for the full 365-day reference breakdown & plain language guide.)*",
+            f"is established to project forward while preserving authentic load dynamics.",
             icon=":material/info:"
         )
 
@@ -549,54 +684,43 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
         else:
             grid_limit_kw = None
 
-    # 4. Interactive Load Profile Curve
-    st.subheader("3. Interactive Load Profile Curve")
+    # 4. Profile Status & Sub-Meter Details
     other_cols = [c for c in df_clean.columns if c not in ["timestamp", total_col] and pd.api.types.is_numeric_dtype(df_clean[c])]
     selected_power_cols = [total_col] + other_cols if other_cols else [total_col]
-    fig = create_csv_inspector_figure(
-        df_clean=df_clean,
-        file_name=file_name,
-        selected_power_cols=selected_power_cols,
-        total_col=total_col,
-        peak_kw=kpis.peak_kw,
-        grid_limit_kw=grid_limit_kw
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
-    # Grid Limit Overload Analysis & Violation Cards
-    if enable_grid_limit and grid_limit_kw:
-        series = df_clean[total_col]
-        overload_diff = (series - grid_limit_kw).clip(lower=0.0)
-        overload_peak_kw = float(overload_diff.max())
-        overload_hours = float((series > grid_limit_kw).sum() * kpis.hours_per_step)
-        overload_kwh = float(overload_diff.sum() * kpis.hours_per_step)
-        has_violation = overload_peak_kw > 0.0
+    with st.container(border=True):
+        rc_col1, rc_col2 = st.columns([3.4, 1.3])
+        with rc_col1:
+            st.markdown(
+                f"##### :material/check_circle: Active Consumption Profile Confirmed\n\n"
+                f"**Dataset:** `{file_name}` | **Peak Demand:** `{kpis.peak_kw:,.1f} kW` | "
+                f"**Total Energy:** `{kpis.total_kwh:,.0f} kWh` | **Average Power:** `{kpis.avg_kw:,.1f} kW`  \n"
+                f":material/bolt: **Active Power Stream:** Total Demand (kW)"
+            )
+        with rc_col2:
+            st.caption(":material/lock: Confirmed from Active Session")
 
-        st.markdown("#### :material/warning: Grid Capacity Overload Analysis")
-        o_col1, o_col2, o_col3 = st.columns(3)
-
-        with o_col1:
-            status_style = "alert" if has_violation else "ok"
-            status_title = "Grid Overload Peak" if has_violation else "Grid Status"
-            val_str = f"+{overload_peak_kw:.1f} kW" if has_violation else "Within Limit"
-            render_kpi_card(status_title, val_str, f"Max Limit: {grid_limit_kw:.1f} kW", status=status_style)
-
-        with o_col2:
-            render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", f"{int(overload_hours / max(0.01, kpis.hours_per_step))} intervals")
-
-        with o_col3:
-            render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
-
-    # 5. Standardized 365-Day Annual Baseline Profile & Calculation Basis
-    _render_annual_calculation_profile_section(
-        df_clean=df_clean,
-        total_col=total_col,
-        kpis=kpis,
-        file_name=file_name,
-        key_prefix=key_prefix
-    )
-
-    with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
+    with st.expander(":material/visibility: Inspect Raw Load Profile Curve & 365-Day Baseline (Optional)", expanded=False):
+        fig = create_csv_inspector_figure(
+            df_clean=df_clean,
+            file_name=file_name,
+            selected_power_cols=selected_power_cols,
+            total_col=total_col,
+            peak_kw=kpis.peak_kw,
+            grid_limit_kw=grid_limit_kw
+        )
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True}
+        )
+        _render_annual_calculation_profile_section(
+            df_clean=df_clean,
+            total_col=total_col,
+            kpis=kpis,
+            file_name=file_name,
+            key_prefix=key_prefix
+        )
         st.dataframe(df_clean, use_container_width=True, height=220)
 
 
@@ -748,29 +872,3 @@ def _render_annual_calculation_profile_section(
                 use_container_width=True,
                 hide_index=True
             )
-
-    # 5. Concise Plain-Language Guide (In leichter Sprache & auf den Punkt)
-    st.markdown(
-        f"""
-        <div style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 10px; padding: 14px 18px; margin-top: 14px; margin-bottom: 8px;">
-            <div style="font-size: 0.95rem; font-weight: 700; color: #38BDF8; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
-                <span>:material/menu_book:</span> How the Annual Profile is Created & Projected (Quick Guide)
-            </div>
-            <div style="color: #E2E8F0; font-size: 0.88rem; line-height: 1.5;">
-                <p style="margin-bottom: 6px;">
-                    <strong>1. Raw Ingestion (Eingelesen):</strong><br>
-                    {duration_days:.0f} calendar days of actual interval recordings ({kpis.data_points_count:,} data points at {kpis.hours_per_step*60:.0f}-min resolution) from <code>{file_name}</code>.
-                </p>
-                <p style="margin-bottom: 6px;">
-                    <strong>2. 1-Year Baseline Profile (365-Tage-Berechnungsjahr):</strong><br>
-                    The first full 365-day calendar year (35,040 intervals) is extracted as the standard reference year. Measurement gaps are cleanly isolated without artificial spikes, scaling the annual baseline to <strong>{annualized_energy_kwh:,.0f} kWh/year</strong> at <strong>{peak_demand_kw:,.1f} kW</strong> peak demand.
-                </p>
-                <p style="margin-bottom: 0;">
-                    <strong>3. Multi-Year Simulation & Projection (15-Jahre-Hochrechnung):</strong><br>
-                    This 365-day profile serves as Year 1 benchmark for Solar PV (Tab 3), BESS (Tab 4), and Electricity Tariffs (Tab 2). Subsequent years project forward dynamically with annual tariff inflation and PV degradation.
-                </p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )

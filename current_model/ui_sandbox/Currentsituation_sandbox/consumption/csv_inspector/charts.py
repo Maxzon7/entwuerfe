@@ -108,7 +108,7 @@ def create_csv_inspector_figure(
         xaxis=dict(
             title="Timestamp",
             gridcolor="#1E293B",
-            rangeslider=dict(visible=True, thickness=0.06),
+            rangeslider=dict(visible=False),
             type="date"
         ),
         yaxis=dict(
@@ -273,7 +273,7 @@ def create_365d_baseline_figure(
         xaxis=dict(
             title="Calendar Timeline (Year 1 Benchmark)",
             gridcolor="#1E293B",
-            rangeslider=dict(visible=True, thickness=0.06),
+            rangeslider=dict(visible=False),
             type="date" if "timestamp" in df_365.columns else "linear"
         ),
         yaxis=dict(

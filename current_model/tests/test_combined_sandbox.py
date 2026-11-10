@@ -602,5 +602,45 @@ class TestCombinedSandbox(unittest.TestCase):
         )
 
 
+    def test_csv_submeter_selection_and_rangeslider_performance(self):
+        """Verifies sub-meter aggregation for Total Demand and that range sliders are disabled for 60 FPS scrolling."""
+        # 1. Test multi-meter selective aggregation
+        df_raw = pd.DataFrame({
+            "timestamp": pd.date_range("2025-01-01 00:00", periods=96, freq="15min"),
+            "Meter_HVAC_kW": np.full(96, 20.0),
+            "Meter_Production_kW": np.full(96, 50.0),
+            "Meter_EV_Chargers_kW": np.full(96, 30.0),
+            "Meter_Lighting_kW": np.full(96, 10.0),
+        })
+        # Full selection: 20 + 50 + 30 + 10 = 110 kW
+        all_meters = ["Meter_HVAC_kW", "Meter_Production_kW", "Meter_EV_Chargers_kW", "Meter_Lighting_kW"]
+        df_raw["Total_Demand_kW"] = df_raw[all_meters].sum(axis=1)
+        self.assertAlmostEqual(df_raw["Total_Demand_kW"].iloc[0], 110.0, places=2)
+
+        # Exclude EV chargers: 20 + 50 + 10 = 80 kW
+        selected_subset = ["Meter_HVAC_kW", "Meter_Production_kW", "Meter_Lighting_kW"]
+        df_raw["Total_Demand_kW"] = df_raw[selected_subset].sum(axis=1)
+        self.assertAlmostEqual(df_raw["Total_Demand_kW"].iloc[0], 80.0, places=2)
+
+        # Normalize for 2025 pipeline
+        norm_series, _ = normalize_load_profile_2025(raw_df=df_raw, power_col="Total_Demand_kW", time_col="timestamp")
+        self.assertAlmostEqual(norm_series.peak_demand_kw, 80.0, places=1)
+
+        # 2. Test Range-Slider disabled for 60 FPS scroll performance
+        fig_cons = create_consumption_baseline_figure(self.timestamps, self.load_kw)
+        self.assertFalse(fig_cons.layout.xaxis.rangeslider.visible)
+
+        sys_cfg = CombinedSystemConfig(enable_battery=True, battery_capacity_kwh=100.0, battery_power_kw=50.0)
+        rules = InteractionRulesConfig()
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=self.load_kw,
+            timestamps=self.timestamps,
+            system_cfg=sys_cfg,
+            rules_cfg=rules,
+        )
+        fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res, timeframe="7D")
+        self.assertFalse(fig_master.layout.xaxis2.rangeslider.visible)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -124,7 +124,7 @@ def create_consumption_baseline_figure(
             title="Time (15-min intervals)",
             gridcolor="rgba(148, 163, 184, 0.12)",
             showspikes=True,
-            rangeslider=dict(visible=True, thickness=0.06),
+            rangeslider=dict(visible=False),
         ),
         yaxis=dict(
             title="Power (kW)",
@@ -388,9 +388,25 @@ def create_combined_dispatch_soc_figure(
         col=1,
     )
     fig.update_xaxes(
+        gridcolor="rgba(148, 163, 184, 0.12)",
+        rangeselector=dict(
+            buttons=list([
+                dict(count=7, label="7D", step="day", stepmode="backward"),
+                dict(count=1, label="1M", step="month", stepmode="backward"),
+                dict(count=3, label="3M", step="month", stepmode="backward"),
+                dict(step="all", label="All"),
+            ]),
+            bgcolor="#1E293B",
+            activecolor="#EF4444",
+            font=dict(color="#F8FAFC", size=10),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.update_xaxes(
         title_text="Time (15-min intervals)",
         gridcolor="rgba(148, 163, 184, 0.12)",
-        rangeslider=dict(visible=True, thickness=0.05),
+        rangeslider=dict(visible=False),
         row=2,
         col=1,
     )

@@ -1945,7 +1945,16 @@ def render_subtab6_financials(sim_res) -> None:
     # Cost Comparison Chart (Current situation vs. Combined system)
     with st.container(border=True):
         fig_cost_cmp = create_financial_cost_comparison_figure(sim_res)
-        st.plotly_chart(fig_cost_cmp, use_container_width=True, key="comb_fin_cost_cmp_chart")
+        st.plotly_chart(
+            fig_cost_cmp,
+            use_container_width=True,
+            config={
+                "scrollZoom": False,
+                "displayModeBar": "hover",
+                "responsive": True,
+            },
+            key="comb_fin_cost_cmp_chart",
+        )
 
     # 15-Year Cashflow Table
     with st.container(border=True):
@@ -1969,19 +1978,45 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
         with hdr1:
             st.markdown("##### :material/stacked_line_chart: 15-Minute Power Flow & Battery Level")
         with hdr2:
-            if "comb_dispatch_timeframe" not in st.session_state or not st.session_state["comb_dispatch_timeframe"]:
-                st.session_state["comb_dispatch_timeframe"] = "7D"
-            disp_tf = st.segmented_control(
-                "Dispatch Window",
-                options=["7D", "1M", "3M", "All"],
-                default=st.session_state["comb_dispatch_timeframe"],
-                key="comb_dispatch_tf_ctrl",
-                label_visibility="collapsed",
-            )
-            if not disp_tf:
-                disp_tf = st.session_state.get("comb_dispatch_timeframe", "7D")
-            else:
-                st.session_state["comb_dispatch_timeframe"] = disp_tf
+            curr_tf = st.session_state.get("comb_dispatch_timeframe", "7D")
+            tf_c1, tf_c2, tf_c3, tf_c4 = st.columns(4)
+            with tf_c1:
+                if st.button(
+                    "7D",
+                    type="primary" if curr_tf == "7D" else "secondary",
+                    use_container_width=True,
+                    key="comb_tf_btn_7d",
+                ):
+                    st.session_state["comb_dispatch_timeframe"] = "7D"
+                    st.rerun(scope="fragment")
+            with tf_c2:
+                if st.button(
+                    "1M",
+                    type="primary" if curr_tf == "1M" else "secondary",
+                    use_container_width=True,
+                    key="comb_tf_btn_1m",
+                ):
+                    st.session_state["comb_dispatch_timeframe"] = "1M"
+                    st.rerun(scope="fragment")
+            with tf_c3:
+                if st.button(
+                    "3M",
+                    type="primary" if curr_tf == "3M" else "secondary",
+                    use_container_width=True,
+                    key="comb_tf_btn_3m",
+                ):
+                    st.session_state["comb_dispatch_timeframe"] = "3M"
+                    st.rerun(scope="fragment")
+            with tf_c4:
+                if st.button(
+                    "All",
+                    type="primary" if curr_tf in ("All", "Full Year") else "secondary",
+                    use_container_width=True,
+                    key="comb_tf_btn_all",
+                ):
+                    st.session_state["comb_dispatch_timeframe"] = "All"
+                    st.rerun(scope="fragment")
+            disp_tf = st.session_state.get("comb_dispatch_timeframe", "7D")
         with hdr3:
             if "comb_cached_excel_bytes" not in st.session_state:
                 st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
@@ -1999,6 +2034,11 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
         st.plotly_chart(
             fig_master,
             use_container_width=True,
+            config={
+                "scrollZoom": False,
+                "displayModeBar": "hover",
+                "responsive": True,
+            },
             key=f"comb_master_dispatch_chart_{disp_tf}",
         )
 
