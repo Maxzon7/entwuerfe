@@ -69,7 +69,7 @@ def create_consumption_baseline_figure(
     """
     s_idx, e_idx = _resolve_window_slice(timestamps, load_kw, timeframe=timeframe)
     ts_slice = timestamps[s_idx:e_idx]
-    load_slice = load_kw[s_idx:e_idx]
+    load_slice = np.asarray(load_kw[s_idx:e_idx], dtype=np.float32)
 
     peak_kw = float(np.max(load_kw)) if len(load_kw) > 0 else 0.0
     avg_kw = float(np.mean(load_kw)) if len(load_kw) > 0 else 0.0
@@ -77,7 +77,7 @@ def create_consumption_baseline_figure(
     fig = go.Figure()
 
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=ts_slice,
             y=load_slice,
             mode="lines",
@@ -190,20 +190,21 @@ def create_combined_dispatch_soc_figure(
           * Native range-slider on lower panel driving both panels synchronously
     """
     ts = sim_res.timestamps
-    p_load = sim_res.load_kw
-    p_solar_dir = sim_res.solar_direct_kw
-    p_bess_dis = sim_res.bess_discharge_kw
-    p_bess_chg = (
+    p_load = np.asarray(sim_res.load_kw, dtype=np.float32)
+    p_solar_dir = np.asarray(sim_res.solar_direct_kw, dtype=np.float32)
+    p_bess_dis = np.asarray(sim_res.bess_discharge_kw, dtype=np.float32)
+    p_bess_chg = np.asarray(
         sim_res.bess_charge_solar_kw
         + sim_res.bess_charge_grid_kw
-        + sim_res.bess_charge_gen_kw
+        + sim_res.bess_charge_gen_kw,
+        dtype=np.float32,
     )
-    p_unmet = sim_res.unmet_overload_kw
-    p_gen_out = sim_res.gen_output_kw
-    p_grid_imp = sim_res.grid_import_kw
-    soc_pct = sim_res.bess_soc_pct
-    soc_kwh = sim_res.bess_energy_kwh
-    gen_active_pct = np.where(sim_res.gen_running_mask, 100.0, 0.0)
+    p_unmet = np.asarray(sim_res.unmet_overload_kw, dtype=np.float32)
+    p_gen_out = np.asarray(sim_res.gen_output_kw, dtype=np.float32)
+    p_grid_imp = np.asarray(sim_res.grid_import_kw, dtype=np.float32)
+    soc_pct = np.asarray(sim_res.bess_soc_pct, dtype=np.float32)
+    soc_kwh = np.asarray(sim_res.bess_energy_kwh, dtype=np.float32)
+    gen_active_pct = np.where(sim_res.gen_running_mask, np.float32(100.0), np.float32(0.0))
 
     cfg = sim_res.system_config
     rules = sim_res.rules_config

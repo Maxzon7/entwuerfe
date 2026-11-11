@@ -74,25 +74,29 @@ def analyze_grid_violations(
     violation_share_pct = float(total_violation_intervals / len(arr) * 100.0) if len(arr) > 0 else 0.0
     total_exceedance_kwh = float(np.sum(diff) * step_hours)
 
-    # Longest consecutive violation run & worst-case event energy integration
-    longest_run = 0
-    current_run = 0
-    current_run_energy = 0.0
-    worst_event_energy_kwh = 0.0
-    worst_event_run_intervals = 0
+    # Vectorized O(N) longest consecutive violation run & worst-case event energy integration
+    if total_violation_intervals > 0:
+        padded = np.empty(len(violation_mask) + 2, dtype=bool)
+        padded[0] = False
+        padded[-1] = False
+        padded[1:-1] = violation_mask
+        bounds = np.flatnonzero(padded[1:] != padded[:-1])
+        starts = bounds[0::2]
+        ends = bounds[1::2]
+        run_lengths = ends - starts
+        longest_run = int(np.max(run_lengths))
 
-    for val, is_over in zip(diff, violation_mask):
-        if is_over:
-            current_run += 1
-            current_run_energy += float(val * step_hours)
-            if current_run > longest_run:
-                longest_run = current_run
-            if current_run_energy > worst_event_energy_kwh:
-                worst_event_energy_kwh = current_run_energy
-                worst_event_run_intervals = current_run
-        else:
-            current_run = 0
-            current_run_energy = 0.0
+        csum = np.empty(len(diff) + 1, dtype=float)
+        csum[0] = 0.0
+        np.cumsum(diff, out=csum[1:])
+        event_energies = (csum[ends] - csum[starts]) * step_hours
+        worst_idx = int(np.argmax(event_energies))
+        worst_event_energy_kwh = float(event_energies[worst_idx])
+        worst_event_run_intervals = int(run_lengths[worst_idx])
+    else:
+        longest_run = 0
+        worst_event_energy_kwh = 0.0
+        worst_event_run_intervals = 0
 
     longest_run_hours = float(longest_run * step_hours)
     worst_event_duration_hours = float(worst_event_run_intervals * step_hours)

@@ -32,6 +32,7 @@ from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeli
 )
 from current_model.ui_sandbox.Currentsituation_sandbox.engine.config_and_models import LoadSeries2025
 from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+    ENGINE_VERSION,
     CombinedSystemConfig,
     InteractionRulesConfig,
     CombinedFinancialConfig,
@@ -191,7 +192,7 @@ class TestCombinedSandbox(unittest.TestCase):
         """Verifies that standalone BESS (enable_solar=False) operates strictly as peak_shaving_only,
         recharges from grid headroom, and does not drain to 30% reserve into normal load."""
         from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import ENGINE_VERSION
-        self.assertEqual(ENGINE_VERSION, "13.5")
+        self.assertEqual(ENGINE_VERSION, "13.6")
 
         cfg = CombinedSystemConfig(
             grid_limit_kw=180.0,
@@ -779,6 +780,12 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(fig.layout.yaxis2.title.text, "SoC (%)")
         self.assertIsNotNone(fig.layout.yaxis3)
         self.assertEqual(fig.layout.yaxis3.title.text, "Stored (kWh)")
+
+        # Verify ENGINE_VERSION is 13.6 and WebGL trace Y-arrays use float32
+        self.assertEqual(ENGINE_VERSION, "13.6")
+        for trace in fig.data:
+            if hasattr(trace, "y") and isinstance(trace.y, np.ndarray):
+                self.assertEqual(trace.y.dtype, np.float32)
 
 
 if __name__ == "__main__":

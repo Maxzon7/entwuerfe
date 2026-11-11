@@ -78,7 +78,7 @@ import importlib
 
 try:
     import ui_sandbox.Combined_sandbox.combined_sandbox_engine as _engine_mod
-    if getattr(_engine_mod, "ENGINE_VERSION", None) != "13.5":
+    if getattr(_engine_mod, "ENGINE_VERSION", None) != "13.6":
         _engine_mod = importlib.reload(_engine_mod)
     from ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
         ENGINE_VERSION,
@@ -1552,6 +1552,7 @@ def render_subtab5_interaction_rules() -> None:
 # LEVEL 2 — SUBTAB 6: Financials (Lazy-Loaded, 4-Pillar Tariff + Cost Comparison Chart)
 # ======================================================================================
 
+@st.fragment
 def render_subtab6_financials(sim_res) -> None:
     """
     Renders Subtab 6: Financials (Lazy-loaded for performance):
@@ -2013,6 +2014,31 @@ def render_subtab6_financials(sim_res) -> None:
 # ======================================================================================
 
 @st.fragment
+def _render_excel_export_fragment(sim_res) -> None:
+    """Renders the on-demand Excel export button without blocking normal simulation reruns."""
+    if "comb_cached_excel_bytes" not in st.session_state:
+        if st.button(
+            "Prepare Excel (.xlsx)",
+            icon=":material/table_view:",
+            use_container_width=True,
+            key="comb_btn_prep_excel",
+        ):
+            st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
+
+    if "comb_cached_excel_bytes" in st.session_state:
+        st.download_button(
+            label="Download Excel (.xlsx)",
+            data=st.session_state["comb_cached_excel_bytes"],
+            file_name="Combined_System_Verification.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            icon=":material/download:",
+            use_container_width=True,
+            type="primary",
+            key="comb_btn_dl_excel",
+        )
+
+
+@st.fragment
 def _render_master_dispatch_chart_fragment(sim_res) -> None:
     """Renders the 15-minute dispatch chart matching the BESS Sandbox standard."""
     kpis = getattr(sim_res, "kpis", None)
@@ -2055,17 +2081,7 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
             )
         with hdr2:
             st.write("")
-            if "comb_cached_excel_bytes" not in st.session_state:
-                st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
-            st.download_button(
-                label="Download Excel (.xlsx)",
-                data=st.session_state["comb_cached_excel_bytes"],
-                file_name="Combined_System_Verification.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                icon=":material/download:",
-                use_container_width=True,
-                type="primary",
-            )
+            _render_excel_export_fragment(sim_res)
 
         fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res)
         st.plotly_chart(

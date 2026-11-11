@@ -49,7 +49,17 @@ except ImportError:
     from models.generator import GeneratorConfig
 
 
-ENGINE_VERSION = "13.5"
+try:
+    from numba import njit as _numba_njit
+
+    def _opt_njit(func):
+        return _numba_njit(cache=True, fastmath=True)(func)
+except ImportError:
+    def _opt_njit(func):
+        return func
+
+
+ENGINE_VERSION = "13.6"
 
 
 MONTH_NAMES_SHORT = [
@@ -717,25 +727,87 @@ class DualGeneratorSizingResult:
     coupled_fuel_tank_liters: float = 0.0
 
 
+def _longest_true_run_steps(mask: np.ndarray) -> int:
+    """Vectorized O(N) helper returning the length in steps of the longest continuous True run."""
+    if mask.size == 0 or not np.any(mask):
+        return 0
+    padded = np.empty(len(mask) + 2, dtype=bool)
+    padded[0] = False
+    padded[-1] = False
+    padded[1:-1] = mask
+    bounds = np.flatnonzero(padded[1:] != padded[:-1])
+    return int(np.max(bounds[1::2] - bounds[0::2]))
+
+
 def compute_overload_reference(
     load_kw: np.ndarray, grid_limit_kw: float, step_hours: float = 0.25
 ) -> Tuple[float, float]:
     """Returns (max overload kW, energy of the largest continuous overload event in kWh)."""
     p = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
     over = np.maximum(0.0, p - float(grid_limit_kw))
-    if over.size == 0 or float(np.max(over)) <= 0.0:
+    if over.size == 0:
         return 0.0, 0.0
     max_kw = float(np.max(over))
-    largest = 0.0
-    current = 0.0
-    for v in over:
-        if v > 0.0:
-            current += v * step_hours
-        else:
-            largest = max(largest, current)
-            current = 0.0
-    largest = max(largest, current)
-    return max_kw, float(largest)
+    if max_kw <= 0.0:
+        return 0.0, 0.0
+
+    is_over = over > 0.0
+    padded = np.empty(len(is_over) + 2, dtype=bool)
+    padded[0] = False
+    padded[-1] = False
+    padded[1:-1] = is_over
+    bounds = np.flatnonzero(padded[1:] != padded[:-1])
+    starts = bounds[0::2]
+    ends = bounds[1::2]
+
+    csum = np.empty(len(over) + 1, dtype=float)
+    csum[0] = 0.0
+    np.cumsum(over, out=csum[1:])
+    largest = float(np.max(csum[ends] - csum[starts]) * step_hours)
+    return max_kw, largest
+
+
+@_opt_njit
+def _cluster_deficit_kernel(
+    p: np.ndarray,
+    avail_rech_kw_arr: np.ndarray,
+    lim: float,
+    eta_dis: float,
+    eta_chg: float,
+    chg_cap_kw: float,
+    dt: float,
+) -> Tuple[float, int]:
+    """Fast JIT/compiled kernel for 35,040-step multi-day cluster deficit integration."""
+    n = len(p)
+    cum_def = 0.0
+    max_cum_def = 0.0
+    curr_cluster_steps = 0
+    worst_cluster_steps = 0
+    inv_eta_dis_dt = dt / eta_dis
+    eta_chg_dt = eta_chg * dt
+
+    for i in range(n):
+        nl = p[i]
+        if nl > lim:
+            cum_def += (nl - lim) * inv_eta_dis_dt
+            curr_cluster_steps += 1
+            if cum_def > max_cum_def:
+                max_cum_def = cum_def
+            if curr_cluster_steps > worst_cluster_steps:
+                worst_cluster_steps = curr_cluster_steps
+        elif cum_def > 0.0:
+            av = avail_rech_kw_arr[i]
+            rech_kw = av if av < chg_cap_kw else chg_cap_kw
+            cum_def -= rech_kw * eta_chg_dt
+            if cum_def <= 1e-6:
+                cum_def = 0.0
+                curr_cluster_steps = 0
+            else:
+                curr_cluster_steps += 1
+                if curr_cluster_steps > worst_cluster_steps:
+                    worst_cluster_steps = curr_cluster_steps
+
+    return max_cum_def, worst_cluster_steps
 
 
 def _evaluate_bess_criteria_for_profile(
@@ -783,28 +855,12 @@ def _evaluate_bess_criteria_for_profile(
     total_req_chem_kwh = float(np.sum(np.maximum(0.0, p - lim) / eta_dis) * dt)
 
     chg_cap_kw = float(peak_kw) if peak_kw > 0.0 else lim
-    cum_def = 0.0
-    max_cum_def = 0.0
-    curr_cluster_steps = 0
-    worst_cluster_steps = 0
-    for i in range(n):
-        nl = p[i]
-        if nl > lim:
-            cum_def += ((nl - lim) / eta_dis) * dt
-            curr_cluster_steps += 1
-            if cum_def > max_cum_def:
-                max_cum_def = cum_def
-            if curr_cluster_steps > worst_cluster_steps:
-                worst_cluster_steps = curr_cluster_steps
-        else:
-            rech_e = min(avail_rech_kw_arr[i], chg_cap_kw) * eta_chg * dt
-            cum_def = max(0.0, cum_def - rech_e)
-            if cum_def <= 1e-6:
-                curr_cluster_steps = 0
-            else:
-                curr_cluster_steps += 1
-                if curr_cluster_steps > worst_cluster_steps:
-                    worst_cluster_steps = curr_cluster_steps
+    if peak_kw > 0.0:
+        max_cum_def, worst_cluster_steps = _cluster_deficit_kernel(
+            p, avail_rech_kw_arr, lim, eta_dis, eta_chg, chg_cap_kw, dt
+        )
+    else:
+        max_cum_def, worst_cluster_steps = 0.0, 0
 
     cluster_gross_kwh = (max_cum_def / dod) * 1.05 if max_cum_def > 0.0 else 0.0
     cluster_gross_kwh = max(cluster_gross_kwh, single_gross_kwh)
@@ -1000,29 +1056,34 @@ def compute_dual_battery_sizing(
     p_after_solar = np.maximum(0.0, p_load - p_direct)
     p_surplus = np.maximum(0.0, p_solar - p_direct)
 
-    # Account for active Generator if enabled
+    # Account for active Generator if enabled (100% vectorized O(N) NumPy)
     gen_Excess_chg = np.zeros(n_steps, dtype=float)
     if system_cfg.enable_generator and system_cfg.generator_rated_kw > 0.0:
         g_rated = float(system_cfg.generator_rated_kw)
         g_min = g_rated * (float(system_cfg.generator_min_load_pct) / 100.0)
-        p_for_bess = p_after_solar.copy()
         over_arr = np.maximum(0.0, p_after_solar - grid_limit)
         if rules_cfg.rule1_peak_priority == "generator_first":
             # Generator takes peaks >= g_min up to g_rated; Battery handles small peaks < g_min and peaks > g_rated
-            for idx in range(n_steps):
-                ov = over_arr[idx]
-                if ov >= g_min:
-                    g_out = min(ov, g_rated)
-                    p_for_bess[idx] = grid_limit + max(0.0, ov - g_out)
+            g_out = np.where(over_arr >= g_min, np.minimum(over_arr, g_rated), 0.0)
+            p_for_bess = np.where(
+                over_arr >= g_min,
+                grid_limit + np.maximum(0.0, over_arr - g_out),
+                p_after_solar,
+            )
         else:
             # Battery first, Generator as backup: Generator caps overload above what it can cover
-            for idx in range(n_steps):
-                ov = over_arr[idx]
-                if ov > 0.0:
-                    g_assist = min(ov, g_rated)
-                    p_for_bess[idx] = grid_limit + max(0.0, ov - g_assist)
-                    if g_assist < g_min and rules_cfg.rule3_charging_sources in ("solar_and_generator", "all_sources"):
-                        gen_Excess_chg[idx] = g_min - g_assist
+            g_assist = np.minimum(over_arr, g_rated)
+            p_for_bess = np.where(
+                over_arr > 0.0,
+                grid_limit + np.maximum(0.0, over_arr - g_assist),
+                p_after_solar,
+            )
+            if rules_cfg.rule3_charging_sources in ("solar_and_generator", "all_sources"):
+                gen_Excess_chg = np.where(
+                    (over_arr > 0.0) & (g_assist < g_min),
+                    g_min - g_assist,
+                    0.0,
+                )
     else:
         p_for_bess = p_after_solar
 
@@ -1138,15 +1199,7 @@ def compute_dual_generator_sizing(
     sa_is_over = over_sa > 0.05
     sa_runtime_hrs = round(float(np.sum(sa_is_over) * step_hours), 1)
 
-    sa_cur_steps = 0
-    sa_max_steps = 0
-    for val in sa_is_over:
-        if val:
-            sa_cur_steps += 1
-            if sa_cur_steps > sa_max_steps:
-                sa_max_steps = sa_cur_steps
-        else:
-            sa_cur_steps = 0
+    sa_max_steps = _longest_true_run_steps(sa_is_over)
     sa_longest_hrs = round(float(sa_max_steps * step_hours), 1)
 
     slope = float(system_cfg.gen_slope_per_kwh)
@@ -1200,15 +1253,7 @@ def compute_dual_generator_sizing(
     cp_is_over = over_cp > 0.05
     cp_runtime_hrs = round(float(np.sum(cp_is_over) * step_hours), 1)
 
-    cp_cur_steps = 0
-    cp_max_steps = 0
-    for val in cp_is_over:
-        if val:
-            cp_cur_steps += 1
-            if cp_cur_steps > cp_max_steps:
-                cp_max_steps = cp_cur_steps
-        else:
-            cp_cur_steps = 0
+    cp_max_steps = _longest_true_run_steps(cp_is_over)
     cp_longest_hrs = round(float(cp_max_steps * step_hours), 1)
 
     cp_event_fuel = (slope * rem_over_kw + intercept * cp_100) * cp_longest_hrs
@@ -1315,22 +1360,24 @@ def derive_quick_sizing(
 
     allow_grid_rech = (rule3 in ("solar_and_grid", "all_sources")) or (sol_share <= 0.0)
 
-    # 4. 35,040-Step Cumulative Deficit Integration
-    cum_deficit = 0.0
-    max_cum_deficit = 0.0
-    for i in range(n_steps):
-        nl = p_net[i]
-        if nl > eff_grid_limit:
-            discharge_needed = ((nl - eff_grid_limit) / eta_dis) * dt
-            cum_deficit += discharge_needed
-            if cum_deficit > max_cum_deficit:
-                max_cum_deficit = cum_deficit
-        else:
-            avail_rech = p_surplus[i]
-            if allow_grid_rech:
-                avail_rech += max(0.0, eff_grid_limit - nl)
-            rech_energy = avail_rech * eta_chg * dt
-            cum_deficit = max(0.0, cum_deficit - rech_energy)
+    # 4. 35,040-Step Cumulative Deficit Integration (via compiled kernel)
+    avail_rech_qs = (
+        p_surplus + np.maximum(0.0, eff_grid_limit - p_net)
+        if allow_grid_rech
+        else p_surplus
+    )
+    if rem_peak_overload > 0.0:
+        max_cum_deficit, _ = _cluster_deficit_kernel(
+            p_net,
+            avail_rech_qs,
+            eff_grid_limit,
+            eta_dis,
+            eta_chg,
+            float(np.max(avail_rech_qs)) if n_steps > 0 else eff_grid_limit,
+            dt,
+        )
+    else:
+        max_cum_deficit = 0.0
 
     # 5. 100% Sizing Anchors
     if rem_peak_overload > 0.05:
@@ -1363,6 +1410,343 @@ def derive_quick_sizing(
 # ======================================================================================
 # 4. Main 35,040-Step 4-Source Combined Dispatch Engine
 # ======================================================================================
+
+@_opt_njit
+def _fast_combined_dispatch_kernel(
+    rem_load_after_solar_kw: np.ndarray,
+    solar_surplus_kw: np.ndarray,
+    grid_limit_kw: float,
+    enable_bess: bool,
+    bess_p_max_kw: float,
+    e_min_kwh: float,
+    e_max_kwh: float,
+    e_reserve_kwh: float,
+    eta_chg: float,
+    eta_dis: float,
+    enable_gen: bool,
+    gen_rated_kw: float,
+    gen_min_kw: float,
+    min_run_steps: int,
+    rule1_battery_first: bool,
+    effective_rule2_self_cons: bool,
+    allow_grid_chg: bool,
+    allow_gen_chg: bool,
+    target_grid_e_kwh: float,
+    init_e_kwh: float,
+    init_solar_e_kwh: float,
+    dt: float,
+) -> Tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    float,
+]:
+    """
+    JIT-compiled / low-overhead 35,040-step stateful dispatch kernel.
+    Eliminates Python object/attribute lookups and method call overhead inside the 15-min loop.
+    """
+    n_steps = len(rem_load_after_solar_kw)
+    solar_export_kw = np.zeros(n_steps, dtype=np.float64)
+    bess_charge_solar_kw = np.zeros(n_steps, dtype=np.float64)
+    bess_charge_grid_kw = np.zeros(n_steps, dtype=np.float64)
+    bess_charge_gen_kw = np.zeros(n_steps, dtype=np.float64)
+    bess_discharge_kw = np.zeros(n_steps, dtype=np.float64)
+    bess_energy_kwh = np.zeros(n_steps, dtype=np.float64)
+    gen_output_kw = np.zeros(n_steps, dtype=np.float64)
+    gen_to_load_kw = np.zeros(n_steps, dtype=np.float64)
+    gen_to_bess_kw = np.zeros(n_steps, dtype=np.float64)
+
+    cur_e_kwh = init_e_kwh
+    solar_energy_in_bess_kwh = init_solar_e_kwh
+    bess_discharge_from_solar_kwh_acc = 0.0
+    gen_Forced_steps_remaining = 0
+
+    inv_dt_eta_chg = 1.0 / (dt * eta_chg)
+    dt_eta_chg = dt * eta_chg
+    eta_dis_over_dt = eta_dis / dt
+    dt_over_eta_dis = dt / eta_dis
+    gen_min_clamped = gen_rated_kw if gen_rated_kw < gen_min_kw else gen_min_kw
+
+    for i in range(n_steps):
+        p_rem = rem_load_after_solar_kw[i]
+        p_surplus = solar_surplus_kw[i]
+
+        step_bess_chg_solar = 0.0
+        step_bess_chg_grid = 0.0
+        step_bess_chg_gen = 0.0
+        step_bess_dis = 0.0
+        step_gen_out = 0.0
+        step_gen_to_load = 0.0
+        step_gen_to_bess = 0.0
+
+        # A. Charge Battery from Solar Surplus (if available)
+        if p_surplus > 0.0 and enable_bess and cur_e_kwh < e_max_kwh:
+            room_ac_kw = (e_max_kwh - cur_e_kwh) * inv_dt_eta_chg
+            step_bess_chg_solar = p_surplus
+            if bess_p_max_kw < step_bess_chg_solar:
+                step_bess_chg_solar = bess_p_max_kw
+            if room_ac_kw < step_bess_chg_solar:
+                step_bess_chg_solar = room_ac_kw
+            added_e = step_bess_chg_solar * dt_eta_chg
+            cur_e_kwh += added_e
+            solar_energy_in_bess_kwh += added_e
+            if solar_energy_in_bess_kwh > cur_e_kwh:
+                solar_energy_in_bess_kwh = cur_e_kwh
+            exp_kw = p_surplus - step_bess_chg_solar
+            solar_export_kw[i] = exp_kw if exp_kw > 0.0 else 0.0
+        else:
+            solar_export_kw[i] = p_surplus
+
+        rem_bess_chg_power_kw = bess_p_max_kw - step_bess_chg_solar
+        if rem_bess_chg_power_kw < 0.0:
+            rem_bess_chg_power_kw = 0.0
+
+        # B. Handle Residual Demand
+        if p_rem > grid_limit_kw:
+            # --- ABOVE GRID LIMIT (Peak Shaving Region) ---
+            overload_kw = p_rem - grid_limit_kw
+
+            if rule1_battery_first:
+                # 1. Battery discharges first down to e_min_kwh
+                if enable_bess and step_bess_chg_solar == 0.0 and cur_e_kwh > e_min_kwh:
+                    avail_dis_ac_kw = (cur_e_kwh - e_min_kwh) * eta_dis_over_dt
+                    step_bess_dis = overload_kw
+                    if bess_p_max_kw < step_bess_dis:
+                        step_bess_dis = bess_p_max_kw
+                    if avail_dis_ac_kw < step_bess_dis:
+                        step_bess_dis = avail_dis_ac_kw
+                    removed_e = step_bess_dis * dt_over_eta_dis
+                    solar_share = (solar_energy_in_bess_kwh / cur_e_kwh) if cur_e_kwh > 0.0 else 0.0
+                    bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt) * solar_share
+                    cur_e_kwh -= removed_e
+                    if cur_e_kwh < e_min_kwh:
+                        cur_e_kwh = e_min_kwh
+                    solar_energy_in_bess_kwh -= removed_e * solar_share
+                    if solar_energy_in_bess_kwh < 0.0:
+                        solar_energy_in_bess_kwh = 0.0
+
+                rem_overload_kw = overload_kw - step_bess_dis
+                if rem_overload_kw < 0.0:
+                    rem_overload_kw = 0.0
+
+                # 2. Generator covers remaining overload second (or continues if forced by min runtime)
+                if (rem_overload_kw > 0.001 or gen_Forced_steps_remaining > 0) and enable_gen:
+                    if rem_overload_kw > 0.001 and gen_Forced_steps_remaining == 0:
+                        gen_Forced_steps_remaining = min_run_steps
+                    req_gen_kw = rem_overload_kw if rem_overload_kw < gen_rated_kw else gen_rated_kw
+                    actual_gen_kw = req_gen_kw if req_gen_kw > gen_min_clamped else gen_min_clamped
+                    step_gen_out = actual_gen_kw
+                    step_gen_to_load = actual_gen_kw if actual_gen_kw < rem_overload_kw else rem_overload_kw
+
+                    gen_excess_kw = actual_gen_kw - step_gen_to_load
+                    if gen_excess_kw > 0.0:
+                        if allow_gen_chg and enable_bess and step_bess_dis == 0.0 and cur_e_kwh < e_max_kwh:
+                            room_ac_kw = (e_max_kwh - cur_e_kwh) * inv_dt_eta_chg
+                            step_bess_chg_gen = gen_excess_kw
+                            if rem_bess_chg_power_kw < step_bess_chg_gen:
+                                step_bess_chg_gen = rem_bess_chg_power_kw
+                            if room_ac_kw < step_bess_chg_gen:
+                                step_bess_chg_gen = room_ac_kw
+                            cur_e_kwh += step_bess_chg_gen * dt_eta_chg
+                            gen_excess_after_bess = gen_excess_kw - step_bess_chg_gen
+                        else:
+                            gen_excess_after_bess = gen_excess_kw
+                        rem_p = p_rem - step_bess_dis - step_gen_to_load
+                        if rem_p > 0.0:
+                            extra_to_load = gen_excess_after_bess if gen_excess_after_bess < rem_p else rem_p
+                            step_gen_to_load += extra_to_load
+                    step_gen_to_bess = step_bess_chg_gen
+                    gen_Forced_steps_remaining -= 1
+                    if gen_Forced_steps_remaining < 0:
+                        gen_Forced_steps_remaining = 0
+
+            else:
+                # --- "generator_first": Generator first, Battery for fast/small peaks ---
+                avail_bess_dis_kw = (
+                    (cur_e_kwh - e_min_kwh) * eta_dis_over_dt
+                    if (enable_bess and step_bess_chg_solar == 0.0 and cur_e_kwh > e_min_kwh)
+                    else 0.0
+                )
+                if bess_p_max_kw < avail_bess_dis_kw:
+                    avail_bess_dis_kw = bess_p_max_kw
+
+                if (
+                    enable_gen
+                    and gen_Forced_steps_remaining == 0
+                    and (overload_kw < gen_min_kw)
+                    and enable_bess
+                    and (avail_bess_dis_kw >= overload_kw)
+                ):
+                    step_bess_dis = overload_kw
+                    removed_e = step_bess_dis * dt_over_eta_dis
+                    solar_share = (solar_energy_in_bess_kwh / cur_e_kwh) if cur_e_kwh > 0.0 else 0.0
+                    bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt) * solar_share
+                    cur_e_kwh -= removed_e
+                    if cur_e_kwh < e_min_kwh:
+                        cur_e_kwh = e_min_kwh
+                    solar_energy_in_bess_kwh -= removed_e * solar_share
+                    if solar_energy_in_bess_kwh < 0.0:
+                        solar_energy_in_bess_kwh = 0.0
+                else:
+                    if enable_gen:
+                        if gen_Forced_steps_remaining == 0:
+                            gen_Forced_steps_remaining = min_run_steps
+                        req_gen_kw = overload_kw if overload_kw < gen_rated_kw else gen_rated_kw
+                        actual_gen_kw = req_gen_kw if req_gen_kw > gen_min_clamped else gen_min_clamped
+                        step_gen_out = actual_gen_kw
+                        step_gen_to_load = actual_gen_kw if actual_gen_kw < overload_kw else overload_kw
+
+                        gen_excess_kw = actual_gen_kw - step_gen_to_load
+                        if gen_excess_kw > 0.0:
+                            if allow_gen_chg and enable_bess and cur_e_kwh < e_max_kwh:
+                                room_ac_kw = (e_max_kwh - cur_e_kwh) * inv_dt_eta_chg
+                                step_bess_chg_gen = gen_excess_kw
+                                if rem_bess_chg_power_kw < step_bess_chg_gen:
+                                    step_bess_chg_gen = rem_bess_chg_power_kw
+                                if room_ac_kw < step_bess_chg_gen:
+                                    step_bess_chg_gen = room_ac_kw
+                                cur_e_kwh += step_bess_chg_gen * dt_eta_chg
+                                gen_excess_after_bess = gen_excess_kw - step_bess_chg_gen
+                            else:
+                                gen_excess_after_bess = gen_excess_kw
+                            rem_p = p_rem - step_gen_to_load
+                            if rem_p > 0.0:
+                                extra_to_load = gen_excess_after_bess if gen_excess_after_bess < rem_p else rem_p
+                                step_gen_to_load += extra_to_load
+                        step_gen_to_bess = step_bess_chg_gen
+                        gen_Forced_steps_remaining -= 1
+                        if gen_Forced_steps_remaining < 0:
+                            gen_Forced_steps_remaining = 0
+
+                    rem_overload_kw = overload_kw - step_gen_to_load
+                    if rem_overload_kw < 0.0:
+                        rem_overload_kw = 0.0
+
+                    if (
+                        rem_overload_kw > 0.001
+                        and enable_bess
+                        and step_bess_chg_solar == 0.0
+                        and step_bess_chg_gen == 0.0
+                        and cur_e_kwh > e_min_kwh
+                    ):
+                        avail_dis_ac_kw = (cur_e_kwh - e_min_kwh) * eta_dis_over_dt
+                        step_bess_dis = rem_overload_kw
+                        if bess_p_max_kw < step_bess_dis:
+                            step_bess_dis = bess_p_max_kw
+                        if avail_dis_ac_kw < step_bess_dis:
+                            step_bess_dis = avail_dis_ac_kw
+                        removed_e = step_bess_dis * dt_over_eta_dis
+                        solar_share = (solar_energy_in_bess_kwh / cur_e_kwh) if cur_e_kwh > 0.0 else 0.0
+                        bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt) * solar_share
+                        cur_e_kwh -= removed_e
+                        if cur_e_kwh < e_min_kwh:
+                            cur_e_kwh = e_min_kwh
+                        solar_energy_in_bess_kwh -= removed_e * solar_share
+                        if solar_energy_in_bess_kwh < 0.0:
+                            solar_energy_in_bess_kwh = 0.0
+
+        else:
+            # --- BELOW OR AT GRID LIMIT (Normal Load Region) ---
+            if gen_Forced_steps_remaining > 0 and enable_gen:
+                actual_gen_kw = gen_min_clamped
+                step_gen_out = actual_gen_kw
+                if allow_gen_chg and enable_bess and cur_e_kwh < e_max_kwh:
+                    room_ac_kw = (e_max_kwh - cur_e_kwh) * inv_dt_eta_chg
+                    step_bess_chg_gen = actual_gen_kw
+                    if rem_bess_chg_power_kw < step_bess_chg_gen:
+                        step_bess_chg_gen = rem_bess_chg_power_kw
+                    if room_ac_kw < step_bess_chg_gen:
+                        step_bess_chg_gen = room_ac_kw
+                    cur_e_kwh += step_bess_chg_gen * dt_eta_chg
+                    rem_gen = actual_gen_kw - step_bess_chg_gen
+                else:
+                    rem_gen = actual_gen_kw
+                step_gen_to_load = rem_gen if rem_gen < p_rem else p_rem
+                step_gen_to_bess = step_bess_chg_gen
+                gen_Forced_steps_remaining -= 1
+                if gen_Forced_steps_remaining < 0:
+                    gen_Forced_steps_remaining = 0
+
+            rem_load_for_bess = p_rem - step_gen_to_load
+            if rem_load_for_bess < 0.0:
+                rem_load_for_bess = 0.0
+
+            # Rule 2: Self-Consumption + Peak Reserve allows discharging stored solar down to e_reserve_kwh
+            if (
+                effective_rule2_self_cons
+                and enable_bess
+                and step_bess_chg_solar == 0.0
+                and step_bess_chg_gen == 0.0
+                and rem_load_for_bess > 0.0
+                and cur_e_kwh > e_reserve_kwh
+                and solar_energy_in_bess_kwh > 0.0
+            ):
+                avail_e = cur_e_kwh - e_reserve_kwh
+                if solar_energy_in_bess_kwh < avail_e:
+                    avail_e = solar_energy_in_bess_kwh
+                avail_dis_ac_kw = avail_e * eta_dis_over_dt
+                step_bess_dis = rem_load_for_bess
+                if bess_p_max_kw < step_bess_dis:
+                    step_bess_dis = bess_p_max_kw
+                if avail_dis_ac_kw < step_bess_dis:
+                    step_bess_dis = avail_dis_ac_kw
+                removed_e = step_bess_dis * dt_over_eta_dis
+                bess_discharge_from_solar_kwh_acc += step_bess_dis * dt
+                cur_e_kwh -= removed_e
+                if cur_e_kwh < e_reserve_kwh:
+                    cur_e_kwh = e_reserve_kwh
+                solar_energy_in_bess_kwh -= removed_e
+                if solar_energy_in_bess_kwh < 0.0:
+                    solar_energy_in_bess_kwh = 0.0
+
+            # Rule 3: Battery Grid Recharging within Grid Limit
+            if (
+                allow_grid_chg
+                and enable_bess
+                and step_bess_dis == 0.0
+                and step_bess_chg_gen == 0.0
+                and rem_bess_chg_power_kw > 0.0
+                and cur_e_kwh < target_grid_e_kwh
+            ):
+                headroom_kw = grid_limit_kw - (p_rem - step_gen_to_load - step_bess_dis)
+                if headroom_kw > 0.0:
+                    room_ac_kw = (target_grid_e_kwh - cur_e_kwh) * inv_dt_eta_chg
+                    step_bess_chg_grid = headroom_kw
+                    if rem_bess_chg_power_kw < step_bess_chg_grid:
+                        step_bess_chg_grid = rem_bess_chg_power_kw
+                    if room_ac_kw < step_bess_chg_grid:
+                        step_bess_chg_grid = room_ac_kw
+                    cur_e_kwh += step_bess_chg_grid * dt_eta_chg
+
+        # C. Record Step States
+        bess_charge_solar_kw[i] = step_bess_chg_solar
+        bess_charge_grid_kw[i] = step_bess_chg_grid
+        bess_charge_gen_kw[i] = step_bess_chg_gen
+        bess_discharge_kw[i] = step_bess_dis
+        bess_energy_kwh[i] = cur_e_kwh
+        gen_output_kw[i] = step_gen_out
+        gen_to_load_kw[i] = step_gen_to_load
+        gen_to_bess_kw[i] = step_gen_to_bess
+
+    return (
+        solar_export_kw,
+        bess_charge_solar_kw,
+        bess_charge_grid_kw,
+        bess_charge_gen_kw,
+        bess_discharge_kw,
+        bess_energy_kwh,
+        gen_output_kw,
+        gen_to_load_kw,
+        gen_to_bess_kw,
+        bess_discharge_from_solar_kwh_acc,
+    )
+
 
 def simulate_combined_system_dispatch(
     load_kw: np.ndarray,
@@ -1454,44 +1838,15 @@ def simulate_combined_system_dispatch(
     intercept_val = float(system_cfg.gen_intercept_per_kw_rated) if system_cfg.gen_intercept_per_kw_rated >= 0 else float(fuel_spec["intercept_per_kw_rated"])
     min_run_steps = max(1, int(round(float(system_cfg.gen_min_runtime_minutes) / (dt * 60.0))))
 
-    gen_model = GeneratorConfig(
-        rated_power_kw=gen_rated_kw,
-        fuel_type=system_cfg.fuel_type,
-        min_load_ratio_pct=gen_min_pct,
-        fuel_curve_slope_l_per_kwh=slope_val,
-        fuel_curve_intercept_l_per_kw_rated=intercept_val,
-    )
-
     # 4. Pre-allocate 35,040-step Arrays
     solar_direct_kw = np.minimum(p_load, solar_gen_kw)
     solar_surplus_kw = np.maximum(0.0, solar_gen_kw - solar_direct_kw)
     rem_load_after_solar_kw = np.maximum(0.0, p_load - solar_direct_kw)
 
-    solar_export_kw = np.zeros(n_steps, dtype=float)
-    bess_charge_solar_kw = np.zeros(n_steps, dtype=float)
-    bess_charge_grid_kw = np.zeros(n_steps, dtype=float)
-    bess_charge_gen_kw = np.zeros(n_steps, dtype=float)
-    bess_discharge_kw = np.zeros(n_steps, dtype=float)
-    bess_discharge_from_solar_kwh_acc = 0.0
-    bess_soc_pct = np.zeros(n_steps, dtype=float)
-    bess_energy_kwh = np.zeros(n_steps, dtype=float)
-
-    gen_output_kw = np.zeros(n_steps, dtype=float)
-    gen_to_load_kw = np.zeros(n_steps, dtype=float)
-    gen_to_bess_kw = np.zeros(n_steps, dtype=float)
-    gen_fuel_step = np.zeros(n_steps, dtype=float)
-    gen_running_mask = np.zeros(n_steps, dtype=bool)
-
-    grid_import_kw = np.zeros(n_steps, dtype=float)
-    unmet_overload_kw = np.zeros(n_steps, dtype=float)
-
     rule1 = rules_cfg.rule1_peak_priority
     rule2 = rules_cfg.rule2_battery_strategy
     rule3 = rules_cfg.rule3_charging_sources
 
-    # If Solar is disabled, the battery operates strictly in peak shaving mode (effective_rule2 = "peak_shaving_only").
-    # Self-consumption requires solar generation to consume; running self-consumption without solar
-    # would counter-productively drain the battery into normal base load down to peak reserve.
     effective_rule2 = "peak_shaving_only" if not system_cfg.enable_solar else rule2
 
     allow_grid_chg = (
@@ -1518,214 +1873,84 @@ def simulate_combined_system_dispatch(
         else 0.0
     )
 
-    gen_Forced_steps_remaining = 0
+    target_grid_e_kwh = (
+        e_max_kwh
+        if (effective_rule2 == "peak_shaving_only" or not system_cfg.enable_solar)
+        else e_reserve_kwh
+    )
 
-    # 5. Step-by-Step 15-Minute Simulation Loop
-    for i in range(n_steps):
-        p_rem = rem_load_after_solar_kw[i]
-        p_surplus = solar_surplus_kw[i]
+    # 5. Execute 15-Minute Simulation (Vectorized fast-path if neither Battery nor Generator is active)
+    if not enable_bess and not enable_gen:
+        solar_export_kw = solar_surplus_kw.copy()
+        bess_charge_solar_kw = np.zeros(n_steps, dtype=float)
+        bess_charge_grid_kw = np.zeros(n_steps, dtype=float)
+        bess_charge_gen_kw = np.zeros(n_steps, dtype=float)
+        bess_discharge_kw = np.zeros(n_steps, dtype=float)
+        bess_energy_kwh = np.zeros(n_steps, dtype=float)
+        bess_soc_pct = np.zeros(n_steps, dtype=float)
+        bess_discharge_from_solar_kwh_acc = 0.0
+        gen_output_kw = np.zeros(n_steps, dtype=float)
+        gen_to_load_kw = np.zeros(n_steps, dtype=float)
+        gen_to_bess_kw = np.zeros(n_steps, dtype=float)
+        gen_fuel_step = np.zeros(n_steps, dtype=float)
+        gen_running_mask = np.zeros(n_steps, dtype=bool)
+        grid_import_kw = rem_load_after_solar_kw.copy()
+        unmet_overload_kw = np.maximum(0.0, grid_import_kw - grid_limit_kw)
+    else:
+        (
+            solar_export_kw,
+            bess_charge_solar_kw,
+            bess_charge_grid_kw,
+            bess_charge_gen_kw,
+            bess_discharge_kw,
+            bess_energy_kwh,
+            gen_output_kw,
+            gen_to_load_kw,
+            gen_to_bess_kw,
+            bess_discharge_from_solar_kwh_acc,
+        ) = _fast_combined_dispatch_kernel(
+            rem_load_after_solar_kw=rem_load_after_solar_kw,
+            solar_surplus_kw=solar_surplus_kw,
+            grid_limit_kw=grid_limit_kw,
+            enable_bess=enable_bess,
+            bess_p_max_kw=bess_p_max_kw,
+            e_min_kwh=e_min_kwh,
+            e_max_kwh=e_max_kwh,
+            e_reserve_kwh=e_reserve_kwh,
+            eta_chg=eta_chg,
+            eta_dis=eta_dis,
+            enable_gen=enable_gen,
+            gen_rated_kw=gen_rated_kw,
+            gen_min_kw=gen_min_kw,
+            min_run_steps=min_run_steps,
+            rule1_battery_first=(rule1 == "battery_first"),
+            effective_rule2_self_cons=(effective_rule2 == "self_consumption_reserve"),
+            allow_grid_chg=allow_grid_chg,
+            allow_gen_chg=allow_gen_chg,
+            target_grid_e_kwh=target_grid_e_kwh,
+            init_e_kwh=cur_e_kwh,
+            init_solar_e_kwh=solar_energy_in_bess_kwh,
+            dt=dt,
+        )
+        bess_soc_pct = (
+            bess_energy_kwh * (100.0 / bess_cap_kwh)
+            if bess_cap_kwh > 0.0
+            else np.zeros(n_steps, dtype=float)
+        )
+        gen_running_mask = gen_output_kw > 0.0
+        gen_fuel_step = np.zeros(n_steps, dtype=float)
+        if enable_gen and np.any(gen_running_mask):
+            rates = np.round(
+                (slope_val * gen_output_kw[gen_running_mask]) + (intercept_val * gen_rated_kw),
+                3,
+            )
+            gen_fuel_step[gen_running_mask] = np.round(np.maximum(0.0, rates) * dt, 4)
 
-        step_bess_chg_solar = 0.0
-        step_bess_chg_grid = 0.0
-        step_bess_chg_gen = 0.0
-        step_bess_dis = 0.0
-        step_gen_out = 0.0
-        step_gen_to_load = 0.0
-        step_gen_to_bess = 0.0
-
-        # A. Charge Battery from Solar Surplus (if available)
-        if p_surplus > 0.0 and enable_bess and cur_e_kwh < e_max_kwh:
-            room_ac_kw = (e_max_kwh - cur_e_kwh) / (dt * eta_chg)
-            step_bess_chg_solar = min(p_surplus, bess_p_max_kw, room_ac_kw)
-            added_e = step_bess_chg_solar * dt * eta_chg
-            cur_e_kwh += added_e
-            solar_energy_in_bess_kwh = min(cur_e_kwh, solar_energy_in_bess_kwh + added_e)
-            solar_export_kw[i] = max(0.0, p_surplus - step_bess_chg_solar)
-        else:
-            solar_export_kw[i] = p_surplus
-
-        rem_bess_chg_power_kw = max(0.0, bess_p_max_kw - step_bess_chg_solar)
-
-        # B. Handle Residual Demand
-        if p_rem > grid_limit_kw:
-            # --- ABOVE GRID LIMIT (Peak Shaving Region) ---
-            overload_kw = p_rem - grid_limit_kw
-
-            if rule1 == "battery_first":
-                # 1. Battery discharges first down to e_min_kwh
-                if enable_bess and step_bess_chg_solar == 0.0 and cur_e_kwh > e_min_kwh:
-                    avail_dis_ac_kw = ((cur_e_kwh - e_min_kwh) / dt) * eta_dis
-                    step_bess_dis = min(overload_kw, bess_p_max_kw, avail_dis_ac_kw)
-                    removed_e = (step_bess_dis * dt) / eta_dis
-                    solar_share = (solar_energy_in_bess_kwh / cur_e_kwh) if cur_e_kwh > 0 else 0.0
-                    bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt) * solar_share
-                    cur_e_kwh = max(e_min_kwh, cur_e_kwh - removed_e)
-                    solar_energy_in_bess_kwh = max(0.0, solar_energy_in_bess_kwh - removed_e * solar_share)
-
-                rem_overload_kw = max(0.0, overload_kw - step_bess_dis)
-
-                # 2. Generator covers remaining overload second (or continues if forced by min runtime)
-                if (rem_overload_kw > 0.001 or gen_Forced_steps_remaining > 0) and enable_gen:
-                    if rem_overload_kw > 0.001 and gen_Forced_steps_remaining == 0:
-                        gen_Forced_steps_remaining = min_run_steps
-                    req_gen_kw = min(rem_overload_kw, gen_rated_kw)
-                    actual_gen_kw = max(req_gen_kw, min(gen_rated_kw, gen_min_kw))
-                    step_gen_out = actual_gen_kw
-                    step_gen_to_load = min(actual_gen_kw, rem_overload_kw)
-
-                    gen_excess_kw = max(0.0, actual_gen_kw - step_gen_to_load)
-                    if gen_excess_kw > 0.0:
-                        if allow_gen_chg and enable_bess and step_bess_dis == 0.0 and cur_e_kwh < e_max_kwh:
-                            room_ac_kw = (e_max_kwh - cur_e_kwh) / (dt * eta_chg)
-                            step_bess_chg_gen = min(gen_excess_kw, rem_bess_chg_power_kw, room_ac_kw)
-                            cur_e_kwh += step_bess_chg_gen * dt * eta_chg
-                            gen_excess_after_bess = gen_excess_kw - step_bess_chg_gen
-                        else:
-                            gen_excess_after_bess = gen_excess_kw
-                        extra_to_load = min(gen_excess_after_bess, max(0.0, p_rem - step_bess_dis - step_gen_to_load))
-                        step_gen_to_load += extra_to_load
-                    step_gen_to_bess = step_bess_chg_gen
-                    gen_Forced_steps_remaining = max(0, gen_Forced_steps_remaining - 1)
-
-            else:
-                # --- "generator_first": Generator first, Battery for fast/small peaks ---
-                avail_bess_dis_kw = (
-                    ((cur_e_kwh - e_min_kwh) / dt) * eta_dis
-                    if (enable_bess and step_bess_chg_solar == 0.0 and cur_e_kwh > e_min_kwh)
-                    else 0.0
-                )
-                avail_bess_dis_kw = min(bess_p_max_kw, avail_bess_dis_kw)
-
-                if (
-                    enable_gen
-                    and gen_Forced_steps_remaining == 0
-                    and (overload_kw < gen_min_kw)
-                    and enable_bess
-                    and (avail_bess_dis_kw >= overload_kw)
-                ):
-                    # Battery absorbs small peak below generator minimum load
-                    step_bess_dis = overload_kw
-                    removed_e = (step_bess_dis * dt) / eta_dis
-                    solar_share = (solar_energy_in_bess_kwh / cur_e_kwh) if cur_e_kwh > 0 else 0.0
-                    bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt) * solar_share
-                    cur_e_kwh = max(e_min_kwh, cur_e_kwh - removed_e)
-                    solar_energy_in_bess_kwh = max(0.0, solar_energy_in_bess_kwh - removed_e * solar_share)
-                else:
-                    # 1. Generator runs first
-                    if enable_gen:
-                        if gen_Forced_steps_remaining == 0:
-                            gen_Forced_steps_remaining = min_run_steps
-                        req_gen_kw = min(overload_kw, gen_rated_kw)
-                        actual_gen_kw = max(req_gen_kw, min(gen_rated_kw, gen_min_kw))
-                        step_gen_out = actual_gen_kw
-                        step_gen_to_load = min(actual_gen_kw, overload_kw)
-
-                        gen_excess_kw = max(0.0, actual_gen_kw - step_gen_to_load)
-                        if gen_excess_kw > 0.0:
-                            if allow_gen_chg and enable_bess and cur_e_kwh < e_max_kwh:
-                                room_ac_kw = (e_max_kwh - cur_e_kwh) / (dt * eta_chg)
-                                step_bess_chg_gen = min(gen_excess_kw, rem_bess_chg_power_kw, room_ac_kw)
-                                cur_e_kwh += step_bess_chg_gen * dt * eta_chg
-                                gen_excess_after_bess = gen_excess_kw - step_bess_chg_gen
-                            else:
-                                gen_excess_after_bess = gen_excess_kw
-                            extra_to_load = min(gen_excess_after_bess, max(0.0, p_rem - step_gen_to_load))
-                            step_gen_to_load += extra_to_load
-                        step_gen_to_bess = step_bess_chg_gen
-                        gen_Forced_steps_remaining = max(0, gen_Forced_steps_remaining - 1)
-
-                    rem_overload_kw = max(0.0, overload_kw - step_gen_to_load)
-
-                    # 2. Battery covers any remaining peak exceeding Generator rated power
-                    if (
-                        rem_overload_kw > 0.001
-                        and enable_bess
-                        and step_bess_chg_solar == 0.0
-                        and step_bess_chg_gen == 0.0
-                        and cur_e_kwh > e_min_kwh
-                    ):
-                        avail_dis_ac_kw = ((cur_e_kwh - e_min_kwh) / dt) * eta_dis
-                        step_bess_dis = min(rem_overload_kw, bess_p_max_kw, avail_dis_ac_kw)
-                        removed_e = (step_bess_dis * dt) / eta_dis
-                        solar_share = (solar_energy_in_bess_kwh / cur_e_kwh) if cur_e_kwh > 0 else 0.0
-                        bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt) * solar_share
-                        cur_e_kwh = max(e_min_kwh, cur_e_kwh - removed_e)
-                        solar_energy_in_bess_kwh = max(0.0, solar_energy_in_bess_kwh - removed_e * solar_share)
-
-        else:
-            # --- BELOW OR AT GRID LIMIT (Normal Load Region) ---
-            if gen_Forced_steps_remaining > 0 and enable_gen:
-                actual_gen_kw = min(gen_rated_kw, gen_min_kw)
-                step_gen_out = actual_gen_kw
-                if allow_gen_chg and enable_bess and cur_e_kwh < e_max_kwh:
-                    room_ac_kw = (e_max_kwh - cur_e_kwh) / (dt * eta_chg)
-                    step_bess_chg_gen = min(actual_gen_kw, rem_bess_chg_power_kw, room_ac_kw)
-                    cur_e_kwh += step_bess_chg_gen * dt * eta_chg
-                    rem_gen = actual_gen_kw - step_bess_chg_gen
-                else:
-                    rem_gen = actual_gen_kw
-                step_gen_to_load = min(rem_gen, p_rem)
-                step_gen_to_bess = step_bess_chg_gen
-                gen_Forced_steps_remaining = max(0, gen_Forced_steps_remaining - 1)
-
-            rem_load_for_bess = max(0.0, p_rem - step_gen_to_load)
-
-            # Rule 2: Self-Consumption + Peak Reserve allows discharging stored solar down to e_reserve_kwh
-            if (
-                effective_rule2 == "self_consumption_reserve"
-                and enable_bess
-                and step_bess_chg_solar == 0.0
-                and step_bess_chg_gen == 0.0
-                and rem_load_for_bess > 0.0
-                and cur_e_kwh > e_reserve_kwh
-                and solar_energy_in_bess_kwh > 0.0
-            ):
-                avail_dis_ac_kw = ((min(cur_e_kwh - e_reserve_kwh, solar_energy_in_bess_kwh)) / dt) * eta_dis
-                step_bess_dis = min(rem_load_for_bess, bess_p_max_kw, avail_dis_ac_kw)
-                removed_e = (step_bess_dis * dt) / eta_dis
-                solar_share = 1.0
-                bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt)
-                cur_e_kwh = max(e_reserve_kwh, cur_e_kwh - removed_e)
-                solar_energy_in_bess_kwh = max(0.0, solar_energy_in_bess_kwh - removed_e)
-
-            # Rule 3: Battery Grid Recharging within Grid Limit
-            if (
-                allow_grid_chg
-                and enable_bess
-                and step_bess_dis == 0.0
-                and step_bess_chg_gen == 0.0
-                and rem_bess_chg_power_kw > 0.0
-            ):
-                target_grid_e_kwh = (
-                    e_max_kwh
-                    if (effective_rule2 == "peak_shaving_only" or not system_cfg.enable_solar)
-                    else e_reserve_kwh
-                )
-                if cur_e_kwh < target_grid_e_kwh:
-                    headroom_kw = max(0.0, grid_limit_kw - (p_rem - step_gen_to_load - step_bess_dis))
-                    if headroom_kw > 0.0:
-                        room_ac_kw = (target_grid_e_kwh - cur_e_kwh) / (dt * eta_chg)
-                        step_bess_chg_grid = min(headroom_kw, rem_bess_chg_power_kw, room_ac_kw)
-                        cur_e_kwh += step_bess_chg_grid * dt * eta_chg
-
-        # C. Record Step States
-        bess_charge_solar_kw[i] = step_bess_chg_solar
-        bess_charge_grid_kw[i] = step_bess_chg_grid
-        bess_charge_gen_kw[i] = step_bess_chg_gen
-        bess_discharge_kw[i] = step_bess_dis
-        bess_energy_kwh[i] = cur_e_kwh
-        bess_soc_pct[i] = (cur_e_kwh / bess_cap_kwh * 100.0) if bess_cap_kwh > 0.0 else 0.0
-
-        gen_output_kw[i] = step_gen_out
-        gen_to_load_kw[i] = step_gen_to_load
-        gen_to_bess_kw[i] = step_gen_to_bess
-        if step_gen_out > 0.0:
-            gen_running_mask[i] = True
-            gen_fuel_step[i] = gen_model.calc_fuel_consumption(step_gen_out, duration_hours=dt)
-
-        net_grid_kw = max(0.0, p_rem - step_bess_dis - step_gen_to_load + step_bess_chg_grid)
-        grid_import_kw[i] = net_grid_kw
-        unmet_overload_kw[i] = max(0.0, net_grid_kw - grid_limit_kw)
+        grid_import_kw = np.maximum(
+            0.0,
+            rem_load_after_solar_kw - bess_discharge_kw - gen_to_load_kw + bess_charge_grid_kw,
+        )
+        unmet_overload_kw = np.maximum(0.0, grid_import_kw - grid_limit_kw)
 
     # 6. Compute Technical KPIs
     diag_before = analyze_grid_violations(p_load, grid_limit_kw, step_hours=dt)
@@ -2014,35 +2239,54 @@ def build_monthly_balance_table(
     unmet_overload_kw: np.ndarray,
     step_hours: float = 0.25,
 ) -> pd.DataFrame:
-    """Builds the 12-month technical energy & peak balance table (used for Sheet 3 in Excel)."""
-    months = timestamps.month.to_numpy(dtype=int)
-    rows = []
-    for m_idx in range(1, 13):
-        mask = months == m_idx
-        if not np.any(mask):
-            continue
-        m_load = load_kw[mask]
-        m_grid = grid_import_kw[mask]
-        m_over_base = np.maximum(0.0, m_load - grid_limit_kw)
-        m_over_comb = unmet_overload_kw[mask]
+    """Builds the 12-month technical energy & peak balance table via vectorized np.bincount & np.maximum.at."""
+    if len(load_kw) == 0:
+        return pd.DataFrame()
 
+    m_idx = timestamps.month.to_numpy(dtype=np.intp) - 1
+    counts = np.bincount(m_idx, minlength=12)
+
+    cons_m = np.bincount(m_idx, weights=load_kw, minlength=12) * step_hours
+    s_gen_m = np.bincount(m_idx, weights=solar_gen_kw, minlength=12) * step_hours
+    s_dir_m = np.bincount(m_idx, weights=solar_direct_kw, minlength=12) * step_hours
+    s_exp_m = np.bincount(m_idx, weights=solar_export_kw, minlength=12) * step_hours
+    b_dis_m = np.bincount(m_idx, weights=bess_discharge_kw, minlength=12) * step_hours
+    g_out_m = np.bincount(m_idx, weights=gen_output_kw, minlength=12) * step_hours
+    g_run_m = np.bincount(m_idx, weights=gen_running_mask, minlength=12) * step_hours
+    g_fuel_m = np.bincount(m_idx, weights=gen_fuel_step, minlength=12)
+    grid_imp_m = np.bincount(m_idx, weights=grid_import_kw, minlength=12) * step_hours
+    over_hrs_m = np.bincount(m_idx, weights=(unmet_overload_kw > 0.05), minlength=12) * step_hours
+    over_kwh_m = np.bincount(m_idx, weights=unmet_overload_kw, minlength=12) * step_hours
+
+    base_peak_m = np.zeros(12, dtype=float)
+    np.maximum.at(base_peak_m, m_idx, load_kw)
+    comb_peak_m = np.zeros(12, dtype=float)
+    np.maximum.at(comb_peak_m, m_idx, grid_import_kw)
+    over_comb_peak_m = np.zeros(12, dtype=float)
+    np.maximum.at(over_comb_peak_m, m_idx, unmet_overload_kw)
+
+    rows = []
+    for m in range(12):
+        if counts[m] == 0:
+            continue
+        b_peak = float(base_peak_m[m])
         rows.append({
-            "Month": MONTH_NAMES_SHORT[m_idx - 1],
-            "Consumption (kWh)": round(float(np.sum(m_load) * step_hours), 1),
-            "Current situation Peak (kW)": round(float(np.max(m_load)), 1),
-            "Current situation Overload (kW)": round(float(np.max(m_over_base)), 1),
-            "Solar Generation (kWh)": round(float(np.sum(solar_gen_kw[mask]) * step_hours), 1),
-            "Solar Direct (kWh)": round(float(np.sum(solar_direct_kw[mask]) * step_hours), 1),
-            "Solar Export (kWh)": round(float(np.sum(solar_export_kw[mask]) * step_hours), 1),
-            "Battery Discharge (kWh)": round(float(np.sum(bess_discharge_kw[mask]) * step_hours), 1),
-            "Generator Output (kWh)": round(float(np.sum(gen_output_kw[mask]) * step_hours), 1),
-            "Generator Runtime (hrs)": round(float(np.sum(gen_running_mask[mask]) * step_hours), 1),
-            "Generator Fuel": round(float(np.sum(gen_fuel_step[mask])), 1),
-            "Combined Grid Import (kWh)": round(float(np.sum(m_grid) * step_hours), 1),
-            "Combined Grid Peak (kW)": round(float(np.max(m_grid)), 1),
-            "Remaining Overload (kW)": round(float(np.max(m_over_comb)), 1),
-            "Remaining Overload (hrs)": round(float(np.sum(m_over_comb > 0.05) * step_hours), 2),
-            "Remaining Overload (kWh)": round(float(np.sum(m_over_comb) * step_hours), 1),
+            "Month": MONTH_NAMES_SHORT[m],
+            "Consumption (kWh)": round(float(cons_m[m]), 1),
+            "Current situation Peak (kW)": round(b_peak, 1),
+            "Current situation Overload (kW)": round(max(0.0, b_peak - grid_limit_kw), 1),
+            "Solar Generation (kWh)": round(float(s_gen_m[m]), 1),
+            "Solar Direct (kWh)": round(float(s_dir_m[m]), 1),
+            "Solar Export (kWh)": round(float(s_exp_m[m]), 1),
+            "Battery Discharge (kWh)": round(float(b_dis_m[m]), 1),
+            "Generator Output (kWh)": round(float(g_out_m[m]), 1),
+            "Generator Runtime (hrs)": round(float(g_run_m[m]), 1),
+            "Generator Fuel": round(float(g_fuel_m[m]), 1),
+            "Combined Grid Import (kWh)": round(float(grid_imp_m[m]), 1),
+            "Combined Grid Peak (kW)": round(float(comb_peak_m[m]), 1),
+            "Remaining Overload (kW)": round(float(over_comb_peak_m[m]), 1),
+            "Remaining Overload (hrs)": round(float(over_hrs_m[m]), 2),
+            "Remaining Overload (kWh)": round(float(over_kwh_m[m]), 1),
         })
     return pd.DataFrame(rows)
 
