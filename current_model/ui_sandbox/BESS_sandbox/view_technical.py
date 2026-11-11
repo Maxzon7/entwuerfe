@@ -170,18 +170,22 @@ def render_technical_feasibility_tab(
 
             with b_col1:
                 st.markdown("**Modular Storage Units:**")
+                max_sb_units = max(100000, init_unit_count * 2)
+                safe_sb_units = min(max_sb_units, max(1, init_unit_count))
                 form_unit_count = st.number_input(
                     "Modular Unit Count",
                     min_value=1,
-                    max_value=100,
-                    value=init_unit_count,
+                    max_value=max_sb_units,
+                    value=safe_sb_units,
                     step=1
                 )
+                max_sb_unit_kwh = max(50000.0, init_unit_kwh * 2)
+                safe_sb_unit_kwh = min(max_sb_unit_kwh, max(10.0, init_unit_kwh))
                 form_unit_kwh = st.number_input(
                     "Capacity per Unit (kWh)",
                     min_value=10.0,
-                    max_value=2000.0,
-                    value=init_unit_kwh,
+                    max_value=max_sb_unit_kwh,
+                    value=safe_sb_unit_kwh,
                     step=25.0
                 )
                 form_gross_kwh = float(form_unit_count * form_unit_kwh)
@@ -189,18 +193,22 @@ def render_technical_feasibility_tab(
 
             with b_col2:
                 st.markdown("**Inverter Power & Efficiency:**")
+                max_sb_dis = max(100000.0, init_dis_kw * 2)
+                safe_sb_dis = min(max_sb_dis, max(1.0, init_dis_kw))
                 form_dis_kw = st.number_input(
                     "Max Discharge Inverter (kW)",
                     min_value=1.0,
-                    max_value=5000.0,
-                    value=init_dis_kw,
+                    max_value=max_sb_dis,
+                    value=safe_sb_dis,
                     step=10.0
                 )
+                max_sb_chg = max(100000.0, init_chg_kw * 2)
+                safe_sb_chg = min(max_sb_chg, max(1.0, init_chg_kw))
                 form_chg_kw = st.number_input(
                     "Max Charge Inverter (kW)",
                     min_value=1.0,
-                    max_value=5000.0,
-                    value=init_chg_kw,
+                    max_value=max_sb_chg,
+                    value=safe_sb_chg,
                     step=10.0
                 )
                 form_rte = st.slider(

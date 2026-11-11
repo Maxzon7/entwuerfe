@@ -187,6 +187,45 @@ class TestCombinedSandbox(unittest.TestCase):
         )
         self.assertGreater(res_all_sources.kpis.battery_charged_from_grid_kwh, 0.0)
 
+    def test_standalone_battery_peak_shaving_and_grid_recharge(self):
+        """Verifies that standalone BESS (enable_solar=False) operates strictly as peak_shaving_only,
+        recharges from grid headroom, and does not drain to 30% reserve into normal load."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import ENGINE_VERSION
+        self.assertEqual(ENGINE_VERSION, "13.5")
+
+        cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=False,
+            enable_battery=True,
+            battery_capacity_kwh=500.0,
+            battery_power_kw=100.0,
+            min_soc_pct=10.0,
+            max_soc_pct=90.0,
+        )
+        # Default rules have rule2="self_consumption_reserve" and rule3="solar_only"
+        default_rules = InteractionRulesConfig()
+        res = simulate_combined_system_dispatch(
+            load_kw=self.load_kw,
+            timestamps=self.timestamps,
+            system_cfg=cfg,
+            rules_cfg=default_rules,
+        )
+
+        # 1. Battery starts fully charged at max_soc_pct (90%)
+        self.assertAlmostEqual(res.bess_soc_pct[0], 90.0, places=1)
+
+        # 2. Battery never discharges into normal load below grid limit
+        normal_load_mask = self.load_kw <= 180.0
+        self.assertTrue(np.all(res.bess_discharge_kw[normal_load_mask] == 0.0))
+
+        # 3. Battery recharges from grid headroom whenever below max_soc_pct
+        self.assertGreater(res.kpis.battery_charged_from_grid_kwh, 1000.0)
+        self.assertGreater(res.kpis.battery_equivalent_cycles, 10.0)
+
+        # 4. Standalone sizing allows grid recharge
+        dual_bess = compute_dual_battery_sizing(self.load_kw, cfg, default_rules)
+        self.assertLess(dual_bess.coupled_100_kwh, 20000.0)
+
     def test_dual_sizing_and_4_bottleneck_table(self):
         """Verifies Dual-Sizing (Standalone vs. Coupled) for Battery and Generator + 4-Bottleneck Table."""
         cfg = CombinedSystemConfig(
@@ -291,15 +330,13 @@ class TestCombinedSandbox(unittest.TestCase):
             fig2 = create_combined_dispatch_soc_figure(sim_res, timeframe=tf)
             self.assertGreater(len(fig1.data), 0)
             self.assertGreater(len(fig2.data), 4)
-            self.assertEqual(fig2.layout.uirevision, tf)
+            self.assertEqual(fig2.data[0].type, "scattergl")
+            self.assertEqual(len(fig2.data[0].x), 35040)
             self.assertGreaterEqual(fig2.layout.margin.t, 90)
             self.assertGreaterEqual(fig2.layout.legend.y, 1.10)
-            if tf == "All":
-                self.assertEqual(len(fig2.data[0].x), 35040)
-                self.assertIn("All", fig2.layout.annotations[0].text)
-            elif tf == "7D":
-                self.assertEqual(len(fig2.data[0].x), 672)
-                self.assertIn("7D", fig2.layout.annotations[0].text)
+            self.assertEqual(fig2.layout.annotations[0].text, "15-Minute Power Dispatch (kW)")
+            self.assertEqual(fig2.layout.annotations[1].text, "Battery State of Charge (% and stored kWh)")
+            self.assertTrue(fig2.layout.xaxis2.rangeslider.visible)
 
         forbidden_terms = [
             "double lever",
@@ -626,7 +663,7 @@ class TestCombinedSandbox(unittest.TestCase):
         norm_series, _ = normalize_load_profile_2025(raw_df=df_raw, power_col="Total_Demand_kW", time_col="timestamp")
         self.assertAlmostEqual(norm_series.peak_demand_kw, 80.0, places=1)
 
-        # 2. Test Range-Slider disabled for 60 FPS scroll performance
+        # 2. Test Range-Slider configuration matching BESS Sandbox standard (visible on row 2)
         fig_cons = create_consumption_baseline_figure(self.timestamps, self.load_kw)
         self.assertFalse(fig_cons.layout.xaxis.rangeslider.visible)
 
@@ -639,7 +676,109 @@ class TestCombinedSandbox(unittest.TestCase):
             rules_cfg=rules,
         )
         fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res, timeframe="7D")
-        self.assertFalse(fig_master.layout.xaxis2.rangeslider.visible)
+        self.assertTrue(fig_master.layout.xaxis2.rangeslider.visible)
+
+    def test_extreme_scale_bess_unit_sizing_and_no_max_error(self):
+        """Verifies scale-aware modular battery sizing and dynamic bounds prevent StreamlitValueAboveMaxError."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            determine_smart_modular_units,
+        )
+
+        # 1. Small C&I tier (<= 500 kWh) -> 50 kWh rack modules
+        units_small, kwh_small = determine_smart_modular_units(100.0)
+        self.assertEqual(units_small, 2)
+        self.assertEqual(kwh_small, 50.0)
+
+        # 2. Medium C&I tier (500 - 2,500 kWh) -> 100 / 250 kWh cabinets
+        units_med, kwh_med = determine_smart_modular_units(1000.0)
+        self.assertEqual(units_med, 4)
+        self.assertEqual(kwh_med, 250.0)
+
+        # 3. Large C&I tier (2,500 - 10,000 kWh) -> 500 kWh blocks
+        units_lg, kwh_lg = determine_smart_modular_units(5000.0)
+        self.assertEqual(units_lg, 10)
+        self.assertEqual(kwh_lg, 500.0)
+
+        # 4. Utility scale (10,000 - 50,000 kWh) -> 1,000 kWh container blocks
+        units_util, kwh_util = determine_smart_modular_units(20000.0)
+        self.assertEqual(units_util, 20)
+        self.assertEqual(kwh_util, 1000.0)
+
+        # 5. Mega scale (> 50,000 kWh) -> 2,500 kWh container units (e.g. 1,265,500 kWh)
+        units_mega, kwh_mega = determine_smart_modular_units(1265500.0)
+        self.assertEqual(units_mega, 506)
+        self.assertAlmostEqual(units_mega * kwh_mega, 1265500.0, delta=1000.0)
+
+        # 6. Verify that hardcoded max_value=200 is gone from Combined_sandbox/app.py
+        app_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "app.py")
+        )
+        with open(app_path, "r", encoding="utf-8") as f:
+            app_code = f.read()
+
+        self.assertNotIn(
+            'max_value=200,',
+            app_code,
+            "Hardcoded max_value=200 must be replaced by dynamic max_units",
+        )
+        self.assertIn("max_units = max(100000, raw_units * 2)", app_code)
+
+        # 7. Verify that hardcoded max_value=100 is gone from BESS_sandbox/view_technical.py
+        bess_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "BESS_sandbox", "view_technical.py")
+        )
+        with open(bess_path, "r", encoding="utf-8") as f:
+            bess_code = f.read()
+
+        self.assertNotIn(
+            'max_value=100,',
+            bess_code,
+            "Hardcoded max_value=100 must be replaced by dynamic max_sb_units",
+        )
+        self.assertIn("max_sb_units = max(100000, init_unit_count * 2)", bess_code)
+
+    def test_standalone_battery_recharge_and_bess_standard_charts(self):
+        """Verifies that standalone BESS recharges from grid headroom and chart aligns with BESS sandbox standard."""
+        # 1. Standalone Battery (Solar disabled, Generator disabled)
+        cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=False,
+            enable_battery=True,
+            battery_capacity_kwh=300.0,
+            battery_power_kw=100.0,
+            enable_generator=False,
+        )
+        rules = InteractionRulesConfig(rule3_charging_sources="solar_only")  # Even if default solar_only
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=self.load_kw,
+            timestamps=self.timestamps,
+            system_cfg=cfg,
+            rules_cfg=rules,
+        )
+
+        # Standalone battery MUST recharge from grid headroom
+        total_chg_grid_kwh = float(np.sum(sim_res.bess_charge_grid_kw) * 0.25)
+        total_dis_kwh = float(np.sum(sim_res.bess_discharge_kw) * 0.25)
+        self.assertGreater(total_chg_grid_kwh, 0.0, "Standalone battery must recharge from grid headroom")
+        self.assertGreater(total_dis_kwh, 0.0, "Standalone battery must actively discharge for peak shaving")
+        self.assertGreater(float(np.max(sim_res.bess_soc_pct)), 80.0, "Battery must reach recharge state")
+
+        # 2. Master Dispatch Figure structure (BESS Sandbox 2-in-1 standard)
+        fig = create_combined_dispatch_soc_figure(sim_res=sim_res, timeframe="7D")
+        trace_names = [t.name for t in fig.data]
+
+        self.assertIn("Facility Load (kW)", trace_names)
+        self.assertIn("Grid Import (kW)", trace_names)
+        self.assertIn("BESS Discharge (kW)", trace_names)
+        self.assertIn("BESS Charge (kW, shown negative)", trace_names)
+        self.assertIn("SoC (%)", trace_names)
+        self.assertIn("Stored Energy (kWh)", trace_names)
+
+        # Verify dual Y-axes on lower subplot
+        self.assertIsNotNone(fig.layout.yaxis2)
+        self.assertEqual(fig.layout.yaxis2.title.text, "SoC (%)")
+        self.assertIsNotNone(fig.layout.yaxis3)
+        self.assertEqual(fig.layout.yaxis3.title.text, "Stored (kWh)")
 
 
 if __name__ == "__main__":

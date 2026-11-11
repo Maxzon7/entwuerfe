@@ -15,7 +15,7 @@ Provides the interactive Plotly visualizations for the Combined System Sandbox:
 ========================================================================================
 """
 
-from typing import Tuple
+from typing import Any, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -145,35 +145,65 @@ def create_consumption_baseline_figure(
     return fig
 
 
+def compute_focus_range_for_timestamps(
+    timestamps: pd.DatetimeIndex,
+    load_kw: np.ndarray,
+    days: float = 7.0,
+) -> Optional[List[str]]:
+    """Initial x-range centered on the annual peak load (default: one week)."""
+    if len(load_kw) == 0 or len(timestamps) == 0:
+        return None
+    idx = int(np.argmax(load_kw))
+    half = pd.Timedelta(days=days / 2.0)
+    ts = pd.to_datetime(timestamps)
+    start = max(ts[0], ts[idx] - half)
+    end = min(ts[-1], start + 2 * half)
+    return [start.isoformat(), end.isoformat()]
+
+
 def create_combined_dispatch_soc_figure(
     sim_res: CombinedSimulationResult,
-    timeframe: str = "7D",
+    initial_range: Optional[List[Any]] = None,
+    timeframe: Optional[str] = None,
+    height: int = 780,
 ) -> go.Figure:
     """
-    Creates the Synchronized 2-in-1 15-Minute Master Chart:
-      - Upper Subplot (Power Flow in kW):
-          * Stacked supply layers: Grid Import, Solar Direct, Battery Discharge, Generator Output
-          * Consumption (kW) line
-          * Dashed red Grid Limit (kW) line
+    Creates the Synchronized 2-in-1 15-Minute Master Chart matching BESS Sandbox Standard:
+      - Upper Subplot (15-Minute Power Dispatch in kW):
+          * Facility Load (kW) line (#94A3B8)
+          * Grid Import (kW) line (#3B82F6) capped at Grid Limit
+          * Solar Direct (kW) yellow area (#FACC15) when Solar enabled
+          * BESS Discharge (kW) green area (#22C55E) when Battery enabled
+          * BESS Charge (kW, shown negative) cyan dotted area (#06B6D4) when Battery enabled
+          * Generator Output (kW) orange area (#F97316) when Generator enabled
+          * Remaining Deficit (kW) red area (#EF4444) highlighting any unmet overload
+          * Red dashed Grid Limit line (#F87171) with top-left annotation
       - Lower Subplot (Synchronized X-Axis):
-          * Battery Level (SoC % and kWh) + Reserve Threshold
-          * Generator Active operating phases
+          * Battery State of Charge (% and stored kWh)
+          * Primary Y-axis: SoC (%) [0, 105%] with translucent purple gradient (#A78BFA)
+          * Secondary Y-axis: Stored Energy (kWh) [0, capacity * 1.05] dotted curve (#C4B5FD)
+          * Bounds: Labeled dashed lines for SoC Min and SoC Max
+          * Generator Active operating phases shaded in orange
+      - Interactivity:
+          * Full 35,040 points loaded in GPU WebGL (go.Scattergl) for 60 FPS performance
+          * Native Plotly rangeselector: [1 Day] [1 Week] [2 Weeks] [1 Month] [Full Year]
+          * Native range-slider on lower panel driving both panels synchronously
     """
-    s_idx, e_idx = _resolve_window_slice(
-        sim_res.timestamps,
-        sim_res.load_kw,
-        timeframe=timeframe,
+    ts = sim_res.timestamps
+    p_load = sim_res.load_kw
+    p_solar_dir = sim_res.solar_direct_kw
+    p_bess_dis = sim_res.bess_discharge_kw
+    p_bess_chg = (
+        sim_res.bess_charge_solar_kw
+        + sim_res.bess_charge_grid_kw
+        + sim_res.bess_charge_gen_kw
     )
-
-    ts = sim_res.timestamps[s_idx:e_idx]
-    p_load = sim_res.load_kw[s_idx:e_idx]
-    p_solar_dir = sim_res.solar_direct_kw[s_idx:e_idx]
-    p_bess_dis = sim_res.bess_discharge_kw[s_idx:e_idx]
-    p_gen_out = sim_res.gen_output_kw[s_idx:e_idx]
-    p_grid_imp = sim_res.grid_import_kw[s_idx:e_idx]
-    soc_pct = sim_res.bess_soc_pct[s_idx:e_idx]
-    soc_kwh = sim_res.bess_energy_kwh[s_idx:e_idx]
-    gen_active_pct = np.where(sim_res.gen_running_mask[s_idx:e_idx], 100.0, 0.0)
+    p_unmet = sim_res.unmet_overload_kw
+    p_gen_out = sim_res.gen_output_kw
+    p_grid_imp = sim_res.grid_import_kw
+    soc_pct = sim_res.bess_soc_pct
+    soc_kwh = sim_res.bess_energy_kwh
+    gen_active_pct = np.where(sim_res.gen_running_mask, 100.0, 0.0)
 
     cfg = sim_res.system_config
     rules = sim_res.rules_config
@@ -182,110 +212,142 @@ def create_combined_dispatch_soc_figure(
         rows=2,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.08,
-        row_heights=[0.65, 0.35],
+        vertical_spacing=0.07,
+        row_heights=[0.62, 0.38],
+        specs=[[{"secondary_y": False}], [{"secondary_y": True}]],
         subplot_titles=(
-            f"Power Flow ({timeframe})",
-            "Battery Level & Generator",
+            "15-Minute Power Dispatch (kW)",
+            "Battery State of Charge (% and stored kWh)",
         ),
     )
 
-    # --- ROW 1: Stacked Supply Breakdown + Consumption + Grid Limit ---
+    # --- ROW 1: Facility Load, Grid Import, Solar, BESS, Gen & Deficit (BESS Sandbox Standard) ---
+    # 1. Facility Load
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
+            x=ts,
+            y=p_load,
+            mode="lines",
+            name="Facility Load (kW)",
+            line=dict(color="#94A3B8", width=1.0),
+            hovertemplate="Load: <b>%{y:,.1f} kW</b><extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    # 2. Grid Import
+    fig.add_trace(
+        go.Scattergl(
             x=ts,
             y=p_grid_imp,
             mode="lines",
             name="Grid Import (kW)",
-            stackgroup="supply",
-            line=dict(width=0.6, color="#3B82F6"),
-            fillcolor="rgba(59, 130, 246, 0.45)",
-            hovertemplate="Grid Import: %{y:,.1f} kW<extra></extra>",
+            line=dict(color="#3B82F6", width=1.4),
+            hovertemplate="Grid: <b>%{y:,.1f} kW</b><extra></extra>",
         ),
         row=1,
         col=1,
     )
 
+    # 3. Solar Direct (when enabled)
     if cfg.enable_solar:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=ts,
                 y=p_solar_dir,
                 mode="lines",
                 name="Solar Direct (kW)",
-                stackgroup="supply",
-                line=dict(width=0.6, color="#FACC15"),
-                fillcolor="rgba(250, 204, 21, 0.55)",
-                hovertemplate="Solar Direct: %{y:,.1f} kW<extra></extra>",
+                line=dict(color="#FACC15", width=1.0),
+                fill="tozeroy",
+                fillcolor="rgba(250, 204, 21, 0.25)",
+                hovertemplate="Solar Direct: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
             col=1,
         )
 
+    # 4. Battery Discharge & Recharge (when enabled)
     if cfg.enable_battery:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=ts,
                 y=p_bess_dis,
                 mode="lines",
-                name="Battery Discharge (kW)",
-                stackgroup="supply",
-                line=dict(width=0.6, color="#10B981"),
-                fillcolor="rgba(16, 185, 129, 0.60)",
-                hovertemplate="Battery Discharge: %{y:,.1f} kW<extra></extra>",
+                name="BESS Discharge (kW)",
+                line=dict(color="#22C55E", width=1.0),
+                fill="tozeroy",
+                fillcolor="rgba(34, 197, 94, 0.25)",
+                hovertemplate="Discharge: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
             col=1,
         )
 
+        fig.add_trace(
+            go.Scattergl(
+                x=ts,
+                y=-p_bess_chg,
+                mode="lines",
+                name="BESS Charge (kW, shown negative)",
+                line=dict(color="#06B6D4", width=1.0, dash="dot"),
+                fill="tozeroy",
+                fillcolor="rgba(6, 182, 212, 0.18)",
+                hovertemplate="Charge: <b>%{y:,.1f} kW</b><extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    # 5. Generator Output (when enabled)
     if cfg.enable_generator:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=ts,
                 y=p_gen_out,
                 mode="lines",
                 name="Generator Output (kW)",
-                stackgroup="supply",
-                line=dict(width=0.6, color="#F97316"),
-                fillcolor="rgba(249, 115, 22, 0.65)",
-                hovertemplate="Generator Output: %{y:,.1f} kW<extra></extra>",
+                line=dict(color="#F97316", width=1.1),
+                fill="tozeroy",
+                fillcolor="rgba(249, 115, 22, 0.35)",
+                hovertemplate="Generator Output: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
             col=1,
         )
 
-    # Consumption reference line
-    fig.add_trace(
-        go.Scatter(
-            x=ts,
-            y=p_load,
-            mode="lines",
-            name="Consumption (kW)",
-            line=dict(color="#F8FAFC", width=1.7),
-            hovertemplate="Consumption: %{y:,.1f} kW<extra></extra>",
-        ),
-        row=1,
-        col=1,
-    )
+    # 6. Remaining Deficit (highlighted in red)
+    if float(np.max(p_unmet, initial=0.0)) > 0.05:
+        fig.add_trace(
+            go.Scattergl(
+                x=ts,
+                y=p_unmet,
+                mode="lines",
+                name="Remaining Deficit (kW)",
+                line=dict(color="#EF4444", width=1.8),
+                fill="tozeroy",
+                fillcolor="rgba(239, 68, 68, 0.45)",
+                hovertemplate="Remaining Deficit: <b>%{y:,.1f} kW</b><extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
 
-    # Red dashed Grid Limit line
-    fig.add_trace(
-        go.Scatter(
-            x=ts,
-            y=np.full(len(ts), cfg.grid_limit_kw),
-            mode="lines",
-            name=f"Grid Limit ({cfg.grid_limit_kw:,.0f} kW)",
-            line=dict(color="#EF4444", width=2.0, dash="dash"),
-            hovertemplate="Grid Limit: %{y:,.1f} kW<extra></extra>",
-        ),
+    # 7. Red dashed Grid Limit horizontal line with top-left annotation (BESS Standard)
+    fig.add_hline(
+        y=cfg.grid_limit_kw,
         row=1,
         col=1,
+        line=dict(color="#F87171", width=1.6, dash="dash"),
+        annotation_text=f"Grid Limit {cfg.grid_limit_kw:,.0f} kW",
+        annotation_position="top left",
+        annotation_font_color="#F87171",
     )
 
     # --- ROW 2: Battery SoC (% & kWh) & Generator Active Phases ---
     if cfg.enable_generator:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=ts,
                 y=gen_active_pct,
                 mode="lines",
@@ -297,52 +359,86 @@ def create_combined_dispatch_soc_figure(
             ),
             row=2,
             col=1,
+            secondary_y=False,
         )
 
     if cfg.enable_battery:
+        # Primary axis: State of Charge (%)
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=ts,
                 y=soc_pct,
-                customdata=soc_kwh,
                 mode="lines",
-                name=f"Battery Level (% of {cfg.battery_capacity_kwh:,.0f} kWh)",
-                line=dict(color="#10B981", width=1.8),
+                name="SoC (%)",
+                line=dict(color="#A78BFA", width=1.6),
                 fill="tozeroy",
-                fillcolor="rgba(16, 185, 129, 0.15)",
-                hovertemplate="Battery Level: %{y:.1f}% (%{customdata:,.1f} kWh)<extra></extra>",
+                fillcolor="rgba(167, 139, 250, 0.15)",
+                hovertemplate="SoC: <b>%{y:.1f} %</b><extra></extra>",
             ),
             row=2,
             col=1,
+            secondary_y=False,
+        )
+
+        # Secondary axis: Stored Energy (kWh)
+        fig.add_trace(
+            go.Scattergl(
+                x=ts,
+                y=soc_kwh,
+                mode="lines",
+                name="Stored Energy (kWh)",
+                line=dict(color="#C4B5FD", width=0.8, dash="dot"),
+                opacity=0.5,
+                hovertemplate="Stored: <b>%{y:,.1f} kWh</b><extra></extra>",
+            ),
+            row=2,
+            col=1,
+            secondary_y=True,
         )
 
         # Min SoC line
         fig.add_hline(
             y=cfg.min_soc_pct,
-            line_dash="dot",
-            line_color="#64748B",
-            line_width=1.0,
+            line_dash="dash",
+            line_color="#F59E0B",
+            line_width=1.2,
+            annotation_text=f"SoC Min {cfg.min_soc_pct:.0f}%",
+            annotation_position="bottom right",
+            annotation_font_color="#F59E0B",
             row=2,
             col=1,
         )
 
-        # Peak Reserve SoC line if Self-Consumption + Peak Reserve is active
-        if rules.rule2_battery_strategy == "self_consumption_reserve":
+        # Max SoC line
+        fig.add_hline(
+            y=cfg.max_soc_pct,
+            line_dash="dash",
+            line_color="#F59E0B",
+            line_width=1.2,
+            annotation_text=f"SoC Max {cfg.max_soc_pct:.0f}%",
+            annotation_position="bottom right",
+            annotation_font_color="#F59E0B",
+            row=2,
+            col=1,
+        )
+
+        # Peak Reserve SoC line if Self-Consumption + Peak Reserve is active AND Solar is enabled
+        if cfg.enable_solar and rules.rule2_battery_strategy == "self_consumption_reserve":
             fig.add_hline(
                 y=rules.peak_reserve_soc_pct,
-                line_dash="dash",
-                line_color="#F59E0B",
+                line_dash="dot",
+                line_color="#38BDF8",
                 line_width=1.2,
                 annotation_text=f"Peak Reserve ({rules.peak_reserve_soc_pct:.0f}%)",
-                annotation_position="top right",
-                annotation_font=dict(color="#F59E0B", size=10),
+                annotation_position="top left",
+                annotation_font_color="#38BDF8",
                 row=2,
                 col=1,
             )
     else:
-        # Render a subtle zero-level baseline on row 2 when Battery is inactive so the shared x-axis remains synchronized
+        # Render a subtle zero-level baseline on row 2 when Battery is inactive
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=ts,
                 y=np.zeros(len(ts)),
                 mode="lines",
@@ -352,53 +448,50 @@ def create_combined_dispatch_soc_figure(
             ),
             row=2,
             col=1,
+            secondary_y=False,
         )
 
-    fig.update_layout(
-        template="plotly_dark",
-        height=640,
-        margin=dict(l=55, r=25, t=95, b=45),
-        paper_bgcolor="rgba(15, 23, 42, 0.0)",
-        plot_bgcolor="rgba(15, 23, 42, 0.45)",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.12,
-            xanchor="left",
-            x=0.0,
-            bgcolor="rgba(0,0,0,0)",
-            font=dict(size=11),
-        ),
-        hovermode="x unified",
-        uirevision=timeframe,
-    )
+    cap_val = max(float(cfg.battery_capacity_kwh), 1.0) if cfg.enable_battery else 100.0
 
     fig.update_yaxes(
         title_text="Power (kW)",
         gridcolor="rgba(148, 163, 184, 0.12)",
-        rangemode="tozero",
         row=1,
         col=1,
     )
     fig.update_yaxes(
-        title_text="Battery Level (%)",
+        title_text="SoC (%)",
         gridcolor="rgba(148, 163, 184, 0.12)",
         range=[0, 105],
         row=2,
         col=1,
+        secondary_y=False,
     )
+    fig.update_yaxes(
+        title_text="Stored (kWh)",
+        gridcolor="rgba(148, 163, 184, 0.05)",
+        range=[0, cap_val * 1.05],
+        showgrid=False,
+        row=2,
+        col=1,
+        secondary_y=True,
+    )
+
+    # Shared range selector (top axis) + slider (bottom axis) matching BESS Sandbox Standard
     fig.update_xaxes(
         gridcolor="rgba(148, 163, 184, 0.12)",
         rangeselector=dict(
-            buttons=list([
-                dict(count=7, label="7D", step="day", stepmode="backward"),
-                dict(count=1, label="1M", step="month", stepmode="backward"),
-                dict(count=3, label="3M", step="month", stepmode="backward"),
-                dict(step="all", label="All"),
-            ]),
-            bgcolor="#1E293B",
-            activecolor="#EF4444",
-            font=dict(color="#F8FAFC", size=10),
+            buttons=[
+                dict(count=1, label="1 Day", step="day", stepmode="backward"),
+                dict(count=7, label="1 Week", step="day", stepmode="backward"),
+                dict(count=14, label="2 Weeks", step="day", stepmode="backward"),
+                dict(count=1, label="1 Month", step="month", stepmode="backward"),
+                dict(step="all", label="Full Year"),
+            ],
+            bgcolor="rgba(30, 41, 59, 0.85)",
+            activecolor="#3B82F6",
+            font=dict(color="#E2E8F0"),
+            y=1.06,
         ),
         row=1,
         col=1,
@@ -406,9 +499,49 @@ def create_combined_dispatch_soc_figure(
     fig.update_xaxes(
         title_text="Time (15-min intervals)",
         gridcolor="rgba(148, 163, 184, 0.12)",
-        rangeslider=dict(visible=False),
+        rangeslider=dict(visible=True, thickness=0.05),
         row=2,
         col=1,
+    )
+
+    # Determine initial focus window (centered on peak demand)
+    eff_initial_range = initial_range
+    if eff_initial_range is None:
+        if timeframe in ("All", "Full Year"):
+            eff_initial_range = None
+        elif timeframe in ("1M", "3M", "7D", "Peak Week"):
+            days_map = {"7D": 7.0, "Peak Week": 7.0, "1M": 30.0, "3M": 90.0}
+            eff_initial_range = compute_focus_range_for_timestamps(
+                timestamps=ts,
+                load_kw=p_load,
+                days=days_map.get(timeframe, 7.0),
+            )
+        else:
+            eff_initial_range = compute_focus_range_for_timestamps(
+                timestamps=ts,
+                load_kw=p_load,
+                days=7.0,
+            )
+
+    if eff_initial_range:
+        fig.update_xaxes(range=eff_initial_range)
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=height,
+        hovermode="x unified",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=60, r=60, t=90, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.10,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
     )
 
     return fig

@@ -49,6 +49,9 @@ except ImportError:
     from models.generator import GeneratorConfig
 
 
+ENGINE_VERSION = "13.5"
+
+
 MONTH_NAMES_SHORT = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -588,6 +591,34 @@ def derive_solar_sizing_and_formula(
         formula_text=formula_text,
         source_info_text=source_info_text,
     )
+
+
+def determine_smart_modular_units(capacity_kwh: float) -> Tuple[int, float]:
+    """
+    Calculates physically realistic modular unit count and capacity per unit:
+      - Small C&I (<= 500 kWh): 50 kWh rack modules (e.g. 100 kWh -> 2 x 50 kWh)
+      - Medium C&I (500 - 2,500 kWh): 100 kWh / 250 kWh cabinets (e.g. 1,000 kWh -> 4 x 250 kWh)
+      - Large C&I (2,500 - 10,000 kWh): 500 kWh container blocks (e.g. 5,000 kWh -> 10 x 500 kWh)
+      - Utility scale (10,000 - 50,000 kWh): 1,000 kWh (1 MWh) container blocks
+      - Mega scale (> 50,000 kWh): 2,500 kWh (2.5 MWh) container units
+    Returns:
+      (modular_unit_count, capacity_per_unit_kwh)
+    """
+    c = max(10.0, float(capacity_kwh))
+    if c <= 500.0:
+        target_unit = 50.0
+    elif c <= 2500.0:
+        target_unit = 250.0 if c >= 1000.0 else 100.0
+    elif c <= 10000.0:
+        target_unit = 500.0
+    elif c <= 50000.0:
+        target_unit = 1000.0
+    else:
+        target_unit = 2500.0
+
+    units = max(1, int(round(c / target_unit)))
+    unit_kwh = round(c / units, 1)
+    return units, unit_kwh
 
 
 # ======================================================================================
@@ -1458,11 +1489,19 @@ def simulate_combined_system_dispatch(
     rule2 = rules_cfg.rule2_battery_strategy
     rule3 = rules_cfg.rule3_charging_sources
 
-    allow_grid_chg = rule3 in ("solar_and_grid", "all_sources")
+    # If Solar is disabled, the battery operates strictly in peak shaving mode (effective_rule2 = "peak_shaving_only").
+    # Self-consumption requires solar generation to consume; running self-consumption without solar
+    # would counter-productively drain the battery into normal base load down to peak reserve.
+    effective_rule2 = "peak_shaving_only" if not system_cfg.enable_solar else rule2
+
+    allow_grid_chg = (
+        rule3 in ("solar_and_grid", "all_sources")
+        or not system_cfg.enable_solar
+    )
     allow_gen_chg = rule3 in ("solar_and_generator", "all_sources")
 
     if enable_bess:
-        if rule2 == "peak_shaving_only":
+        if effective_rule2 == "peak_shaving_only":
             cur_e_kwh = (
                 e_max_kwh
                 if allow_grid_chg
@@ -1631,22 +1670,23 @@ def simulate_combined_system_dispatch(
 
             rem_load_for_bess = max(0.0, p_rem - step_gen_to_load)
 
-            # Rule 2: Self-Consumption + Peak Reserve allows discharging down to e_reserve_kwh
+            # Rule 2: Self-Consumption + Peak Reserve allows discharging stored solar down to e_reserve_kwh
             if (
-                rule2 == "self_consumption_reserve"
+                effective_rule2 == "self_consumption_reserve"
                 and enable_bess
                 and step_bess_chg_solar == 0.0
                 and step_bess_chg_gen == 0.0
                 and rem_load_for_bess > 0.0
                 and cur_e_kwh > e_reserve_kwh
+                and solar_energy_in_bess_kwh > 0.0
             ):
-                avail_dis_ac_kw = ((cur_e_kwh - e_reserve_kwh) / dt) * eta_dis
+                avail_dis_ac_kw = ((min(cur_e_kwh - e_reserve_kwh, solar_energy_in_bess_kwh)) / dt) * eta_dis
                 step_bess_dis = min(rem_load_for_bess, bess_p_max_kw, avail_dis_ac_kw)
                 removed_e = (step_bess_dis * dt) / eta_dis
-                solar_share = (solar_energy_in_bess_kwh / cur_e_kwh) if cur_e_kwh > 0 else 0.0
-                bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt) * solar_share
+                solar_share = 1.0
+                bess_discharge_from_solar_kwh_acc += (step_bess_dis * dt)
                 cur_e_kwh = max(e_reserve_kwh, cur_e_kwh - removed_e)
-                solar_energy_in_bess_kwh = max(0.0, solar_energy_in_bess_kwh - removed_e * solar_share)
+                solar_energy_in_bess_kwh = max(0.0, solar_energy_in_bess_kwh - removed_e)
 
             # Rule 3: Battery Grid Recharging within Grid Limit
             if (
@@ -1658,7 +1698,7 @@ def simulate_combined_system_dispatch(
             ):
                 target_grid_e_kwh = (
                     e_max_kwh
-                    if (rule2 == "peak_shaving_only" or not system_cfg.enable_solar)
+                    if (effective_rule2 == "peak_shaving_only" or not system_cfg.enable_solar)
                     else e_reserve_kwh
                 )
                 if cur_e_kwh < target_grid_e_kwh:

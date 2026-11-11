@@ -767,36 +767,7 @@ def _render_annual_calculation_profile_section(
     else:
         df_365 = df_clean.iloc[:min(len(df_clean), 35040)].copy()
 
-    # 3. KPI Summary Cards for 365-Day Baseline Year
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        render_kpi_card(
-            "Annual Baseline Energy",
-            f"{annualized_energy_kwh:,.0f} kWh",
-            f"Normalized to 365 Days ({annualized_energy_kwh/1000.0:,.1f} MWh)"
-        )
-    with c2:
-        render_kpi_card(
-            "Baseline Peak Demand",
-            f"{peak_demand_kw:,.1f} kW",
-            "Highest physical grid power"
-        )
-    with c3:
-        render_kpi_card(
-            "Annual Load Factor",
-            f"{annual_load_factor:.1f} %",
-            f"Average load: {annual_avg_kw:,.1f} kW"
-        )
-    with c4:
-        is_multi_year = duration_days > 366
-        render_kpi_card(
-            "Simulation Reference",
-            "365 Days Standard",
-            f"Derived from {duration_days:.0f}-day dataset" if is_multi_year else "1:1 Calendar Year",
-            status="ok"
-        )
-
-    # 4. Interactive Inspection Expander (Auf Knopfdruck einsehen)
+    # 3. Interactive Inspection Expander (Auf Knopfdruck einsehen)
     with st.expander(":material/visibility: **Inspect 365-Day Reference Profile (15-Min Timeseries & Monthly Schedule)**", expanded=False):
         insp_tab1, insp_tab2 = st.tabs([
             ":material/timeline: 15-Minute Annual Curve (35,040 Intervals)",

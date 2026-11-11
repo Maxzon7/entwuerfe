@@ -74,8 +74,14 @@ except ImportError:
     )
     from current_model.ui_sandbox.Currentsituation_sandbox.consumption.view import render_tab1_consumption
 
+import importlib
+
 try:
+    import ui_sandbox.Combined_sandbox.combined_sandbox_engine as _engine_mod
+    if getattr(_engine_mod, "ENGINE_VERSION", None) != "13.5":
+        _engine_mod = importlib.reload(_engine_mod)
     from ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+        ENGINE_VERSION,
         SOLAR_SITE_PRESETS,
         FUEL_SPECS,
         RULE1_OPTIONS,
@@ -88,6 +94,7 @@ try:
         DualGeneratorSizingResult,
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
+        determine_smart_modular_units,
         compute_dual_battery_sizing,
         refresh_bottleneck_table_configured_status,
         compute_dual_generator_sizing,
@@ -103,6 +110,7 @@ except (ImportError, AttributeError):
         if "Combined_sandbox" in _m:
             del sys.modules[_m]
     from ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+        ENGINE_VERSION,
         SOLAR_SITE_PRESETS,
         FUEL_SPECS,
         RULE1_OPTIONS,
@@ -115,6 +123,7 @@ except (ImportError, AttributeError):
         DualGeneratorSizingResult,
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
+        determine_smart_modular_units,
         compute_dual_battery_sizing,
         refresh_bottleneck_table_configured_status,
         compute_dual_generator_sizing,
@@ -126,6 +135,8 @@ except (ImportError, AttributeError):
         apply_utility_tariff_presets,
     )
 
+import ui_sandbox.Combined_sandbox.combined_charts as _charts_mod
+_charts_mod = importlib.reload(_charts_mod)
 from ui_sandbox.Combined_sandbox.combined_charts import (
     create_consumption_baseline_figure,
     create_combined_dispatch_soc_figure,
@@ -240,6 +251,7 @@ def _rules_tuple(rules_cfg: InteractionRulesConfig) -> Tuple:
 def _physical_sys_tuple(sys_cfg: CombinedSystemConfig) -> Tuple:
     """Returns an immutable tuple of all physical system parameters (excluding financials)."""
     return (
+        ENGINE_VERSION,
         bool(sys_cfg.enable_grid),
         round(float(sys_cfg.grid_limit_kw), 2),
         bool(sys_cfg.enable_solar),
@@ -269,11 +281,15 @@ def _physical_sys_tuple(sys_cfg: CombinedSystemConfig) -> Tuple:
 
 
 def _sync_shared_load_series() -> None:
-    """Invalidates cached simulation outputs when the underlying load profile changes."""
+    """Invalidates cached simulation outputs when the underlying load profile changes or engine updates."""
     load_series, _ = _get_active_load_series()
     fingerprint = _load_fingerprint(load_series)
-    if st.session_state.get("comb_load_fingerprint") != fingerprint:
+    if (
+        st.session_state.get("comb_load_fingerprint") != fingerprint
+        or st.session_state.get("comb_engine_version") != ENGINE_VERSION
+    ):
         st.session_state["comb_load_fingerprint"] = fingerprint
+        st.session_state["comb_engine_version"] = ENGINE_VERSION
         st.session_state.pop("comb_sandbox_result", None)
         st.session_state.pop("comb_dispatch_fp", None)
         st.session_state.pop("comb_bess_sizing_fp", None)
@@ -306,9 +322,11 @@ def _apply_bess_quick_size(cap_kwh: float, p_kw: float) -> None:
     cfg: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cfg.battery_capacity_kwh = max(10.0, float(cap_kwh))
     cfg.battery_power_kw = max(5.0, float(p_kw))
-    def_units = max(1, int(round(cfg.battery_capacity_kwh / 50.0)))
-    st.session_state["comb_bess_unit_count"] = def_units
-    st.session_state["comb_bess_unit_kwh"] = round(cfg.battery_capacity_kwh / def_units, 1)
+    units, unit_kwh = determine_smart_modular_units(cfg.battery_capacity_kwh)
+    st.session_state["comb_bess_unit_count"] = units
+    st.session_state["comb_bess_unit_kwh"] = unit_kwh
+    st.session_state["comb_bess_unit_count_num"] = units
+    st.session_state["comb_bess_unit_kwh_num"] = unit_kwh
     st.session_state["comb_battery_power_kw_num"] = cfg.battery_power_kw
     st.session_state.pop("comb_cached_excel_bytes", None)
 
@@ -339,11 +357,14 @@ def render_level1_overview_bar(load_series: LoadSeries2025, load_label: str) -> 
 
         with c_grid:
             with st.form("comb_grid_limit_form"):
+                raw_grid_limit = float(cur_sys.grid_limit_kw)
+                max_grid_limit = max(100000.0, raw_grid_limit * 2, orig_peak_kw * 2)
+                safe_grid_limit = min(max_grid_limit, max(10.0, raw_grid_limit))
                 grid_limit_val = st.number_input(
                     "Grid Limit (kW)",
                     min_value=10.0,
-                    max_value=20000.0,
-                    value=float(cur_sys.grid_limit_kw),
+                    max_value=max_grid_limit,
+                    value=safe_grid_limit,
                     step=10.0,
                     key="comb_grid_limit_input",
                 )
@@ -677,21 +698,27 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 )
             with sz_c2:
                 st.markdown("**Installed Capacity & Inverter AC Limit:**")
+                raw_solar_kwp = float(cur_sys.solar_kwp)
+                max_solar_kwp = max(100000.0, raw_solar_kwp * 2)
+                safe_solar_kwp = min(max_solar_kwp, max(1.0, raw_solar_kwp))
                 direct_kwp_val = st.number_input(
                     "Direct Size (kWp)",
                     min_value=1.0,
-                    max_value=25000.0,
-                    value=float(cur_sys.solar_kwp),
+                    max_value=max_solar_kwp,
+                    value=safe_solar_kwp,
                     step=10.0,
                     disabled=not is_active,
                     key="comb_solar_direct_kwp_num",
                     help="Direct nameplate DC capacity in kWp.",
                 )
+                raw_inv_ac = max(0.0, float(default_inv_kw))
+                max_inv_ac = max(100000.0, raw_inv_ac * 2)
+                safe_inv_ac = min(max_inv_ac, max(0.0, raw_inv_ac))
                 inv_ac_limit_val = st.number_input(
                     "Inverter AC Limit (kW)",
                     min_value=0.0,
-                    max_value=25000.0,
-                    value=max(0.0, default_inv_kw),
+                    max_value=max_inv_ac,
+                    value=safe_inv_ac,
                     step=10.0,
                     disabled=not is_active,
                     key="comb_solar_inv_ac_limit_num",
@@ -875,6 +902,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
 
     # Fingerprint-cached Dual Battery Sizing (runs 35,040-step loop only when upstream parameters change)
     bess_sizing_fp = (
+        ENGINE_VERSION,
         _load_fingerprint(load_series),
         bool(cur_sys.enable_grid),
         round(float(cur_sys.grid_limit_kw), 2),
@@ -925,22 +953,29 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
             with col_b1:
                 st.markdown("**Modular Storage Units:**")
                 def_cap = float(cur_sys.battery_capacity_kwh)
-                def_units = max(1, int(round(def_cap / 50.0))) if def_cap > 0 else 2
-                def_unit_kwh = round(def_cap / def_units, 1) if def_units > 0 else 50.0
+                def_units, def_unit_kwh = determine_smart_modular_units(def_cap) if def_cap > 0 else (2, 50.0)
+
+                raw_units = int(st.session_state.get("comb_bess_unit_count", def_units))
+                max_units = max(100000, raw_units * 2)
+                safe_units = min(max_units, max(1, raw_units))
                 unit_count = st.number_input(
                     "Modular Unit Count",
                     min_value=1,
-                    max_value=200,
-                    value=int(st.session_state.get("comb_bess_unit_count", def_units)),
+                    max_value=max_units,
+                    value=safe_units,
                     step=1,
                     disabled=not is_active,
                     key="comb_bess_unit_count_num",
                 )
+
+                raw_unit_kwh = float(st.session_state.get("comb_bess_unit_kwh", def_unit_kwh))
+                max_unit_kwh = max(50000.0, raw_unit_kwh * 2)
+                safe_unit_kwh = min(max_unit_kwh, max(1.0, raw_unit_kwh))
                 cap_per_unit = st.number_input(
                     "Capacity per Unit (kWh)",
                     min_value=1.0,
-                    max_value=1000.0,
-                    value=float(st.session_state.get("comb_bess_unit_kwh", def_unit_kwh)),
+                    max_value=max_unit_kwh,
+                    value=safe_unit_kwh,
                     step=10.0,
                     disabled=not is_active,
                     key="comb_bess_unit_kwh_num",
@@ -951,11 +986,13 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
             with col_b2:
                 st.markdown("**Inverter Power & Efficiency:**")
                 def_kw = round(total_kwh_disp / 2.0, 1) if lock_05c else float(cur_sys.battery_power_kw)
+                max_bat_kw = max(100000.0, float(def_kw) * 2)
+                safe_bat_kw = min(max_bat_kw, max(1.0, float(def_kw)))
                 bat_kw = st.number_input(
                     "Battery Power (kW)",
                     min_value=1.0,
-                    max_value=25000.0,
-                    value=float(def_kw),
+                    max_value=max_bat_kw,
+                    value=safe_bat_kw,
                     step=10.0,
                     disabled=not is_active,
                     key="comb_battery_power_kw_num",
@@ -1280,6 +1317,7 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
 
     # Fingerprint-cached Dual Generator Sizing (runs only when upstream Solar/Battery/Grid/Rules change)
     gen_sizing_fp = (
+        ENGINE_VERSION,
         _load_fingerprint(load_series),
         bool(cur_sys.enable_grid),
         round(float(cur_sys.grid_limit_kw), 2),
@@ -1359,11 +1397,14 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
         with st.form("comb_generator_form"):
             gc1, gc2, gc3 = st.columns(3)
             with gc1:
+                raw_gen_kw = float(cur_sys.generator_rated_kw)
+                max_gen_kw = max(100000.0, raw_gen_kw * 2)
+                safe_gen_kw = min(max_gen_kw, max(10.0, raw_gen_kw))
                 gen_kw_val = st.number_input(
                     "Generator Power (kW)",
                     min_value=10.0,
-                    max_value=25000.0,
-                    value=float(cur_sys.generator_rated_kw),
+                    max_value=max_gen_kw,
+                    value=safe_gen_kw,
                     step=10.0,
                     disabled=not is_active,
                     key="comb_generator_rated_kw_num",
@@ -1474,7 +1515,8 @@ def render_subtab5_interaction_rules() -> None:
                 )
                 st.caption(
                     "If Self-Consumption + Peak Reserve is active, extra solar energy shifts into evening load "
-                    "while protecting this SoC % exclusively for peak shaving."
+                    "while protecting this SoC % exclusively for peak shaving. "
+                    "(Note: When Solar is inactive, the battery operates in pure Peak Shaving mode to avoid discharging into normal base load)."
                 )
 
             with r_c3:
@@ -1972,52 +2014,47 @@ def render_subtab6_financials(sim_res) -> None:
 
 @st.fragment
 def _render_master_dispatch_chart_fragment(sim_res) -> None:
-    """Renders the 15-minute dispatch chart and timeframe selector inside an isolated fragment to prevent full app reruns."""
+    """Renders the 15-minute dispatch chart matching the BESS Sandbox standard."""
+    kpis = getattr(sim_res, "kpis", None)
+    if kpis is not None:
+        unmet_kwh = float(getattr(kpis, "remaining_overload_kwh", 0.0))
+        unmet_hours = float(getattr(kpis, "remaining_overload_hours", 0.0))
+    elif hasattr(sim_res, "unmet_overload_kw") and sim_res.unmet_overload_kw is not None:
+        unmet_kwh = float(np.sum(sim_res.unmet_overload_kw) * 0.25)
+        unmet_hours = float(np.sum(sim_res.unmet_overload_kw > 0.05) * 0.25)
+    else:
+        unmet_kwh = 0.0
+        unmet_hours = 0.0
+
+    has_unmet = (unmet_kwh > 0.05 or unmet_hours > 0.05)
+    cfg = getattr(sim_res, "system_config", None)
+    has_active_system = (
+        cfg is not None
+        and (cfg.enable_solar or cfg.enable_battery or cfg.enable_generator)
+    )
+
+    if has_active_system and not has_unmet:
+        st.success(
+            "**:material/check_circle: 100% Physically Feasible: Zero Remaining Deficit**\n\n"
+            "All physical constraints (inverter discharge power, multi-peak storage capacity, recharge power, "
+            "and annual grid recharge headroom) are completely satisfied."
+        )
+    elif has_active_system and has_unmet:
+        st.warning(
+            f"**:material/warning: Active Overload Detected ({unmet_kwh:,.0f} kWh across {unmet_hours:,.1f} hrs)**\n\n"
+            "Remaining overload above contracted grid limit requires additional storage capacity, inverter power, or peaker assist."
+        )
+
     with st.container(border=True):
-        hdr1, hdr2, hdr3 = st.columns([2.2, 1.3, 1.3])
+        hdr1, hdr2 = st.columns([3.5, 1.3])
         with hdr1:
-            st.markdown("##### :material/stacked_line_chart: 15-Minute Power Flow & Battery Level")
+            st.markdown("#### :material/monitoring: Synchronized 15-Min Power Dispatch & Battery SoC")
+            st.caption(
+                "Linked 2-panel Plotly subplot (shared X-axis): Zooming, panning, or selecting time ranges "
+                "synchronously updates both active power flows (kW) and battery State of Charge envelope."
+            )
         with hdr2:
-            curr_tf = st.session_state.get("comb_dispatch_timeframe", "7D")
-            tf_c1, tf_c2, tf_c3, tf_c4 = st.columns(4)
-            with tf_c1:
-                if st.button(
-                    "7D",
-                    type="primary" if curr_tf == "7D" else "secondary",
-                    use_container_width=True,
-                    key="comb_tf_btn_7d",
-                ):
-                    st.session_state["comb_dispatch_timeframe"] = "7D"
-                    st.rerun(scope="fragment")
-            with tf_c2:
-                if st.button(
-                    "1M",
-                    type="primary" if curr_tf == "1M" else "secondary",
-                    use_container_width=True,
-                    key="comb_tf_btn_1m",
-                ):
-                    st.session_state["comb_dispatch_timeframe"] = "1M"
-                    st.rerun(scope="fragment")
-            with tf_c3:
-                if st.button(
-                    "3M",
-                    type="primary" if curr_tf == "3M" else "secondary",
-                    use_container_width=True,
-                    key="comb_tf_btn_3m",
-                ):
-                    st.session_state["comb_dispatch_timeframe"] = "3M"
-                    st.rerun(scope="fragment")
-            with tf_c4:
-                if st.button(
-                    "All",
-                    type="primary" if curr_tf in ("All", "Full Year") else "secondary",
-                    use_container_width=True,
-                    key="comb_tf_btn_all",
-                ):
-                    st.session_state["comb_dispatch_timeframe"] = "All"
-                    st.rerun(scope="fragment")
-            disp_tf = st.session_state.get("comb_dispatch_timeframe", "7D")
-        with hdr3:
+            st.write("")
             if "comb_cached_excel_bytes" not in st.session_state:
                 st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
             st.download_button(
@@ -2030,7 +2067,7 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
                 type="primary",
             )
 
-        fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res, timeframe=disp_tf)
+        fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res)
         st.plotly_chart(
             fig_master,
             use_container_width=True,
@@ -2039,7 +2076,7 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
                 "displayModeBar": "hover",
                 "responsive": True,
             },
-            key=f"comb_master_dispatch_chart_{disp_tf}",
+            key="comb_master_dispatch_chart",
         )
 
 
