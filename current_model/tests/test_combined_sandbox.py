@@ -47,6 +47,9 @@ from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
     create_consumption_baseline_figure,
     create_combined_dispatch_soc_figure,
     create_financial_cost_comparison_figure,
+    create_financial_tco_trajectory_figure,
+    create_financial_waterfall_bridge_figure,
+    create_financial_monthly_cashflow_figure,
 )
 from current_model.ui_sandbox.Combined_sandbox.combined_excel_exporter import (
     build_combined_verification_excel_bytes,
@@ -192,7 +195,7 @@ class TestCombinedSandbox(unittest.TestCase):
         """Verifies that standalone BESS (enable_solar=False) operates strictly as peak_shaving_only,
         recharges from grid headroom, and does not drain to 30% reserve into normal load."""
         from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import ENGINE_VERSION
-        self.assertEqual(ENGINE_VERSION, "13.6")
+        self.assertEqual(ENGINE_VERSION, "13.7")
 
         cfg = CombinedSystemConfig(
             grid_limit_kw=180.0,
@@ -302,8 +305,26 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(len(sim_res.monthly_cost_df), 12)
         self.assertEqual(len(sim_res.cashflow_15y_df), 16)  # Years 0..15
 
+        # Verify dynamic 15-year lifecycle metrics
+        self.assertGreater(sim_res.financial_kpis.tco_15y_baseline_eur, 0.0)
+        self.assertGreater(sim_res.financial_kpis.tco_15y_combined_eur, 0.0)
+        self.assertGreater(sim_res.financial_kpis.gross_bill_savings_y1_eur, 0.0)
+        self.assertIn("Cumulative TCO Current situation (€)", sim_res.cashflow_15y_df.columns)
+        self.assertIn("Tariff Escalation Factor", sim_res.cashflow_15y_df.columns)
+        self.assertIn("System O&M & Fuel (€)", sim_res.cashflow_15y_df.columns)
+
+        # Verify all 4 financial decision charts build cleanly
         fig_cost = create_financial_cost_comparison_figure(sim_res)
         self.assertEqual(len(fig_cost.data), 6)
+
+        fig_tco = create_financial_tco_trajectory_figure(sim_res)
+        self.assertEqual(len(fig_tco.data), 3)
+
+        fig_bridge = create_financial_waterfall_bridge_figure(sim_res)
+        self.assertGreater(len(fig_bridge.data), 0)
+
+        fig_monthly = create_financial_monthly_cashflow_figure(sim_res)
+        self.assertEqual(len(fig_monthly.data), 3)
 
         excel_bytes = build_combined_verification_excel_bytes(sim_res)
         self.assertGreater(len(excel_bytes), 50000)
@@ -781,11 +802,81 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIsNotNone(fig.layout.yaxis3)
         self.assertEqual(fig.layout.yaxis3.title.text, "Stored (kWh)")
 
-        # Verify ENGINE_VERSION is 13.6 and WebGL trace Y-arrays use float32
-        self.assertEqual(ENGINE_VERSION, "13.6")
+        # Verify ENGINE_VERSION is 13.7 and WebGL trace Y-arrays use float32
+        self.assertEqual(ENGINE_VERSION, "13.7")
         for trace in fig.data:
             if hasattr(trace, "y") and isinstance(trace.y, np.ndarray):
                 self.assertEqual(trace.y.dtype, np.float32)
+
+    def test_data_gap_normalization_and_preservation(self):
+        """Verifies that measurement interruptions (> 1 hour) are flagged in is_gap and not linearly interpolated."""
+        # Create 15-min intervals with a 20-day gap: Jan 1 to Feb 5, then Feb 26 to Dec 31
+        part1 = pd.date_range("2025-01-01 00:00:00", "2025-02-05 23:45:00", freq="15min")
+        part2 = pd.date_range("2025-02-26 00:00:00", "2025-12-31 23:45:00", freq="15min")
+        full_ts = part1.append(part2)
+        power_vals = np.full(len(full_ts), 200.0, dtype=float)
+
+        raw_df = pd.DataFrame({"timestamp": full_ts, "Total_Demand_kW": power_vals})
+        norm_series, diag = normalize_load_profile_2025(raw_df=raw_df, power_col="Total_Demand_kW", time_col="timestamp")
+
+        self.assertIsInstance(norm_series, LoadSeries2025)
+        self.assertEqual(len(norm_series.power_kw), 35040)
+        self.assertIsNotNone(norm_series.is_gap)
+        self.assertTrue(np.any(norm_series.is_gap))
+
+        # Check that gap intervals between Feb 6 and Feb 25 are flagged and zeroed
+        gap_mask = (norm_series.timestamps > pd.Timestamp("2025-02-05 23:45:00")) & (norm_series.timestamps < pd.Timestamp("2025-02-26 00:00:00"))
+        self.assertTrue(np.all(norm_series.is_gap[gap_mask]))
+        self.assertTrue(np.all(norm_series.power_kw[gap_mask] == 0.0))
+
+        # Expected energy should equal measured energy without phantom addition
+        expected_kwh = float(len(full_ts) * 200.0 * 0.25)
+        self.assertAlmostEqual(norm_series.total_energy_kwh, expected_kwh, delta=50.0)
+        self.assertGreater(diag["gap_intervals_count"], 0)
+
+    def test_simulation_dispatch_with_data_gap(self):
+        """Verifies that dispatch engine freezes battery SoC across gaps and produces 0 false overload."""
+        part1 = pd.date_range("2025-01-01 00:00:00", "2025-02-05 23:45:00", freq="15min")
+        part2 = pd.date_range("2025-02-26 00:00:00", "2025-12-31 23:45:00", freq="15min")
+        full_ts = part1.append(part2)
+        power_vals = np.full(len(full_ts), 250.0, dtype=float)
+
+        raw_df = pd.DataFrame({"timestamp": full_ts, "Total_Demand_kW": power_vals})
+        norm_series, _ = normalize_load_profile_2025(raw_df=raw_df, power_col="Total_Demand_kW", time_col="timestamp")
+
+        cfg = CombinedSystemConfig(
+            grid_limit_kw=150.0,
+            enable_solar=False,
+            enable_battery=True,
+            battery_capacity_kwh=300.0,
+            battery_power_kw=150.0,
+            enable_generator=False,
+        )
+        rules = InteractionRulesConfig(rule2_battery_strategy="peak_shaving_only")
+
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=norm_series.power_kw,
+            timestamps=norm_series.timestamps,
+            system_cfg=cfg,
+            rules_cfg=rules,
+            is_gap=norm_series.is_gap,
+        )
+
+        gap_mask = norm_series.is_gap
+        # During gap intervals: BESS discharge must be 0, grid import must be 0, unmet overload must be 0
+        self.assertTrue(np.all(sim_res.bess_discharge_kw[gap_mask] == 0.0))
+        self.assertTrue(np.all(sim_res.grid_import_kw[gap_mask] == 0.0))
+        self.assertTrue(np.all(sim_res.unmet_overload_kw[gap_mask] == 0.0))
+
+        # Battery SoC must be frozen during gap (all gap intervals equal the same energy)
+        gap_soc = sim_res.bess_energy_kwh[gap_mask]
+        self.assertAlmostEqual(float(np.min(gap_soc)), float(np.max(gap_soc)), delta=1e-3)
+
+        # Plotly chart must have NaNs in traces across gap intervals
+        fig = create_combined_dispatch_soc_figure(sim_res=sim_res, timeframe="Full Year")
+        for trace in fig.data:
+            if hasattr(trace, "y") and isinstance(trace.y, np.ndarray) and len(trace.y) == 35040:
+                self.assertTrue(np.any(np.isnan(trace.y)), f"Trace '{trace.name}' should have NaNs during gaps")
 
 
 if __name__ == "__main__":

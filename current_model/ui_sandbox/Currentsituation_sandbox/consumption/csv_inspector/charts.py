@@ -38,14 +38,33 @@ def create_csv_inspector_figure(
 
     palette = ["#38BDF8", "#10B981", "#F59E0B", "#EC4899", "#8B5CF6", "#14B8A6"]
 
+    # Insert gap-break NaN rows so Plotly connectgaps=False leaves measurement interruptions visually blank
+    plot_df = df_clean.copy()
+    if len(plot_df) > 1 and "timestamp" in plot_df.columns:
+        ts_diffs = plot_df["timestamp"].diff().dt.total_seconds() / 3600.0
+        gap_indices = plot_df.index[ts_diffs > 1.0].tolist()
+        if gap_indices:
+            gap_rows = []
+            for idx in gap_indices:
+                prev_loc = plot_df.index.get_loc(idx) - 1
+                gap_start_ts = plot_df.iloc[prev_loc]["timestamp"]
+                dummy_row = {"timestamp": gap_start_ts + pd.Timedelta(minutes=15)}
+                for c in plot_df.columns:
+                    if c != "timestamp":
+                        dummy_row[c] = None
+                gap_rows.append(dummy_row)
+            if gap_rows:
+                gap_df = pd.DataFrame(gap_rows)
+                plot_df = pd.concat([plot_df, gap_df], ignore_index=True).sort_values("timestamp").reset_index(drop=True)
+
     # 1. Plot individual sub-meter measurement lines (if multiple selected)
     if len(selected_power_cols) > 1:
         for idx, col_name in enumerate(selected_power_cols):
-            if col_name in df_clean.columns:
+            if col_name in plot_df.columns:
                 fig.add_trace(
                     go.Scatter(
-                        x=df_clean["timestamp"],
-                        y=df_clean[col_name],
+                        x=plot_df["timestamp"],
+                        y=plot_df[col_name],
                         mode="lines",
                         name=col_name,
                         connectgaps=False,
@@ -57,8 +76,8 @@ def create_csv_inspector_figure(
     # 2. Main Total Demand Trace (Solid White Line)
     fig.add_trace(
         go.Scatter(
-            x=df_clean["timestamp"],
-            y=df_clean[total_col],
+            x=plot_df["timestamp"],
+            y=plot_df[total_col],
             mode="lines",
             name="Total Grid Demand (kW)",
             connectgaps=False,

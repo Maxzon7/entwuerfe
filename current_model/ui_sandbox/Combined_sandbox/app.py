@@ -78,7 +78,7 @@ import importlib
 
 try:
     import ui_sandbox.Combined_sandbox.combined_sandbox_engine as _engine_mod
-    if getattr(_engine_mod, "ENGINE_VERSION", None) != "13.6":
+    if getattr(_engine_mod, "ENGINE_VERSION", None) != "13.7":
         _engine_mod = importlib.reload(_engine_mod)
     from ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
         ENGINE_VERSION,
@@ -141,6 +141,9 @@ from ui_sandbox.Combined_sandbox.combined_charts import (
     create_consumption_baseline_figure,
     create_combined_dispatch_soc_figure,
     create_financial_cost_comparison_figure,
+    create_financial_tco_trajectory_figure,
+    create_financial_waterfall_bridge_figure,
+    create_financial_monthly_cashflow_figure,
 )
 from ui_sandbox.Combined_sandbox.combined_excel_exporter import (
     build_combined_verification_excel_bytes,
@@ -930,6 +933,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
             load_kw=load_series.power_kw,
             system_cfg=cur_sys,
             rules_cfg=cur_rules,
+            is_gap=getattr(load_series, "is_gap", None),
         )
         st.session_state["comb_bess_sizing_fp"] = bess_sizing_fp
 
@@ -1346,6 +1350,7 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
             timestamps=load_series.timestamps,
             system_cfg=cur_sys,
             rules_cfg=cur_rules,
+            is_gap=getattr(load_series, "is_gap", None),
         )
         st.session_state["comb_gen_sizing_fp"] = gen_sizing_fp
 
@@ -1772,6 +1777,52 @@ def render_subtab6_financials(sim_res) -> None:
                     key="comb_fin_disc_rate",
                 )
 
+            # Long-Term Assumptions Expander (v13.7)
+            with st.expander(":material/trending_up: Long-Term Escalation, Degradation & Feed-in Assumptions", expanded=False):
+                lt1, lt2, lt3, lt4 = st.columns(4)
+                with lt1:
+                    tariff_esc = st.number_input(
+                        "Tariff Escalation (% p.a.)",
+                        min_value=0.0,
+                        max_value=15.0,
+                        value=float(cur_fin.tariff_escalation_pct_pa),
+                        step=0.5,
+                        key="comb_fin_tariff_esc",
+                        help="Annual inflation rate for utility grid energy and capacity charges.",
+                    )
+                with lt2:
+                    om_inf = st.number_input(
+                        "O&M Inflation (% p.a.)",
+                        min_value=0.0,
+                        max_value=15.0,
+                        value=float(cur_fin.om_inflation_pct_pa),
+                        step=0.5,
+                        key="comb_fin_om_inf",
+                        help="Annual inflation rate for system O&M, maintenance, and fuel prices.",
+                    )
+                with lt3:
+                    solar_fi = st.number_input(
+                        "PV Export Feed-in (€/kWh)",
+                        min_value=0.0,
+                        max_value=0.50,
+                        value=float(cur_fin.solar_export_feed_in_eur_kwh),
+                        step=0.01,
+                        format="%.3f",
+                        key="comb_fin_solar_fi",
+                        help="Remuneration for exported solar surplus fed into the grid.",
+                    )
+                with lt4:
+                    sys_deg = st.number_input(
+                        "System Degradation (% p.a.)",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=float(cur_fin.system_degradation_pct_pa),
+                        step=0.1,
+                        format="%.2f",
+                        key="comb_fin_sys_deg",
+                        help="Annual efficiency degradation of solar panels and battery storage.",
+                    )
+
         # --- Conditional Technology Cost Blocks (Only shown for active modules) ---
         if cur_sys.enable_solar:
             with st.container(border=True):
@@ -1915,6 +1966,10 @@ def render_subtab6_financials(sim_res) -> None:
         cur_fin.energy_tax_eur_kwh = float(tax_kwh)
         cur_fin.tax_surcharge_pct = float(tax_pct)
         cur_fin.discount_rate_pct = float(disc_rate)
+        cur_fin.tariff_escalation_pct_pa = float(tariff_esc)
+        cur_fin.om_inflation_pct_pa = float(om_inf)
+        cur_fin.solar_export_feed_in_eur_kwh = float(solar_fi)
+        cur_fin.system_degradation_pct_pa = float(sys_deg)
 
         if cur_sys.enable_solar:
             cur_fin.solar_modules_eur_wp = float(sol_mod)
@@ -1945,8 +2000,23 @@ def render_subtab6_financials(sim_res) -> None:
     fin_kpis = sim_res.financial_kpis
 
     st.markdown("---")
+
+    # Economic Bottleneck Alert (Automatic Diagnostic)
+    if cur_sys.enable_battery and fin_kpis.battery_om_eur > 0:
+        bat_om = fin_kpis.battery_om_eur
+        gross_sav = fin_kpis.gross_bill_savings_y1_eur
+        bat_capex = fin_kpis.battery_capex_eur
+        if bat_om > 0.5 * max(1.0, gross_sav) or (gross_sav > 0 and fin_kpis.annual_savings_eur <= 0):
+            st.warning(
+                f"**:material/lightbulb: Economic Bottleneck Alert:** Annual battery maintenance (€{bat_om:,.0f}/yr from €{bat_capex:,.0f} CAPEX) "
+                f"consumes {(bat_om / max(1.0, gross_sav) * 100.0):.1f}% of the gross electricity bill savings (€{gross_sav:,.0f}/yr). "
+                f"Tip: Selecting an 80% battery capacity target or pairing a smaller battery with a peaking generator "
+                f"substantially reduces CAPEX and O&M costs."
+            )
+
     st.markdown("##### :material/account_balance: Consolidated Financial Summary")
 
+    # Row 1: Year-1 Operations & Turnkey Investment
     fk1, fk2, fk3, fk4 = st.columns(4)
     with fk1:
         capex_subtext = (
@@ -1962,41 +2032,95 @@ def render_subtab6_financials(sim_res) -> None:
         )
     with fk2:
         render_kpi_card(
-            title="Annual Total OPEX",
+            title="Year-1 Operational Cost (OPEX)",
             value=f"€{fin_kpis.total_annual_opex_eur:,.0f} / yr",
-            subtext=f"Current situation: €{fin_kpis.baseline_total_opex_eur:,.0f} / yr",
+            subtext=f"Grid: €{fin_kpis.combined_grid_total_eur:,.0f} | O&M: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
             status="default",
         )
     with fk3:
         render_kpi_card(
-            title="Annual Net Savings vs. Current situation",
+            title="Year-1 Net Cash Savings",
             value=f"€{fin_kpis.annual_savings_eur:,.0f} / yr",
-            subtext=(
-                f"Cost change: {(-fin_kpis.annual_savings_eur / max(1.0, fin_kpis.baseline_total_opex_eur) * 100.0):+.1f}%"
-            ),
+            subtext=f"Gross Savings: €{fin_kpis.gross_bill_savings_y1_eur:,.0f} - O&M: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
             status="ok" if fin_kpis.annual_savings_eur > 0 else "alert",
         )
     with fk4:
         pb_str = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
+        disc_pb_str = f"{fin_kpis.discounted_payback_years:.1f} yrs" if fin_kpis.discounted_payback_years is not None else "N/A"
         render_kpi_card(
-            title="Payback Period & 15Y NPV",
-            value=f"{pb_str} | €{fin_kpis.npv_15y_eur:,.0f}",
+            title="Simple & Discounted Payback",
+            value=f"{pb_str} | {disc_pb_str}",
+            subtext="Simple Payback vs. Discounted Break-Even",
+            status="ok" if fin_kpis.payback_years is not None else "alert",
+        )
+
+    # Row 2: 15-Year Lifecycle & Unit Economics
+    fk5, fk6, fk7, fk8 = st.columns(4)
+    with fk5:
+        render_kpi_card(
+            title="15-Year Cumulative TCO",
+            value=f"€{fin_kpis.tco_15y_combined_eur:,.0f}",
+            subtext=f"Current situation: €{fin_kpis.tco_15y_baseline_eur:,.0f} (Net: €{fin_kpis.tco_15y_savings_eur:+,.0f})",
+            status="ok" if fin_kpis.tco_15y_savings_eur > 0 else "default",
+        )
+    with fk6:
+        irr_str = f"IRR: {fin_kpis.irr_15y_pct:.1f}%" if fin_kpis.irr_15y_pct is not None else "IRR: N/A"
+        render_kpi_card(
+            title="15-Year Net Present Value & IRR",
+            value=f"€{fin_kpis.npv_15y_eur:,.0f} | {irr_str}",
             subtext=f"15-Year NPV at {cur_fin.discount_rate_pct:.1f}% discount rate",
             status="ok" if fin_kpis.npv_15y_eur > 0 else "default",
         )
+    with fk7:
+        render_kpi_card(
+            title="System LCOE vs. Grid Rate",
+            value=f"€{fin_kpis.system_lcoe_eur_kwh:.3f} / kWh",
+            subtext=f"Effective Grid Rate: €{fin_kpis.effective_blended_grid_rate_eur_kwh:.3f} / kWh",
+            status="ok" if (0.0 < fin_kpis.system_lcoe_eur_kwh < fin_kpis.effective_blended_grid_rate_eur_kwh) else "default",
+        )
+    with fk8:
+        render_kpi_card(
+            title="Peak Shaving Cost Efficiency",
+            value=f"€{fin_kpis.annualized_cost_per_shaved_kw_eur:,.0f} / kW/yr",
+            subtext=f"Peak Reduction: {sim_res.kpis.peak_reduction_kw:,.1f} kW shaved",
+            status="default",
+        )
 
-    # Cost Comparison Chart (Current situation vs. Combined system)
+    # Interactive Financial Chart Gallery
     with st.container(border=True):
-        fig_cost_cmp = create_financial_cost_comparison_figure(sim_res)
+        st.markdown("##### :material/analytics: Financial Decision Visualizations")
+        gallery_choice = st.radio(
+            "Visualization Perspective",
+            options=[
+                "15-Year Cumulative TCO & Break-Even Trajectory",
+                "Annual Cost Bridge (Waterfall)",
+                "4-Pillar Annual Cost Comparison",
+                "12-Month Seasonal Cashflow",
+            ],
+            index=0,
+            horizontal=True,
+            key="comb_fin_chart_gallery_sel",
+            label_visibility="collapsed",
+        )
+
+        if gallery_choice == "15-Year Cumulative TCO & Break-Even Trajectory":
+            fig_fin = create_financial_tco_trajectory_figure(sim_res)
+        elif gallery_choice == "Annual Cost Bridge (Waterfall)":
+            fig_fin = create_financial_waterfall_bridge_figure(sim_res)
+        elif gallery_choice == "4-Pillar Annual Cost Comparison":
+            fig_fin = create_financial_cost_comparison_figure(sim_res)
+        else:
+            fig_fin = create_financial_monthly_cashflow_figure(sim_res)
+
         st.plotly_chart(
-            fig_cost_cmp,
+            fig_fin,
             use_container_width=True,
             config={
                 "scrollZoom": False,
                 "displayModeBar": "hover",
                 "responsive": True,
             },
-            key="comb_fin_cost_cmp_chart",
+            key=f"comb_fin_gallery_{gallery_choice.replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_').lower()}",
         )
 
     # 15-Year Cashflow Table
@@ -2256,6 +2380,7 @@ def main() -> None:
             timestamps=load_series.timestamps,
             system_cfg=cur_sys,
             rules_cfg=cur_rules,
+            is_gap=getattr(load_series, "is_gap", None),
         )
         if "comb_latest_bottleneck_df" in st.session_state:
             sim_res.bess_bottleneck_df = st.session_state["comb_latest_bottleneck_df"]

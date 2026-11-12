@@ -47,6 +47,7 @@ class LoadSeries2025:
     total_steps: int = 35040
     step_hours: float = 0.25
     tou_window_codes: Optional[np.ndarray] = None  # Optional 3-window code array: 0=Off-Peak/Valle, 1=Peak/Pico, 2=Shoulder/Resto
+    is_gap: Optional[np.ndarray] = None            # 35,040 boolean array (True where timestamp is a data gap)
 
     def __post_init__(self):
         if len(self.power_kw) != self.total_steps:
@@ -60,6 +61,10 @@ class LoadSeries2025:
             raise ValueError("Month indices count mismatch.")
         if len(self.is_peak_tou) != self.total_steps:
             raise ValueError("TOU peak classification count mismatch.")
+        if self.is_gap is None:
+            self.is_gap = np.zeros(self.total_steps, dtype=bool)
+        elif len(self.is_gap) != self.total_steps:
+            raise ValueError("is_gap boolean array count mismatch.")
 
     @property
     def total_energy_kwh(self) -> float:

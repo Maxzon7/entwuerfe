@@ -125,6 +125,8 @@ def normalize_load_profile_2025(
     elif "timestamp" in df.columns:
         ts_series = pd.to_datetime(df["timestamp"], errors="coerce")
 
+    is_gap_mask = np.zeros(total_expected_steps, dtype=bool)
+
     # If length already matches 35,040 exactly and no timestamps provided, map directly
     if len(p_series) == total_expected_steps and (ts_series is None or ts_series.isna().all()):
         aligned_power = np.clip(p_series.to_numpy(dtype=float), 0.0, None)
@@ -153,9 +155,29 @@ def normalize_load_profile_2025(
         if temp_df.index.tz is not None:
             temp_df.index = temp_df.index.tz_localize(None)
 
+        # Detect measurement gaps in recorded timeseries (gaps > 1.0 hour)
+        if len(temp_df) > 1:
+            deltas_h = temp_df.index.to_series().diff().dt.total_seconds() / 3600.0
+            gap_locs = np.where(deltas_h > 1.0)[0]
+            for loc in gap_locs:
+                g_start = temp_df.index[loc - 1]
+                g_end = temp_df.index[loc]
+                is_gap_mask |= (ref_index > g_start) & (ref_index < g_end)
+
+        # Flag intervals outside the active recorded date range
+        if len(temp_df) > 0:
+            is_gap_mask |= (ref_index < temp_df.index.min()) | (ref_index > temp_df.index.max())
+
         # Reindex onto reference index
         reindexed = temp_df["power_kw"].reindex(ref_index)
-        aligned_power = reindexed.interpolate(method="linear").bfill().ffill().fillna(0.0).to_numpy(dtype=float)
+        
+        # Strictly avoid linear interpolation across data gaps:
+        # Only allow micro-interpolation for isolated single/double missing points (limit=2 steps / <= 30 min)
+        micro_interp = reindexed.interpolate(method="linear", limit=2)
+        aligned_power = micro_interp.to_numpy(dtype=float)
+        # Force all detected gap intervals to 0.0 kW (neutralized)
+        aligned_power[is_gap_mask] = 0.0
+        aligned_power = np.nan_to_num(aligned_power, nan=0.0)
         aligned_power = np.clip(aligned_power, 0.0, None)
     else:
         # Interpolate or tile array to exact 35,040 steps
@@ -183,7 +205,8 @@ def normalize_load_profile_2025(
         month_indices=month_indices,
         is_peak_tou=is_peak_tou,
         total_steps=total_expected_steps,
-        step_hours=0.25
+        step_hours=0.25,
+        is_gap=is_gap_mask,
     )
 
     diagnostics = {
@@ -193,6 +216,8 @@ def normalize_load_profile_2025(
         "ht_intervals_count": int(np.sum(is_peak_tou)),
         "nt_intervals_count": int(np.sum(~is_peak_tou)),
         "mean_power_kw": float(np.mean(aligned_power)),
+        "gap_intervals_count": int(np.sum(is_gap_mask)),
+        "gap_hours": float(np.sum(is_gap_mask) * 0.25),
     }
 
     return load_obj, diagnostics

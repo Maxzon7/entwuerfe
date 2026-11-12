@@ -59,7 +59,43 @@ except ImportError:
         return func
 
 
-ENGINE_VERSION = "13.6"
+ENGINE_VERSION = "13.7"
+
+
+def _calculate_irr(cashflows: List[float], max_iter: int = 200, tol: float = 1e-5) -> Optional[float]:
+    """
+    Computes the Internal Rate of Return (IRR in %) for an investment cashflow stream.
+    cashflows[0] is initial negative investment (-CAPEX).
+    Returns None if cashflows never break even or do not cross zero.
+    """
+    if len(cashflows) < 2 or cashflows[0] >= 0.0 or sum(cashflows[1:]) <= 0.0:
+        return None
+
+    def npv_at_r(r: float) -> float:
+        val = 0.0
+        for t, cf in enumerate(cashflows):
+            val += cf / ((1.0 + r) ** t)
+        return val
+
+    # Test range -0.90 (-90%) to 5.0 (500%)
+    low, high = -0.90, 5.0
+    f_low, f_high = npv_at_r(low), npv_at_r(high)
+    if f_low * f_high > 0:
+        return None
+
+    for _ in range(max_iter):
+        mid = (low + high) / 2.0
+        f_mid = npv_at_r(mid)
+        if abs(f_mid) < tol or (high - low) / 2.0 < tol:
+            return round(mid * 100.0, 1)
+        if f_low * f_mid < 0:
+            high = mid
+            f_high = f_mid
+        else:
+            low = mid
+            f_low = f_mid
+
+    return round(((low + high) / 2.0) * 100.0, 1)
 
 
 MONTH_NAMES_SHORT = [
@@ -279,6 +315,12 @@ class CombinedFinancialConfig:
     # Lifecycle Discount Rate
     discount_rate_pct: float = 6.0
 
+    # Long-Term Escalation, Degradation & Feed-in Assumptions (v13.7)
+    tariff_escalation_pct_pa: float = 2.5
+    om_inflation_pct_pa: float = 2.0
+    solar_export_feed_in_eur_kwh: float = 0.05
+    system_degradation_pct_pa: float = 0.4
+
     @property
     def effective_solar_capex_eur_kwp(self) -> float:
         if self.solar_capex_eur_kwp is not None:
@@ -331,6 +373,19 @@ class CombinedFinancialKPIs:
     annual_savings_eur: float = 0.0
     payback_years: Optional[float] = None
     npv_15y_eur: float = 0.0
+
+    # Extended Year-1 & 15-Year Metrics (v13.7)
+    solar_export_revenue_eur: float = 0.0
+    gross_bill_savings_y1_eur: float = 0.0
+    system_om_and_fuel_y1_eur: float = 0.0
+    discounted_payback_years: Optional[float] = None
+    irr_15y_pct: Optional[float] = None
+    tco_15y_baseline_eur: float = 0.0
+    tco_15y_combined_eur: float = 0.0
+    tco_15y_savings_eur: float = 0.0
+    effective_blended_grid_rate_eur_kwh: float = 0.0
+    system_lcoe_eur_kwh: float = 0.0
+    annualized_cost_per_shaved_kw_eur: float = 0.0
 
 
 @dataclass
@@ -435,6 +490,7 @@ class CombinedSimulationResult:
     gen_running_mask: np.ndarray
     grid_import_kw: np.ndarray
     unmet_overload_kw: np.ndarray
+    is_gap: np.ndarray = field(default_factory=lambda: np.zeros(35040, dtype=bool))
 
     # Tables
     summary_table_df: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -776,6 +832,7 @@ def _cluster_deficit_kernel(
     eta_chg: float,
     chg_cap_kw: float,
     dt: float,
+    is_gap: np.ndarray,
 ) -> Tuple[float, int]:
     """Fast JIT/compiled kernel for 35,040-step multi-day cluster deficit integration."""
     n = len(p)
@@ -787,6 +844,8 @@ def _cluster_deficit_kernel(
     eta_chg_dt = eta_chg * dt
 
     for i in range(n):
+        if is_gap[i]:
+            continue
         nl = p[i]
         if nl > lim:
             cum_def += (nl - lim) * inv_eta_dis_dt
@@ -820,6 +879,7 @@ def _evaluate_bess_criteria_for_profile(
     extra_recharge_kw: Optional[np.ndarray] = None,
     allow_grid_recharge: bool = True,
     step_hours: float = 0.25,
+    is_gap: Optional[np.ndarray] = None,
 ) -> Tuple[float, float, float, float, float, str, float, float]:
     """
     Evaluates the 4 physical BESS sizing criteria on a given net load profile:
@@ -833,6 +893,7 @@ def _evaluate_bess_criteria_for_profile(
     n = len(p)
     dt = float(step_hours)
     lim = float(grid_limit_kw)
+    gap_mask = np.asarray(is_gap, dtype=bool) if is_gap is not None and len(is_gap) == n else np.zeros(n, dtype=bool)
 
     rte = float(np.clip(round_trip_efficiency_pct, 50.0, 100.0)) / 100.0
     eta_dis = math.sqrt(rte)
@@ -849,6 +910,7 @@ def _evaluate_bess_criteria_for_profile(
     )
     grid_headroom_arr = np.maximum(0.0, lim - p) if allow_grid_recharge else np.zeros(n, dtype=float)
     avail_rech_kw_arr = np.where(p <= lim, grid_headroom_arr + extra_chg, extra_chg)
+    avail_rech_kw_arr[gap_mask] = 0.0
 
     max_rech_kw = float(np.max(avail_rech_kw_arr)) if n > 0 else 0.0
     total_rech_kwh = float(np.sum(avail_rech_kw_arr) * eta_chg * dt)
@@ -857,7 +919,7 @@ def _evaluate_bess_criteria_for_profile(
     chg_cap_kw = float(peak_kw) if peak_kw > 0.0 else lim
     if peak_kw > 0.0:
         max_cum_def, worst_cluster_steps = _cluster_deficit_kernel(
-            p, avail_rech_kw_arr, lim, eta_dis, eta_chg, chg_cap_kw, dt
+            p, avail_rech_kw_arr, lim, eta_dis, eta_chg, chg_cap_kw, dt, gap_mask
         )
     else:
         max_cum_def, worst_cluster_steps = 0.0, 0
@@ -980,6 +1042,7 @@ def compute_dual_battery_sizing(
     system_cfg: CombinedSystemConfig,
     rules_cfg: InteractionRulesConfig,
     step_hours: float = 0.25,
+    is_gap: Optional[np.ndarray] = None,
 ) -> DualBatterySizingResult:
     """
     Computes both Mode A (Standalone: Battery only) and Mode B (Coupled: With active Solar,
@@ -1016,6 +1079,7 @@ def compute_dual_battery_sizing(
         extra_recharge_kw=None,
         allow_grid_recharge=True,
         step_hours=dt,
+        is_gap=is_gap,
     )
     sa_100_kw = round(math.ceil(sa_peak_kw * 10.0) / 10.0, 1) if sa_peak_kw > 0.05 else 0.0
     sa_100_kwh = float(math.ceil(sa_cluster_kwh))
@@ -1117,6 +1181,7 @@ def compute_dual_battery_sizing(
         extra_recharge_kw=extra_rech_coupled,
         allow_grid_recharge=allow_grid_rech_coupled,
         step_hours=dt,
+        is_gap=is_gap,
     )
     cp_100_kw = round(math.ceil(cp_peak_kw * 10.0) / 10.0, 1) if cp_peak_kw > 0.05 else 0.0
     cp_100_kwh = float(math.ceil(cp_cluster_kwh))
@@ -1180,6 +1245,7 @@ def compute_dual_generator_sizing(
     system_cfg: CombinedSystemConfig,
     rules_cfg: InteractionRulesConfig,
     step_hours: float = 0.25,
+    is_gap: Optional[np.ndarray] = None,
 ) -> DualGeneratorSizingResult:
     """
     Computes Dual Sizing for the Generator:
@@ -1242,6 +1308,7 @@ def compute_dual_generator_sizing(
         system_cfg=cfg_no_gen,
         rules_cfg=rules_cfg,
         step_hours=step_hours,
+        is_gap=is_gap,
     )
     rem_over_kw = float(res_no_gen.kpis.remaining_overload_kw)
     cp_100 = round(math.ceil(rem_over_kw * 10.0) / 10.0, 1) if rem_over_kw > 0.05 else 0.0
@@ -1291,6 +1358,7 @@ def derive_quick_sizing(
     step_hours: float = 0.25,
     solar_profile_kw: Optional[np.ndarray] = None,
     rules_cfg: Optional[InteractionRulesConfig] = None,
+    is_gap: Optional[np.ndarray] = None,
 ) -> QuickSizingResult:
     """
     Derives source sizes from percentage shares with accurate 100% Zero-Overload sizing:
@@ -1303,6 +1371,7 @@ def derive_quick_sizing(
     p = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
     n_steps = len(p)
     dt = float(step_hours)
+    gap_mask = np.asarray(is_gap, dtype=bool) if is_gap is not None and len(is_gap) == n_steps else np.zeros(n_steps, dtype=bool)
     annual_kwh = float(np.sum(p) * dt)
     bat_share = float(np.clip(battery_share_pct, 0.0, 100.0))
     gen_share = 100.0 - bat_share
@@ -1366,6 +1435,7 @@ def derive_quick_sizing(
         if allow_grid_rech
         else p_surplus
     )
+    avail_rech_qs[gap_mask] = 0.0
     if rem_peak_overload > 0.0:
         max_cum_deficit, _ = _cluster_deficit_kernel(
             p_net,
@@ -1375,6 +1445,7 @@ def derive_quick_sizing(
             eta_chg,
             float(np.max(avail_rech_qs)) if n_steps > 0 else eff_grid_limit,
             dt,
+            gap_mask,
         )
     else:
         max_cum_deficit = 0.0
@@ -1435,6 +1506,7 @@ def _fast_combined_dispatch_kernel(
     init_e_kwh: float,
     init_solar_e_kwh: float,
     dt: float,
+    is_gap: np.ndarray,
 ) -> Tuple[
     np.ndarray,
     np.ndarray,
@@ -1474,6 +1546,11 @@ def _fast_combined_dispatch_kernel(
     gen_min_clamped = gen_rated_kw if gen_rated_kw < gen_min_kw else gen_min_kw
 
     for i in range(n_steps):
+        if is_gap[i]:
+            bess_energy_kwh[i] = cur_e_kwh
+            solar_export_kw[i] = 0.0
+            continue
+
         p_rem = rem_load_after_solar_kw[i]
         p_surplus = solar_surplus_kw[i]
 
@@ -1754,6 +1831,7 @@ def simulate_combined_system_dispatch(
     system_cfg: CombinedSystemConfig,
     rules_cfg: InteractionRulesConfig,
     step_hours: float = 0.25,
+    is_gap: Optional[np.ndarray] = None,
 ) -> CombinedSimulationResult:
     """
     Executes the 35,040-step (15-minute) physical interaction between Grid, Solar, Battery,
@@ -1762,9 +1840,14 @@ def simulate_combined_system_dispatch(
     p_load = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
     n_steps = len(p_load)
     dt = float(step_hours)
+    gap_mask = (
+        np.asarray(is_gap, dtype=bool)
+        if is_gap is not None and len(is_gap) == n_steps
+        else np.zeros(n_steps, dtype=bool)
+    )
     annual_consumption_kwh = float(np.sum(p_load) * dt)
     orig_peak_kw = float(np.max(p_load)) if n_steps > 0 else 0.0
-    avg_load_kw = float(np.mean(p_load)) if n_steps > 0 else 0.0
+    avg_load_kw = float(np.mean(p_load[~gap_mask])) if np.any(~gap_mask) else 0.0
 
     grid_limit_kw = (
         max(0.0, float(system_cfg.grid_limit_kw))
@@ -1882,6 +1965,7 @@ def simulate_combined_system_dispatch(
     # 5. Execute 15-Minute Simulation (Vectorized fast-path if neither Battery nor Generator is active)
     if not enable_bess and not enable_gen:
         solar_export_kw = solar_surplus_kw.copy()
+        solar_export_kw[gap_mask] = 0.0
         bess_charge_solar_kw = np.zeros(n_steps, dtype=float)
         bess_charge_grid_kw = np.zeros(n_steps, dtype=float)
         bess_charge_gen_kw = np.zeros(n_steps, dtype=float)
@@ -1895,7 +1979,9 @@ def simulate_combined_system_dispatch(
         gen_fuel_step = np.zeros(n_steps, dtype=float)
         gen_running_mask = np.zeros(n_steps, dtype=bool)
         grid_import_kw = rem_load_after_solar_kw.copy()
+        grid_import_kw[gap_mask] = 0.0
         unmet_overload_kw = np.maximum(0.0, grid_import_kw - grid_limit_kw)
+        unmet_overload_kw[gap_mask] = 0.0
     else:
         (
             solar_export_kw,
@@ -1931,6 +2017,7 @@ def simulate_combined_system_dispatch(
             init_e_kwh=cur_e_kwh,
             init_solar_e_kwh=solar_energy_in_bess_kwh,
             dt=dt,
+            is_gap=gap_mask,
         )
         bess_soc_pct = (
             bess_energy_kwh * (100.0 / bess_cap_kwh)
@@ -1950,7 +2037,9 @@ def simulate_combined_system_dispatch(
             0.0,
             rem_load_after_solar_kw - bess_discharge_kw - gen_to_load_kw + bess_charge_grid_kw,
         )
+        grid_import_kw[gap_mask] = 0.0
         unmet_overload_kw = np.maximum(0.0, grid_import_kw - grid_limit_kw)
+        unmet_overload_kw[gap_mask] = 0.0
 
     # 6. Compute Technical KPIs
     diag_before = analyze_grid_violations(p_load, grid_limit_kw, step_hours=dt)
@@ -2107,6 +2196,7 @@ def simulate_combined_system_dispatch(
         gen_running_mask=gen_running_mask,
         grid_import_kw=grid_import_kw,
         unmet_overload_kw=unmet_overload_kw,
+        is_gap=gap_mask,
         summary_table_df=summary_df,
         monthly_balance_df=monthly_df,
     )
@@ -2449,50 +2539,138 @@ def evaluate_combined_financials(
     baseline_total_opex = base_p1_sum + base_p2_sum + base_p3_sum + base_p4_sum
     combined_grid_total = comb_p1_sum + comb_p2_sum + comb_p3_sum + comb_p4_sum
     gen_total_opex = gen_fuel_cost_sum + gen_maint_cost_sum + gen_rental_cost_sum
-    total_annual_opex = combined_grid_total + solar_om_annual + battery_om_annual + gen_total_opex
+
+    solar_export_kwh = float(getattr(kpis, "solar_export_kwh", 0.0)) if cfg.enable_solar else 0.0
+    solar_export_rev_y1 = (solar_export_kwh * max(0.0, float(fin_cfg.solar_export_feed_in_eur_kwh))) if cfg.enable_solar else 0.0
+
+    system_om_and_fuel_y1 = solar_om_annual + battery_om_annual + gen_total_opex
+    gross_bill_savings_y1 = (baseline_total_opex - combined_grid_total) + solar_export_rev_y1
+    total_annual_opex = combined_grid_total + system_om_and_fuel_y1 - solar_export_rev_y1
     annual_savings = baseline_total_opex - total_annual_opex
 
-    if total_capex <= 0.0:
-        payback_years = 0.0 if annual_savings >= 0.0 else None
-    elif annual_savings > 0.0:
-        payback_years = round(total_capex / annual_savings, 1)
-    else:
-        payback_years = None
-
-    # 4. 15-Year Lifecycle Cashflow & NPV Calculation
+    # 4. 15-Year Dynamic Lifecycle Cashflow, TCO & NPV Calculation
     r_disc = max(0.0, float(fin_cfg.discount_rate_pct)) / 100.0
+    r_tariff = max(0.0, float(fin_cfg.tariff_escalation_pct_pa)) / 100.0
+    r_om = max(0.0, float(fin_cfg.om_inflation_pct_pa)) / 100.0
+    d_sys = max(0.0, float(fin_cfg.system_degradation_pct_pa)) / 100.0
     aug_yr = int(fin_cfg.battery_augmentation_year)
+
+    bill_avoided_y1 = max(0.0, baseline_total_opex - combined_grid_total)
+
     cashflow_rows = []
     cum_cf = -total_capex
+    cum_disc_cf = -total_capex
     npv_acc = -total_capex
 
     cashflow_rows.append({
         "Year": 0,
+        "Tariff Escalation Factor": 1.0,
         "Investment & Augmentation (€)": round(-total_capex, 0),
         "Current situation Bill (€)": 0.0,
+        "Combined Grid Bill (€)": 0.0,
+        "System O&M & Fuel (€)": 0.0,
+        "Export Revenue (€)": 0.0,
         "Combined System OPEX (€)": 0.0,
         "Annual Net Savings (€)": 0.0,
         "Net Cashflow (€)": round(-total_capex, 0),
         "Cumulative Cashflow (€)": round(cum_cf, 0),
         "Discounted Cashflow (€)": round(-total_capex, 0),
+        "Cumulative TCO Current situation (€)": 0.0,
+        "Cumulative TCO Combined system (€)": round(total_capex, 0),
     })
 
+    tco_base_acc = 0.0
+    tco_comb_acc = total_capex
+    net_cfs_for_irr = [-total_capex]
+    simple_payback_years: Optional[float] = None
+    discounted_payback_years: Optional[float] = None
+
+    disc_sys_energy_acc = 0.0
+    disc_sys_cost_acc = total_capex
+
+    sys_energy_y1 = float(getattr(kpis, "solar_total_supplied_kwh", 0.0)) + float(getattr(kpis, "battery_total_discharged_kwh", 0.0)) + float(getattr(kpis, "generator_to_load_kwh", 0.0))
+
     for yr in range(1, 16):
+        esc_tariff = (1.0 + r_tariff) ** (yr - 1)
+        esc_om = (1.0 + r_om) ** (yr - 1)
+        deg_factor = max(0.0, (1.0 - d_sys) ** (yr - 1))
+
+        b_bill_yr = baseline_total_opex * esc_tariff
+        avoided_bill_yr = bill_avoided_y1 * deg_factor * esc_tariff
+        c_grid_yr = max(0.0, b_bill_yr - avoided_bill_yr)
+
+        om_sys_yr = system_om_and_fuel_y1 * esc_om
+        exp_rev_yr = solar_export_rev_y1 * deg_factor * esc_tariff
+
+        c_tot_yr = c_grid_yr + om_sys_yr - exp_rev_yr
+        savings_yr = b_bill_yr - c_tot_yr
+
         yr_aug = -battery_aug_eur if (battery_aug_eur > 0.0 and yr == aug_yr) else 0.0
-        net_cf = annual_savings + yr_aug
+        net_cf = savings_yr + yr_aug
+        net_cfs_for_irr.append(net_cf)
+
+        prev_cf = cum_cf
         cum_cf += net_cf
+
         disc_cf = net_cf / ((1.0 + r_disc) ** yr)
+        prev_disc_cf = cum_disc_cf
+        cum_disc_cf += disc_cf
         npv_acc += disc_cf
+
+        # Check payback crossings
+        if total_capex > 0.0:
+            if simple_payback_years is None and cum_cf >= 0.0:
+                fraction = (-prev_cf) / max(1e-6, net_cf) if net_cf > 0 else 0.0
+                simple_payback_years = round((yr - 1) + max(0.0, min(1.0, fraction)), 1)
+
+            if discounted_payback_years is None and cum_disc_cf >= 0.0:
+                fraction = (-prev_disc_cf) / max(1e-6, disc_cf) if disc_cf > 0 else 0.0
+                discounted_payback_years = round((yr - 1) + max(0.0, min(1.0, fraction)), 1)
+
+        tco_base_acc += b_bill_yr
+        tco_comb_acc += (c_tot_yr + abs(yr_aug))
+
+        disc_sys_energy_acc += (sys_energy_y1 * deg_factor) / ((1.0 + r_disc) ** yr)
+        disc_sys_cost_acc += (om_sys_yr + abs(yr_aug)) / ((1.0 + r_disc) ** yr)
+
         cashflow_rows.append({
             "Year": yr,
+            "Tariff Escalation Factor": round(esc_tariff, 3),
             "Investment & Augmentation (€)": round(yr_aug, 0),
-            "Current situation Bill (€)": round(baseline_total_opex, 0),
-            "Combined System OPEX (€)": round(total_annual_opex, 0),
-            "Annual Net Savings (€)": round(annual_savings, 0),
+            "Current situation Bill (€)": round(b_bill_yr, 0),
+            "Combined Grid Bill (€)": round(c_grid_yr, 0),
+            "System O&M & Fuel (€)": round(om_sys_yr, 0),
+            "Export Revenue (€)": round(exp_rev_yr, 0),
+            "Combined System OPEX (€)": round(c_tot_yr, 0),
+            "Annual Net Savings (€)": round(savings_yr, 0),
             "Net Cashflow (€)": round(net_cf, 0),
             "Cumulative Cashflow (€)": round(cum_cf, 0),
             "Discounted Cashflow (€)": round(disc_cf, 0),
+            "Cumulative TCO Current situation (€)": round(tco_base_acc, 0),
+            "Cumulative TCO Combined system (€)": round(tco_comb_acc, 0),
         })
+
+    if total_capex <= 0.0:
+        simple_payback_years = 0.0 if annual_savings >= 0.0 else None
+        discounted_payback_years = 0.0 if annual_savings >= 0.0 else None
+
+    irr_val = _calculate_irr(net_cfs_for_irr)
+
+    # Unit metrics
+    ann_cons = max(1.0, float(kpis.annual_consumption_kwh))
+    eff_grid_rate = baseline_total_opex / ann_cons
+    sys_lcoe = (disc_sys_cost_acc / disc_sys_energy_acc) if disc_sys_energy_acc > 1.0 else 0.0
+
+    peak_red = float(getattr(kpis, "peak_reduction_kw", 0.0))
+    if peak_red > 0.1:
+        if r_disc > 0:
+            annuity_factor = (r_disc * ((1.0 + r_disc) ** 15)) / (((1.0 + r_disc) ** 15) - 1.0)
+            ann_capex = total_capex * annuity_factor
+        else:
+            ann_capex = total_capex / 15.0
+        ann_cost_shaved_kw = (ann_capex + system_om_and_fuel_y1) / peak_red
+    else:
+        ann_cost_shaved_kw = 0.0
 
     fin_kpis = CombinedFinancialKPIs(
         solar_capex_eur=round(solar_capex, 0),
@@ -2528,12 +2706,23 @@ def evaluate_combined_financials(
         generator_total_opex_eur=round(gen_total_opex, 0),
         total_annual_opex_eur=round(total_annual_opex, 0),
         annual_savings_eur=round(annual_savings, 0),
-        payback_years=payback_years,
+        payback_years=simple_payback_years,
         npv_15y_eur=round(npv_acc, 0),
+        solar_export_revenue_eur=round(solar_export_rev_y1, 0),
+        gross_bill_savings_y1_eur=round(gross_bill_savings_y1, 0),
+        system_om_and_fuel_y1_eur=round(system_om_and_fuel_y1, 0),
+        discounted_payback_years=discounted_payback_years,
+        irr_15y_pct=irr_val,
+        tco_15y_baseline_eur=round(tco_base_acc, 0),
+        tco_15y_combined_eur=round(tco_comb_acc, 0),
+        tco_15y_savings_eur=round(tco_base_acc - tco_comb_acc, 0),
+        effective_blended_grid_rate_eur_kwh=round(eff_grid_rate, 4),
+        system_lcoe_eur_kwh=round(sys_lcoe, 4),
+        annualized_cost_per_shaved_kw_eur=round(ann_cost_shaved_kw, 1),
     )
 
     denom = max(1.0, kpis.annual_consumption_kwh)
-    payback_str = f"{payback_years:.1f} yrs" if payback_years is not None else "N/A"
+    payback_str = f"{simple_payback_years:.1f} yrs" if simple_payback_years is not None else "N/A"
 
     fin_rows = [
         {

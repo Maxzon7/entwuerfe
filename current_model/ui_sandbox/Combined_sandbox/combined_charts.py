@@ -206,6 +206,21 @@ def create_combined_dispatch_soc_figure(
     soc_kwh = np.asarray(sim_res.bess_energy_kwh, dtype=np.float32)
     gen_active_pct = np.where(sim_res.gen_running_mask, np.float32(100.0), np.float32(0.0))
 
+    # Mask measurement data gaps with NaN so Plotly connectgaps=False leaves intervals visually blank
+    is_gap = getattr(sim_res, "is_gap", None)
+    if is_gap is not None and np.any(is_gap):
+        gap_b = np.asarray(is_gap, dtype=bool)
+        p_load = np.where(gap_b, np.nan, p_load)
+        p_solar_dir = np.where(gap_b, np.nan, p_solar_dir)
+        p_bess_dis = np.where(gap_b, np.nan, p_bess_dis)
+        p_bess_chg = np.where(gap_b, np.nan, p_bess_chg)
+        p_unmet = np.where(gap_b, np.nan, p_unmet)
+        p_gen_out = np.where(gap_b, np.nan, p_gen_out)
+        p_grid_imp = np.where(gap_b, np.nan, p_grid_imp)
+        soc_pct = np.where(gap_b, np.nan, soc_pct)
+        soc_kwh = np.where(gap_b, np.nan, soc_kwh)
+        gen_active_pct = np.where(gap_b, np.nan, gen_active_pct)
+
     cfg = sim_res.system_config
     rules = sim_res.rules_config
 
@@ -230,6 +245,7 @@ def create_combined_dispatch_soc_figure(
             y=p_load,
             mode="lines",
             name="Facility Load (kW)",
+            connectgaps=False,
             line=dict(color="#94A3B8", width=1.0),
             hovertemplate="Load: <b>%{y:,.1f} kW</b><extra></extra>",
         ),
@@ -244,6 +260,7 @@ def create_combined_dispatch_soc_figure(
             y=p_grid_imp,
             mode="lines",
             name="Grid Import (kW)",
+            connectgaps=False,
             line=dict(color="#3B82F6", width=1.4),
             hovertemplate="Grid: <b>%{y:,.1f} kW</b><extra></extra>",
         ),
@@ -259,6 +276,7 @@ def create_combined_dispatch_soc_figure(
                 y=p_solar_dir,
                 mode="lines",
                 name="Solar Direct (kW)",
+                connectgaps=False,
                 line=dict(color="#FACC15", width=1.0),
                 fill="tozeroy",
                 fillcolor="rgba(250, 204, 21, 0.25)",
@@ -276,6 +294,7 @@ def create_combined_dispatch_soc_figure(
                 y=p_bess_dis,
                 mode="lines",
                 name="BESS Discharge (kW)",
+                connectgaps=False,
                 line=dict(color="#22C55E", width=1.0),
                 fill="tozeroy",
                 fillcolor="rgba(34, 197, 94, 0.25)",
@@ -291,6 +310,7 @@ def create_combined_dispatch_soc_figure(
                 y=-p_bess_chg,
                 mode="lines",
                 name="BESS Charge (kW, shown negative)",
+                connectgaps=False,
                 line=dict(color="#06B6D4", width=1.0, dash="dot"),
                 fill="tozeroy",
                 fillcolor="rgba(6, 182, 212, 0.18)",
@@ -308,6 +328,7 @@ def create_combined_dispatch_soc_figure(
                 y=p_gen_out,
                 mode="lines",
                 name="Generator Output (kW)",
+                connectgaps=False,
                 line=dict(color="#F97316", width=1.1),
                 fill="tozeroy",
                 fillcolor="rgba(249, 115, 22, 0.35)",
@@ -318,13 +339,14 @@ def create_combined_dispatch_soc_figure(
         )
 
     # 6. Remaining Deficit (highlighted in red)
-    if float(np.max(p_unmet, initial=0.0)) > 0.05:
+    if float(np.nanmax(p_unmet)) > 0.05:
         fig.add_trace(
             go.Scattergl(
                 x=ts,
                 y=p_unmet,
                 mode="lines",
                 name="Remaining Deficit (kW)",
+                connectgaps=False,
                 line=dict(color="#EF4444", width=1.8),
                 fill="tozeroy",
                 fillcolor="rgba(239, 68, 68, 0.45)",
@@ -353,6 +375,7 @@ def create_combined_dispatch_soc_figure(
                 y=gen_active_pct,
                 mode="lines",
                 name="Generator Active",
+                connectgaps=False,
                 line=dict(width=0.0, color="rgba(249, 115, 22, 0.0)"),
                 fill="tozeroy",
                 fillcolor="rgba(249, 115, 22, 0.22)",
@@ -371,6 +394,7 @@ def create_combined_dispatch_soc_figure(
                 y=soc_pct,
                 mode="lines",
                 name="SoC (%)",
+                connectgaps=False,
                 line=dict(color="#A78BFA", width=1.6),
                 fill="tozeroy",
                 fillcolor="rgba(167, 139, 250, 0.15)",
@@ -388,6 +412,7 @@ def create_combined_dispatch_soc_figure(
                 y=soc_kwh,
                 mode="lines",
                 name="Stored Energy (kWh)",
+                connectgaps=False,
                 line=dict(color="#C4B5FD", width=0.8, dash="dot"),
                 opacity=0.5,
                 hovertemplate="Stored: <b>%{y:,.1f} kWh</b><extra></extra>",
@@ -648,6 +673,328 @@ def create_financial_cost_comparison_figure(
             title="Annual Cost (€/year)",
             gridcolor="rgba(148, 163, 184, 0.12)",
             rangemode="tozero",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.04,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_financial_tco_trajectory_figure(
+    sim_res: CombinedSimulationResult,
+) -> go.Figure:
+    """
+    Creates the 15-Year Cumulative TCO & Break-Even Trajectory figure,
+    comparing cumulative expenditures of Current situation vs. Combined system,
+    with annual net cashflow bars and break-even point indicator.
+    """
+    df = sim_res.cashflow_15y_df
+    fk = sim_res.financial_kpis
+    if df.empty or fk is None:
+        return go.Figure()
+
+    years = df["Year"].tolist()
+    tco_base = df["Cumulative TCO Current situation (€)"].tolist()
+    tco_comb = df["Cumulative TCO Combined system (€)"].tolist()
+    net_cf = df["Net Cashflow (€)"].tolist()
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Background annual cashflow bars (secondary y-axis)
+    bar_colors = ["#22C55E" if v >= 0 else "#EF4444" for v in net_cf]
+    fig.add_trace(
+        go.Bar(
+            x=years,
+            y=net_cf,
+            name="Annual Net Cashflow (€)",
+            marker_color=bar_colors,
+            opacity=0.35,
+            hovertemplate="Year %{x}<br>Net Cashflow: €%{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+
+    # Current situation TCO line
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=tco_base,
+            mode="lines+markers",
+            name="Current situation TCO (€)",
+            line=dict(color="#F87171", width=2.2, dash="dash"),
+            hovertemplate="Year %{x}<br>Current situation TCO: €%{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+
+    # Combined system TCO line
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=tco_comb,
+            mode="lines+markers",
+            name="Combined system TCO (€)",
+            line=dict(color="#38BDF8", width=2.8),
+            hovertemplate="Year %{x}<br>Combined system TCO: €%{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+
+    # Break-Even indicator if payback occurs
+    if fk.payback_years is not None and 0.0 < fk.payback_years <= 15.0:
+        fig.add_vline(
+            x=fk.payback_years,
+            line_dash="dot",
+            line_color="#22C55E",
+            line_width=1.5,
+            annotation_text=f"Break-Even: {fk.payback_years:.1f} yrs",
+            annotation_position="top left",
+            annotation_font=dict(color="#22C55E", size=11),
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=430,
+        margin=dict(l=55, r=55, t=75, b=45),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        title=dict(
+            text="15-Year Cumulative TCO & Break-Even Trajectory (€)",
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.0,
+        ),
+        xaxis=dict(
+            title="Project Lifecycle (Years)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            tickmode="linear",
+            tick0=0,
+            dtick=1,
+        ),
+        yaxis=dict(
+            title="Cumulative TCO (€)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            rangemode="tozero",
+        ),
+        yaxis2=dict(
+            title="Annual Net Cashflow (€)",
+            gridcolor="rgba(0,0,0,0)",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.04,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_financial_waterfall_bridge_figure(
+    sim_res: CombinedSimulationResult,
+) -> go.Figure:
+    """
+    Creates the Year-1 Annual Cost Bridge Waterfall chart, decomposing the transition
+    from Current situation Bill down to Combined System Net OPEX.
+    """
+    fk = sim_res.financial_kpis
+    if fk is None:
+        return go.Figure()
+
+    supply_sav = -(fk.baseline_pillar1_supply_eur - fk.combined_pillar1_supply_eur)
+    dso_base_net = max(0.0, fk.baseline_pillar2_dso_eur - fk.baseline_penalty_cost_eur)
+    dso_comb_net = max(0.0, fk.combined_pillar2_dso_eur - fk.combined_grid_penalty_cost_eur)
+    dso_sav = -(dso_base_net - dso_comb_net)
+    pen_sav = -(fk.baseline_penalty_cost_eur - fk.combined_grid_penalty_cost_eur)
+    tax_sav = -(fk.baseline_pillar4_taxes_eur - fk.combined_pillar4_taxes_eur)
+    export_rev = -fk.solar_export_revenue_eur
+    sol_om = fk.solar_om_eur
+    bat_om = fk.battery_om_eur
+    gen_opex = fk.generator_total_opex_eur
+
+    x_labels = ["Current situation Bill"]
+    y_vals = [fk.baseline_total_opex_eur]
+    measures = ["absolute"]
+
+    if abs(supply_sav) > 0.5:
+        x_labels.append("Supply Savings")
+        y_vals.append(supply_sav)
+        measures.append("relative")
+
+    if abs(dso_sav) > 0.5:
+        x_labels.append("Grid Capacity Savings")
+        y_vals.append(dso_sav)
+        measures.append("relative")
+
+    if abs(pen_sav) > 0.5:
+        x_labels.append("Avoided Penalties")
+        y_vals.append(pen_sav)
+        measures.append("relative")
+
+    if abs(tax_sav) > 0.5:
+        x_labels.append("Tax Reductions")
+        y_vals.append(tax_sav)
+        measures.append("relative")
+
+    if abs(export_rev) > 0.5:
+        x_labels.append("Solar Feed-in Export")
+        y_vals.append(export_rev)
+        measures.append("relative")
+
+    if sol_om > 0.5:
+        x_labels.append("Solar O&M")
+        y_vals.append(sol_om)
+        measures.append("relative")
+
+    if bat_om > 0.5:
+        x_labels.append("Battery O&M")
+        y_vals.append(bat_om)
+        measures.append("relative")
+
+    if gen_opex > 0.5:
+        x_labels.append("Generator OPEX")
+        y_vals.append(gen_opex)
+        measures.append("relative")
+
+    x_labels.append("Combined System Net OPEX")
+    y_vals.append(0.0)
+    measures.append("total")
+
+    fig = go.Figure(
+        go.Waterfall(
+            name="Cost Bridge",
+            orientation="v",
+            measure=measures,
+            x=x_labels,
+            y=y_vals,
+            textposition="outside",
+            text=[f"€{abs(v):,.0f}" if m != "total" else f"€{fk.total_annual_opex_eur:,.0f}" for v, m in zip(y_vals, measures)],
+            connector={"line": {"color": "rgba(148, 163, 184, 0.4)"}},
+            decreasing={"marker": {"color": "#22C55E"}},
+            increasing={"marker": {"color": "#EF4444"}},
+            totals={"marker": {"color": "#3B82F6"}},
+            hovertemplate="%{x}<br>Amount: €%{y:,.0f}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=430,
+        margin=dict(l=55, r=25, t=75, b=65),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        title=dict(
+            text="Year-1 Annual Cost Bridge: Current situation to Combined System (€/year)",
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.0,
+        ),
+        yaxis=dict(
+            title="Annual Cost (€/year)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+        ),
+        xaxis=dict(
+            tickangle=-25,
+            gridcolor="rgba(148, 163, 184, 0.12)",
+        ),
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_financial_monthly_cashflow_figure(
+    sim_res: CombinedSimulationResult,
+) -> go.Figure:
+    """
+    Creates the 12-Month Seasonal Financial Cashflow Chart,
+    comparing monthly Current situation bills vs. Combined system OPEX,
+    with an overlaid line for monthly net savings.
+    """
+    m_df = sim_res.monthly_cost_df
+    if m_df.empty:
+        return go.Figure()
+
+    months = m_df["Month"].tolist()
+    base_bills = m_df["Current situation Total (€)"].tolist()
+    comb_opex = m_df["Combined System Total OPEX (€)"].tolist()
+    m_savings = m_df["Monthly Savings (€)"].tolist()
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=base_bills,
+            name="Current situation Bill (€)",
+            marker_color="#F87171",
+            hovertemplate="%{x}<br>Current situation: €%{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=months,
+            y=comb_opex,
+            name="Combined System OPEX (€)",
+            marker_color="#38BDF8",
+            hovertemplate="%{x}<br>Combined System: €%{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=months,
+            y=m_savings,
+            mode="lines+markers",
+            name="Monthly Net Savings (€)",
+            line=dict(color="#22C55E", width=2.4),
+            marker=dict(size=7, color="#22C55E"),
+            hovertemplate="%{x}<br>Monthly Savings: €%{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+
+    fig.update_layout(
+        barmode="group",
+        template="plotly_dark",
+        height=430,
+        margin=dict(l=55, r=55, t=75, b=45),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        title=dict(
+            text="12-Month Seasonal Financial Cashflow & Net Savings (€/month)",
+            font=dict(size=15, color="#F8FAFC"),
+            x=0.0,
+        ),
+        yaxis=dict(
+            title="Monthly Expense (€/month)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            rangemode="tozero",
+        ),
+        yaxis2=dict(
+            title="Monthly Savings (€/month)",
+            gridcolor="rgba(0,0,0,0)",
+            overlaying="y",
+            side="right",
+            showgrid=False,
         ),
         legend=dict(
             orientation="h",
