@@ -1558,6 +1558,46 @@ def render_subtab5_interaction_rules() -> None:
 # ======================================================================================
 
 @st.fragment
+def _render_financial_chart_gallery_fragment(sim_res) -> None:
+    """Isolates financial chart perspective switching inside a lightweight fragment."""
+    with st.container(border=True):
+        st.markdown("##### :material/analytics: Financial Decision Visualizations")
+        gallery_choice = st.radio(
+            "Visualization Perspective",
+            options=[
+                "15-Year Cumulative TCO & Break-Even Trajectory",
+                "Annual Cost Bridge (Waterfall)",
+                "4-Pillar Annual Cost Comparison",
+                "12-Month Seasonal Cashflow",
+            ],
+            index=0,
+            horizontal=True,
+            key="comb_fin_chart_gallery_sel",
+            label_visibility="collapsed",
+        )
+
+        if gallery_choice == "15-Year Cumulative TCO & Break-Even Trajectory":
+            fig_fin = create_financial_tco_trajectory_figure(sim_res)
+        elif gallery_choice == "Annual Cost Bridge (Waterfall)":
+            fig_fin = create_financial_waterfall_bridge_figure(sim_res)
+        elif gallery_choice == "4-Pillar Annual Cost Comparison":
+            fig_fin = create_financial_cost_comparison_figure(sim_res)
+        else:
+            fig_fin = create_financial_monthly_cashflow_figure(sim_res)
+
+        st.plotly_chart(
+            fig_fin,
+            use_container_width=True,
+            config={
+                "scrollZoom": False,
+                "displayModeBar": "hover",
+                "responsive": True,
+            },
+            key=f"comb_fin_gallery_{gallery_choice.replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_').lower()}",
+        )
+
+
+@st.fragment
 def render_subtab6_financials(sim_res) -> None:
     """
     Renders Subtab 6: Financials (Lazy-loaded for performance):
@@ -1647,8 +1687,9 @@ def render_subtab6_financials(sim_res) -> None:
             st.session_state["comb_fin_dso_fix"] = cur_fin.dso_fixed_fee_eur_month
             st.session_state["comb_fin_dso_vol"] = cur_fin.dso_transport_eur_kwh
             st.session_state["comb_fin_meter_fix"] = cur_fin.metering_fixed_fee_eur_month
+            evaluate_combined_financials(sim_res, cur_fin)
             st.session_state.pop("comb_cached_excel_bytes", None)
-            st.rerun()
+            st.rerun(scope="fragment")
 
     with st.form("comb_financials_form"):
         # --- Block A: 4-Pillar Grid & Tariff Costs (Always visible when Financials active) ---
@@ -2086,42 +2127,8 @@ def render_subtab6_financials(sim_res) -> None:
             status="default",
         )
 
-    # Interactive Financial Chart Gallery
-    with st.container(border=True):
-        st.markdown("##### :material/analytics: Financial Decision Visualizations")
-        gallery_choice = st.radio(
-            "Visualization Perspective",
-            options=[
-                "15-Year Cumulative TCO & Break-Even Trajectory",
-                "Annual Cost Bridge (Waterfall)",
-                "4-Pillar Annual Cost Comparison",
-                "12-Month Seasonal Cashflow",
-            ],
-            index=0,
-            horizontal=True,
-            key="comb_fin_chart_gallery_sel",
-            label_visibility="collapsed",
-        )
-
-        if gallery_choice == "15-Year Cumulative TCO & Break-Even Trajectory":
-            fig_fin = create_financial_tco_trajectory_figure(sim_res)
-        elif gallery_choice == "Annual Cost Bridge (Waterfall)":
-            fig_fin = create_financial_waterfall_bridge_figure(sim_res)
-        elif gallery_choice == "4-Pillar Annual Cost Comparison":
-            fig_fin = create_financial_cost_comparison_figure(sim_res)
-        else:
-            fig_fin = create_financial_monthly_cashflow_figure(sim_res)
-
-        st.plotly_chart(
-            fig_fin,
-            use_container_width=True,
-            config={
-                "scrollZoom": False,
-                "displayModeBar": "hover",
-                "responsive": True,
-            },
-            key=f"comb_fin_gallery_{gallery_choice.replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_').lower()}",
-        )
+    # Interactive Financial Chart Gallery (isolated fragment)
+    _render_financial_chart_gallery_fragment(sim_res)
 
     # 15-Year Cashflow Table
     with st.container(border=True):

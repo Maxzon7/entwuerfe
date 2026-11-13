@@ -78,6 +78,213 @@ def _parse_uploaded_profile_files(uploaded_files: List[Any]) -> Dict[str, List[S
 import re
 
 
+def _compute_synthetic_baseline_cached(
+    key_prefix: str,
+    consumers: List[SimpleConsumer],
+    holiday_list: List[str],
+):
+    """Fingerprint-caches 24-hour and 365-day synthetic load aggregations in session state."""
+    sig = (tuple(repr(c) for c in consumers), tuple(holiday_list))
+    cache_key = f"{key_prefix}_baseline_cache"
+    cached = st.session_state.get(cache_key)
+    if isinstance(cached, dict) and cached.get("sig") == sig:
+        return (
+            cached["df_day"],
+            cached["total_curve_24h"],
+            cached["metrics_24h"],
+            cached["df_year"],
+            cached["total_curve_year"],
+            cached["metrics_year"],
+        )
+
+    df_day, total_curve_24h, metrics_24h = aggregate_synthetic_24h(consumers)
+    df_year, total_curve_year, metrics_year = aggregate_synthetic_year(
+        consumers=consumers,
+        year=2025,
+        holidays=holiday_list,
+    )
+    st.session_state[cache_key] = {
+        "sig": sig,
+        "df_day": df_day,
+        "total_curve_24h": total_curve_24h,
+        "metrics_24h": metrics_24h,
+        "df_year": df_year,
+        "total_curve_year": total_curve_year,
+        "metrics_year": metrics_year,
+    }
+    return df_day, total_curve_24h, metrics_24h, df_year, total_curve_year, metrics_year
+
+
+@st.fragment
+def _render_synthetic_export_fragment(key_prefix: str, consumers: List[SimpleConsumer]) -> None:
+    """Isolates .drac profile export naming inputs and download serialization inside a fragment."""
+    st.markdown("##### Export Profile")
+    profile_name_input = st.text_input(
+        "Profile Name:",
+        value="Synthetic Load Profile",
+        key=f"{key_prefix}_profile_name_input",
+    )
+    default_drac_base = re.sub(r"[^a-zA-Z0-9_-]", "_", profile_name_input.lower().strip()) or "load_profile"
+    custom_prof_filename = st.text_input(
+        "Custom Download Filename (.drac):",
+        value=f"{default_drac_base}.drac",
+        key=f"{key_prefix}_prof_filename_input",
+    )
+    if not custom_prof_filename.strip().lower().endswith(".drac"):
+        custom_prof_filename = custom_prof_filename.strip() + ".drac"
+
+    drac_profile_content = consumers_to_drac(consumers, profile_name=profile_name_input)
+    st.download_button(
+        label=f"Download Profile as `{custom_prof_filename}`",
+        data=drac_profile_content,
+        file_name=custom_prof_filename,
+        mime="application/json",
+        icon=":material/download:",
+        key=f"{key_prefix}_prof_download_btn",
+        use_container_width=True,
+        type="secondary",
+        disabled=len(consumers) == 0,
+    )
+    st.caption(f"Active profile has **{len(consumers)}** consumer assets.")
+
+
+@st.fragment
+def _render_synthetic_inspection_and_charts_fragment(
+    key_prefix: str,
+    consumers: List[SimpleConsumer],
+    df_day: pd.DataFrame,
+    total_curve_24h: np.ndarray,
+    metrics_24h: Dict[str, Any],
+    df_year: pd.DataFrame,
+    total_curve_year: np.ndarray,
+    metrics_year: Dict[str, Any],
+) -> None:
+    """Isolates horizon toggling, KPI cards, grid-limit toggles, and Plotly charts inside a fragment."""
+    h_col1, h_col2 = st.columns([5, 5])
+    with h_col1:
+        horizon_mode = st.radio(
+            "Inspection Horizon (Tab 1 Charts):",
+            options=["24-Hour Typical Day", "Full Year (365 Days / 35,040 Steps)"],
+            horizontal=True,
+            key=f"{key_prefix}_horizon",
+        )
+    with h_col2:
+        st.write("")
+        is_full_year = horizon_mode.startswith("Full Year")
+        st.caption(
+            ":material/check_circle: *Full 365-day timeseries (35,040 steps) is automatically maintained for BESS & Solar simulations.*"
+            if not is_full_year
+            else ":material/calendar_month: *Full 365-day timeseries with range slider and 2D load heatmap active.*"
+        )
+
+    st.session_state[f"{key_prefix}_active_df"] = df_year if is_full_year else df_day
+
+    # KPI Cards
+    if not is_full_year:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            render_kpi_card("Peak Demand", f"{metrics_24h['peak_demand_kw']:.1f} kW", "Max instantaneous power")
+        with k2:
+            render_kpi_card("Daily Energy", f"{metrics_24h['daily_energy_kwh']:,.1f} kWh", "Sum across 24h cycle")
+        with k3:
+            render_kpi_card("Average Power", f"{metrics_24h['avg_power_kw']:.1f} kW", "Average continuous load")
+        with k4:
+            render_kpi_card("Active Assets", f"{metrics_24h['consumer_count']}", "Total machines in profile")
+    else:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            render_kpi_card("Annual Energy", f"{metrics_year['annual_energy_kwh']:,.0f} kWh", "Total annual energy demand")
+        with k2:
+            render_kpi_card("Annual Peak Demand", f"{metrics_year['peak_demand_kw']:.1f} kW", "Max measured power")
+        with k3:
+            render_kpi_card("Full Load Hours", f"{metrics_year['full_load_hours']:,.0f} h/a", f"Load Factor: {metrics_year['load_factor_pct']:.1f}%")
+        with k4:
+            render_kpi_card("Average Power", f"{metrics_year['avg_demand_kw']:.1f} kW", f"Across {metrics_year['days_count']} days")
+
+    # Compact Grid Limit Option
+    g_col1, g_col2 = st.columns([1, 1])
+    with g_col1:
+        enable_grid_limit = st.toggle(
+            "Enable Grid Capacity Limit",
+            value=False,
+            help="Define a maximum grid connection capacity limit and analyze overload violations.",
+            key=f"{key_prefix}_grid_limit_toggle",
+        )
+    with g_col2:
+        if enable_grid_limit:
+            ref_peak = metrics_year["peak_demand_kw"] if is_full_year else metrics_24h["peak_demand_kw"]
+            grid_limit_kw = st.number_input(
+                "Max Grid Capacity Limit (kW):",
+                min_value=5.0,
+                max_value=5000.0,
+                value=float(np.round(ref_peak * 0.8, 0)) if ref_peak > 0 else 100.0,
+                step=5.0,
+                key=f"{key_prefix}_grid_limit_val",
+            )
+        else:
+            grid_limit_kw = None
+
+    # Visualizations
+    if not is_full_year:
+        fig_24h = create_synthetic_profile_figure(
+            df_day=df_day,
+            consumers=consumers,
+            grid_limit_kw=grid_limit_kw,
+        )
+        st.plotly_chart(fig_24h, use_container_width=True)
+
+        if enable_grid_limit and grid_limit_kw:
+            overload_diff = (total_curve_24h - grid_limit_kw).clip(min=0.0)
+            overload_peak = float(overload_diff.max())
+            overload_hours = float((total_curve_24h > grid_limit_kw).sum() * 0.25)
+            overload_kwh = float(overload_diff.sum() * 0.25)
+            has_violation = overload_peak > 0.0
+
+            st.markdown("#### Grid Capacity Overload Analysis")
+            o1, o2, o3 = st.columns(3)
+            with o1:
+                render_kpi_card(
+                    "Overload Peak" if has_violation else "Grid Status",
+                    f"+{overload_peak:.1f} kW" if has_violation else "Within Limit",
+                    f"Max Limit: {grid_limit_kw:.1f} kW",
+                    status="alert" if has_violation else "ok",
+                )
+            with o2:
+                render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", "Violation duration")
+            with o3:
+                render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess energy over limit")
+    else:
+        fig_annual = create_annual_synthetic_figure(
+            df_year=df_year,
+            grid_limit_kw=grid_limit_kw,
+        )
+        st.plotly_chart(fig_annual, use_container_width=True)
+
+        fig_heat = create_annual_heatmap_figure(df_year=df_year)
+        st.plotly_chart(fig_heat, use_container_width=True)
+
+        if enable_grid_limit and grid_limit_kw:
+            overload_diff = (total_curve_year - grid_limit_kw).clip(min=0.0)
+            overload_peak = float(overload_diff.max())
+            overload_hours = float((total_curve_year > grid_limit_kw).sum() * 0.25)
+            overload_kwh = float(overload_diff.sum() * 0.25)
+            has_violation = overload_peak > 0.0
+
+            st.markdown("#### Annual Grid Capacity Overload Analysis")
+            o1, o2, o3 = st.columns(3)
+            with o1:
+                render_kpi_card(
+                    "Annual Overload Peak" if has_violation else "Grid Status",
+                    f"+{overload_peak:.1f} kW" if has_violation else "Within Limit",
+                    f"Max Limit: {grid_limit_kw:.1f} kW",
+                    status="alert" if has_violation else "ok",
+                )
+            with o2:
+                render_kpi_card("Annual Overload Duration", f"{overload_hours:,.1f} hrs", f"{(overload_hours / 8760.0 * 100.0):.1f}% of year")
+            with o3:
+                render_kpi_card("Annual Overload Energy", f"{overload_kwh:,.0f} kWh", "Total excess energy over limit")
+
+
 def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     """
     Renders the bottom-up synthetic load simulator supporting 24h daily and 365d annual horizons.
@@ -171,37 +378,9 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
                     st.session_state[state_consumers_key] = []
                     st.rerun()
 
-        # RIGHT: Download / Export as .drac
+        # RIGHT: Download / Export as .drac (isolated fragment)
         with f_col2:
-            st.markdown("##### Export Profile")
-            profile_name_input = st.text_input(
-                "Profile Name:",
-                value="Synthetic Load Profile",
-                key=f"{key_prefix}_profile_name_input"
-            )
-            default_drac_base = re.sub(r'[^a-zA-Z0-9_-]', '_', profile_name_input.lower().strip()) or "load_profile"
-            custom_prof_filename = st.text_input(
-                "Custom Download Filename (.drac):",
-                value=f"{default_drac_base}.drac",
-                key=f"{key_prefix}_prof_filename_input"
-            )
-            if not custom_prof_filename.strip().lower().endswith(".drac"):
-                custom_prof_filename = custom_prof_filename.strip() + ".drac"
-
-            drac_profile_content = consumers_to_drac(consumers, profile_name=profile_name_input)
-            st.download_button(
-                label=f"Download Profile as `{custom_prof_filename}`",
-                data=drac_profile_content,
-                file_name=custom_prof_filename,
-                mime="application/json",
-                icon=":material/download:",
-                key=f"{key_prefix}_prof_download_btn",
-                use_container_width=True,
-                type="secondary",
-                disabled=len(consumers) == 0
-            )
-            st.caption(f"Active profile has **{len(consumers)}** consumer assets.")
-
+            _render_synthetic_export_fragment(key_prefix=key_prefix, consumers=consumers)
 
     # 2. System-wide Holiday Calendar Expander (Treated as Sundays)
     with st.expander("System-wide Holiday Calendar (Treated as Sundays)", icon=":material/calendar_month:", expanded=False):
@@ -222,25 +401,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
     if not edited_holidays.empty and "date" in edited_holidays.columns:
         holiday_list = edited_holidays["date"].dropna().astype(str).tolist()
 
-    # 3. Horizon Selector: 24h vs. 365 Days
-    h_col1, h_col2 = st.columns([5, 5])
-    with h_col1:
-        horizon_mode = st.radio(
-            "Inspection Horizon (Tab 1 Charts):",
-            options=["24-Hour Typical Day", "Full Year (365 Days / 35,040 Steps)"],
-            horizontal=True,
-            key=f"{key_prefix}_horizon"
-        )
-    with h_col2:
-        st.write("")
-        is_full_year = horizon_mode.startswith("Full Year")
-        st.caption(
-            ":material/check_circle: *Full 365-day timeseries (35,040 steps) is automatically maintained for BESS & Solar simulations.*"
-            if not is_full_year else
-            ":material/calendar_month: *Full 365-day timeseries with range slider and 2D load heatmap active.*"
-        )
-
-    # 4. Simulation Calculations
+    # 3. Simulation Calculations (Fingerprint-Cached)
     if not consumers:
         st.info("No active consumers in profile. Add machines below or load a template above.")
         c_col1, c_col2 = st.columns([1, 1])
@@ -250,132 +411,30 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
             render_consumer_editor(consumers)
         return
 
-    # Calculate 24h baseline (for 24h charts and machine breakdown)
-    df_day, total_curve_24h, metrics_24h = aggregate_synthetic_24h(consumers)
-
-    # Always calculate 365-day annual timeseries so downstream tabs (BESS, Solar, Contract)
-    # ALWAYS receive a full annual dataset (35,040 steps) without requiring manual toggling.
-    df_year, total_curve_year, metrics_year = aggregate_synthetic_year(
+    df_day, total_curve_24h, metrics_24h, df_year, total_curve_year, metrics_year = _compute_synthetic_baseline_cached(
+        key_prefix=key_prefix,
         consumers=consumers,
-        year=2025,
-        holidays=holiday_list
+        holiday_list=holiday_list,
     )
 
-    # Store both horizons in session state
+    # Maintain full annual dataset (35,040 steps) for downstream tabs (BESS, Solar, Contract)
     st.session_state["active_synthetic_df"] = df_year
     st.session_state["active_synthetic_year_df"] = df_year
     st.session_state["active_synthetic_day_df"] = df_day
-    st.session_state[f"{key_prefix}_active_df"] = df_year if is_full_year else df_day
 
+    # 4. Isolated Horizon Selector, KPIs, Grid Limit & Visualizations
+    _render_synthetic_inspection_and_charts_fragment(
+        key_prefix=key_prefix,
+        consumers=consumers,
+        df_day=df_day,
+        total_curve_24h=total_curve_24h,
+        metrics_24h=metrics_24h,
+        df_year=df_year,
+        total_curve_year=total_curve_year,
+        metrics_year=metrics_year,
+    )
 
-    # 5. KPI Cards
-    if horizon_mode.startswith("24-Hour"):
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            render_kpi_card("Peak Demand", f"{metrics_24h['peak_demand_kw']:.1f} kW", "Max instantaneous power")
-        with k2:
-            render_kpi_card("Daily Energy", f"{metrics_24h['daily_energy_kwh']:,.1f} kWh", "Sum across 24h cycle")
-        with k3:
-            render_kpi_card("Average Power", f"{metrics_24h['avg_power_kw']:.1f} kW", "Average continuous load")
-        with k4:
-            render_kpi_card("Active Assets", f"{metrics_24h['consumer_count']}", "Total machines in profile")
-    else:
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            render_kpi_card("Annual Energy", f"{metrics_year['annual_energy_kwh']:,.0f} kWh", "Total annual energy demand")
-        with k2:
-            render_kpi_card("Annual Peak Demand", f"{metrics_year['peak_demand_kw']:.1f} kW", "Max measured power")
-        with k3:
-            render_kpi_card("Full Load Hours", f"{metrics_year['full_load_hours']:,.0f} h/a", f"Load Factor: {metrics_year['load_factor_pct']:.1f}%")
-        with k4:
-            render_kpi_card("Average Power", f"{metrics_year['avg_demand_kw']:.1f} kW", f"Across {metrics_year['days_count']} days")
-
-    # 6. Compact Grid Limit Option
-    g_col1, g_col2 = st.columns([1, 1])
-    with g_col1:
-        enable_grid_limit = st.toggle(
-            "Enable Grid Capacity Limit",
-            value=False,
-            help="Define a maximum grid connection capacity limit and analyze overload violations.",
-            key=f"{key_prefix}_grid_limit_toggle"
-        )
-    with g_col2:
-        if enable_grid_limit:
-            ref_peak = metrics_year['peak_demand_kw'] if horizon_mode.startswith("Full Year") else metrics_24h['peak_demand_kw']
-            grid_limit_kw = st.number_input(
-                "Max Grid Capacity Limit (kW):",
-                min_value=5.0,
-                max_value=5000.0,
-                value=float(np.round(ref_peak * 0.8, 0)) if ref_peak > 0 else 100.0,
-                step=5.0,
-                key=f"{key_prefix}_grid_limit_val"
-            )
-        else:
-            grid_limit_kw = None
-
-    # 7. Visualizations
-    if horizon_mode.startswith("24-Hour"):
-        fig_24h = create_synthetic_profile_figure(
-            df_day=df_day,
-            consumers=consumers,
-            grid_limit_kw=grid_limit_kw
-        )
-        st.plotly_chart(fig_24h, use_container_width=True)
-
-        if enable_grid_limit and grid_limit_kw:
-            overload_diff = (total_curve_24h - grid_limit_kw).clip(min=0.0)
-            overload_peak = float(overload_diff.max())
-            overload_hours = float((total_curve_24h > grid_limit_kw).sum() * 0.25)
-            overload_kwh = float(overload_diff.sum() * 0.25)
-            has_violation = overload_peak > 0.0
-
-            st.markdown("#### Grid Capacity Overload Analysis")
-            o1, o2, o3 = st.columns(3)
-            with o1:
-                render_kpi_card(
-                    "Overload Peak" if has_violation else "Grid Status",
-                    f"+{overload_peak:.1f} kW" if has_violation else "Within Limit",
-                    f"Max Limit: {grid_limit_kw:.1f} kW",
-                    status="alert" if has_violation else "ok"
-                )
-            with o2:
-                render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", "Violation duration")
-            with o3:
-                render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess energy over limit")
-
-    else:
-        # Annual Time Series and 2D Heatmap
-        fig_annual = create_annual_synthetic_figure(
-            df_year=df_year,
-            grid_limit_kw=grid_limit_kw
-        )
-        st.plotly_chart(fig_annual, use_container_width=True)
-
-        fig_heat = create_annual_heatmap_figure(df_year=df_year)
-        st.plotly_chart(fig_heat, use_container_width=True)
-
-        if enable_grid_limit and grid_limit_kw:
-            overload_diff = (total_curve_year - grid_limit_kw).clip(min=0.0)
-            overload_peak = float(overload_diff.max())
-            overload_hours = float((total_curve_year > grid_limit_kw).sum() * 0.25)
-            overload_kwh = float(overload_diff.sum() * 0.25)
-            has_violation = overload_peak > 0.0
-
-            st.markdown("#### Annual Grid Capacity Overload Analysis")
-            o1, o2, o3 = st.columns(3)
-            with o1:
-                render_kpi_card(
-                    "Annual Overload Peak" if has_violation else "Grid Status",
-                    f"+{overload_peak:.1f} kW" if has_violation else "Within Limit",
-                    f"Max Limit: {grid_limit_kw:.1f} kW",
-                    status="alert" if has_violation else "ok"
-                )
-            with o2:
-                render_kpi_card("Annual Overload Duration", f"{overload_hours:,.1f} hrs", f"{(overload_hours / 8760.0 * 100.0):.1f}% of year")
-            with o3:
-                render_kpi_card("Annual Overload Energy", f"{overload_kwh:,.0f} kWh", "Total excess energy over limit")
-
-    # 8. Consumer Management Forms (Left: Add, Right: Edit/Delete)
+    # 5. Consumer Management Forms (Left: Add, Right: Edit/Delete)
     st.divider()
     col_f1, col_f2 = st.columns([1, 1])
     with col_f1:

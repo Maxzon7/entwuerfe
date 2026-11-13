@@ -38,6 +38,333 @@ from current_model.ui.tab1_consumption.csv_inspector.charts import (
 from current_model.ui.tab1_consumption.csv_inspector.forms import render_csv_uploader_section
 
 
+def _get_parsed_raw_csv_cached(
+    key_prefix: str,
+    file_name: str,
+    raw_csv_text: str,
+    skip_rows: int,
+) -> dict:
+    """Caches raw CSV parsing, column auto-detection, and sample date format inference."""
+    cache_key = f"{key_prefix}_parsed_raw_{file_name}"
+    text_sig = (len(raw_csv_text), raw_csv_text[:128], raw_csv_text[-128:])
+    cached = st.session_state.get(cache_key)
+    if (
+        isinstance(cached, dict)
+        and cached.get("skip_rows") == int(skip_rows)
+        and cached.get("text_sig") == text_sig
+    ):
+        return cached
+
+    df_raw = parse_csv_content(raw_csv_text, skiprows=int(skip_rows))
+    cols = list(df_raw.columns)
+    suggested_time, suggested_power, suggested_unit = detect_suggested_columns(df_raw)
+
+    sample_raw_str = ""
+    default_dayfirst = True
+    if suggested_time:
+        time_cols_present = [c for c in suggested_time if c in cols]
+        if len(time_cols_present) == 1:
+            non_na = df_raw[time_cols_present[0]].dropna()
+            sample_raw_str = str(non_na.iloc[0]) if not non_na.empty else ""
+        elif len(time_cols_present) > 1:
+            sample_raw_str = " ".join(
+                [str(df_raw[c].dropna().iloc[0]) for c in time_cols_present if not df_raw[c].dropna().empty]
+            )
+        starts_with_year = bool(re.match(r"^\s*\d{4}[./-]", sample_raw_str))
+        default_dayfirst = not starts_with_year
+
+    bundle = {
+        "skip_rows": int(skip_rows),
+        "text_sig": text_sig,
+        "df_raw": df_raw,
+        "cols": cols,
+        "suggested_time": suggested_time,
+        "suggested_power": suggested_power,
+        "suggested_unit": suggested_unit,
+        "sample_raw_str": sample_raw_str,
+        "default_dayfirst": default_dayfirst,
+    }
+    st.session_state[cache_key] = bundle
+    return bundle
+
+
+@st.fragment
+def _render_csv_header_preview_fragment(key_prefix: str, file_name: str, raw_csv_text: str) -> None:
+    """Isolates CSV header preview & skip-row changes inside a fragment."""
+    with st.expander(":material/search: **CSV Preview & Table Inspector**", expanded=False):
+        skip_key = f"{key_prefix}_skip_{file_name}"
+        prev_skip_key = f"{key_prefix}_prev_skip_{file_name}"
+        if prev_skip_key not in st.session_state:
+            st.session_state[prev_skip_key] = int(st.session_state.get(skip_key, 0))
+
+        skip_header_rows = st.number_input(
+            "Skip Header Rows:",
+            min_value=0,
+            max_value=50,
+            value=int(st.session_state.get(skip_key, 0)),
+            step=1,
+            key=skip_key,
+        )
+        bundle = _get_parsed_raw_csv_cached(
+            key_prefix=key_prefix,
+            file_name=file_name,
+            raw_csv_text=raw_csv_text,
+            skip_rows=int(skip_header_rows),
+        )
+        df_raw = bundle["df_raw"]
+        st.markdown(f"**Rows:** `{len(df_raw):,}` | **Columns:** `{len(df_raw.columns)}`")
+        st.dataframe(df_raw.head(15), use_container_width=True, height=200)
+
+        if int(skip_header_rows) != int(st.session_state.get(prev_skip_key, 0)):
+            st.session_state[prev_skip_key] = int(skip_header_rows)
+            st.rerun(scope="app")
+
+
+@st.fragment
+def _render_optional_raw_inspection_fragment(
+    df_clean: pd.DataFrame,
+    file_name: str,
+    active_pwr_cols: List[str],
+    total_col: str,
+    kpis: Any,
+    grid_limit_kw: Optional[float],
+    key_prefix: str,
+    expander_label: str,
+    checkbox_key: str,
+) -> None:
+    """Lazy-loads raw sub-meter Plotly charts, 365-day baseline & table only when requested."""
+    with st.expander(expander_label, expanded=False):
+        load_raw_charts = st.checkbox(
+            "Load Raw Sub-Meter Curve, 365-Day Baseline & Data Table",
+            value=False,
+            key=checkbox_key,
+            help="Generates interactive 35,040-point inspection charts on demand without slowing down normal simulation runs.",
+        )
+        if not load_raw_charts:
+            return
+
+        fig = create_csv_inspector_figure(
+            df_clean=df_clean,
+            file_name=file_name,
+            selected_power_cols=active_pwr_cols,
+            total_col=total_col,
+            peak_kw=kpis.peak_kw,
+            grid_limit_kw=grid_limit_kw,
+        )
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
+        )
+        _render_annual_calculation_profile_section(
+            df_clean=df_clean,
+            total_col=total_col,
+            kpis=kpis,
+            file_name=file_name,
+            key_prefix=key_prefix,
+        )
+        st.dataframe(df_clean, use_container_width=True, height=220)
+
+
+@st.fragment
+def _render_csv_submeter_and_preview_fragment(
+    key_prefix: str,
+    file_name: str,
+    df_clean: pd.DataFrame,
+    kpis: Any,
+    selected_power_cols: List[str],
+) -> None:
+    """Isolates preview grid-limit toggles, sub-meter selection, and preview charts in a local fragment."""
+    g_col1, g_col2 = st.columns([1, 1])
+    with g_col1:
+        enable_grid_limit = st.toggle(
+            "Enable Grid Capacity Limit",
+            value=False,
+            help="Define a maximum grid connection capacity limit and analyze overload violations.",
+            key=f"{key_prefix}_grid_toggle_{file_name}",
+        )
+    with g_col2:
+        if enable_grid_limit:
+            grid_limit_kw = st.number_input(
+                "Max Grid Capacity Limit (kW):",
+                min_value=5.0,
+                max_value=5000.0,
+                value=float(np.round(kpis.peak_kw * 0.8, 0)),
+                step=5.0,
+                key=f"{key_prefix}_limit_val_{file_name}",
+            )
+        else:
+            grid_limit_kw = None
+
+    conf_key = f"{key_prefix}_profile_confirmed_{file_name}"
+    submeter_key = f"{key_prefix}_active_submeters_{file_name}"
+
+    available_pwr_cols = [c for c in selected_power_cols if c in df_clean.columns and c != "Total_Demand_kW"]
+    if not available_pwr_cols:
+        available_pwr_cols = [
+            c for c in df_clean.columns
+            if c not in ("timestamp", "Total_Demand_kW") and pd.api.types.is_numeric_dtype(df_clean[c])
+        ]
+
+    if submeter_key not in st.session_state:
+        st.session_state[submeter_key] = list(available_pwr_cols)
+
+    is_confirmed = bool(st.session_state.get(conf_key, False))
+
+    if is_confirmed:
+        active_pwr_cols = st.session_state.get(submeter_key, available_pwr_cols)
+        if active_pwr_cols and set(active_pwr_cols).issubset(df_clean.columns):
+            df_clean["Total_Demand_kW"] = df_clean[active_pwr_cols].sum(axis=1)
+            kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
+
+        with st.container(border=True):
+            conf_c1, conf_c2 = st.columns([3.4, 1.3])
+            with conf_c1:
+                m_desc = (
+                    f"{len(active_pwr_cols)} sub-meters ({', '.join(active_pwr_cols)})"
+                    if len(active_pwr_cols) > 1
+                    else f"Single Meter: {active_pwr_cols[0] if active_pwr_cols else 'Total Demand'}"
+                )
+                st.markdown(
+                    f"##### :material/check_circle: Active Consumption Profile Confirmed\n\n"
+                    f"**Dataset:** `{file_name}` | **Peak Demand:** `{kpis.peak_kw:,.1f} kW` | "
+                    f"**Total Energy:** `{kpis.total_kwh:,.0f} kWh` | **Average Power:** `{kpis.avg_kw:,.1f} kW`  \n"
+                    f":material/account_tree: **Included Sub-Meters in Total Demand:** {m_desc}"
+                )
+            with conf_c2:
+                st.write("")
+                if st.button(
+                    "Edit / Change Sub-Meters",
+                    icon=":material/edit:",
+                    type="secondary",
+                    use_container_width=True,
+                    key=f"{key_prefix}_btn_edit_profile_{file_name}",
+                ):
+                    st.session_state[conf_key] = False
+                    st.session_state["comb_profile_confirmed"] = False
+                    st.rerun(scope="fragment")
+
+        _render_optional_raw_inspection_fragment(
+            df_clean=df_clean,
+            file_name=file_name,
+            active_pwr_cols=active_pwr_cols,
+            total_col="Total_Demand_kW",
+            kpis=kpis,
+            grid_limit_kw=grid_limit_kw,
+            key_prefix=key_prefix,
+            expander_label=":material/visibility: Inspect Raw Sub-Meter Curve & 365-Day Baseline (Optional)",
+            checkbox_key=f"{key_prefix}_load_raw_charts_{file_name}",
+        )
+    else:
+        with st.container(border=True):
+            st.markdown("##### :material/account_tree: Sub-Meter Selection & Total Demand Confirmation")
+            st.caption(
+                "Verify the power streams detected in this dataset. You can include all sub-meters in the aggregated Total Demand, "
+                "or deselect specific sub-meters (e.g. EV chargers or test equipment) to exclude them from downstream simulation."
+            )
+            if len(available_pwr_cols) > 1:
+                chosen_submeters = st.multiselect(
+                    "Included Power / Sub-Meter Columns in Total Demand:",
+                    options=available_pwr_cols,
+                    default=st.session_state.get(submeter_key, available_pwr_cols),
+                    key=f"{key_prefix}_ms_submeters_{file_name}",
+                    help="Only checked sub-meters will be summed into the Total Demand curve used downstream.",
+                )
+                if not chosen_submeters:
+                    st.warning("Please select at least one sub-meter for the total demand calculation.")
+                    chosen_submeters = list(available_pwr_cols)
+            else:
+                chosen_submeters = list(available_pwr_cols)
+                st.info(f":material/bolt: Active Power Stream: **{available_pwr_cols[0] if available_pwr_cols else 'Total_Demand_kW'}**")
+
+            if chosen_submeters and set(chosen_submeters).issubset(df_clean.columns):
+                df_clean["Total_Demand_kW"] = df_clean[chosen_submeters].sum(axis=1)
+                kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
+                st.session_state[submeter_key] = chosen_submeters
+
+            conf_row1, conf_row2 = st.columns([2.5, 1.3])
+            with conf_row1:
+                st.caption(
+                    f":material/info: Resulting Total Demand: **{kpis.peak_kw:,.1f} kW Peak** | "
+                    f"**{kpis.total_kwh:,.0f} kWh/yr** across {len(chosen_submeters)} selected stream(s)."
+                )
+            with conf_row2:
+                if st.button(
+                    "Confirm Total Demand for Simulation",
+                    icon=":material/check_circle:",
+                    type="primary",
+                    use_container_width=True,
+                    key=f"{key_prefix}_btn_confirm_{file_name}",
+                ):
+                    st.session_state[conf_key] = True
+                    st.session_state["comb_profile_confirmed"] = True
+                    st.session_state[submeter_key] = chosen_submeters
+
+                    p_col = "Total_Demand_kW"
+                    t_col = "timestamp" if "timestamp" in df_clean.columns else None
+                    try:
+                        import importlib
+                        mod = importlib.import_module("ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline")
+                        normalize_fn = getattr(mod, "normalize_load_profile_2025", None)
+                        if normalize_fn:
+                            load_2025, _ = normalize_fn(raw_df=df_clean, power_col=p_col, time_col=t_col)
+                            st.session_state["active_load_series_2025"] = load_2025
+                            st.session_state["comb_active_load_series"] = load_2025
+                    except Exception:
+                        pass
+                    st.rerun(scope="app")
+
+        st.subheader("4. Interactive Load Profile Curve Preview")
+        fig = create_csv_inspector_figure(
+            df_clean=df_clean,
+            file_name=file_name,
+            selected_power_cols=chosen_submeters,
+            total_col="Total_Demand_kW",
+            peak_kw=kpis.peak_kw,
+            grid_limit_kw=grid_limit_kw,
+        )
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
+        )
+
+        if enable_grid_limit and grid_limit_kw:
+            series = df_clean["Total_Demand_kW"]
+            overload_diff = (series - grid_limit_kw).clip(lower=0.0)
+            overload_peak_kw = float(overload_diff.max())
+            overload_hours = float((series > grid_limit_kw).sum() * 0.25)
+            overload_kwh = float(overload_diff.sum() * 0.25)
+            has_violation = overload_peak_kw > 0.0
+
+            st.markdown("#### :material/warning: Grid Capacity Overload Analysis")
+            o_col1, o_col2, o_col3 = st.columns(3)
+
+            with o_col1:
+                status_style = "alert" if has_violation else "ok"
+                status_title = "Grid Overload Peak" if has_violation else "Grid Status"
+                val_str = f"+{overload_peak_kw:.1f} kW" if has_violation else "Within Limit"
+                render_kpi_card(status_title, val_str, f"Max Limit: {grid_limit_kw:.1f} kW", status=status_style)
+
+            with o_col2:
+                render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", f"{int(overload_hours * 4)} intervals (15-min)")
+
+            with o_col3:
+                render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
+
+        _render_annual_calculation_profile_section(
+            df_clean=df_clean,
+            total_col="Total_Demand_kW",
+            kpis=kpis,
+            file_name=file_name,
+            key_prefix=key_prefix,
+        )
+
+        with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
+            if st.checkbox("Display Full Data Table", value=False, key=f"{key_prefix}_show_tbl_{file_name}"):
+                st.dataframe(df_clean, use_container_width=True, height=220)
+
+
 def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
     """
     Renders the interactive CSV Load Profile Inspector component.
@@ -106,33 +433,22 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
     for file_name, raw_csv_text in files_to_process:
         st.caption(f"Active Dataset: **{file_name}**")
 
-        with st.expander(":material/search: **CSV Preview & Table Inspector**", expanded=False):
-            skip_header_rows = st.number_input(
-                "Skip Header Rows:",
-                min_value=0, max_value=50, value=0, step=1,
-                key=f"{key_prefix}_skip_{file_name}"
-            )
-            df_raw = parse_csv_content(raw_csv_text, skiprows=int(skip_header_rows))
-            st.markdown(f"**Rows:** `{len(df_raw):,}` | **Columns:** `{len(df_raw.columns)}`")
-            st.dataframe(df_raw.head(15), use_container_width=True, height=200)
+        _render_csv_header_preview_fragment(key_prefix=key_prefix, file_name=file_name, raw_csv_text=raw_csv_text)
 
-        if "df_raw" not in locals():
-            df_raw = parse_csv_content(raw_csv_text, skiprows=0)
-
-        cols = list(df_raw.columns)
-        suggested_time, suggested_power, suggested_unit = detect_suggested_columns(df_raw)
-
-        # Detect sample raw timestamp string and default dayfirst preference
-        sample_raw_str = ""
-        default_dayfirst = True
-        if suggested_time:
-            time_cols_present = [c for c in suggested_time if c in cols]
-            if len(time_cols_present) == 1:
-                sample_raw_str = str(df_raw[time_cols_present[0]].dropna().iloc[0]) if not df_raw[time_cols_present[0]].dropna().empty else ""
-            elif len(time_cols_present) > 1:
-                sample_raw_str = " ".join([str(df_raw[c].dropna().iloc[0]) for c in time_cols_present if not df_raw[c].dropna().empty])
-            starts_with_year = bool(re.match(r"^\s*\d{4}[./-]", sample_raw_str))
-            default_dayfirst = not starts_with_year
+        skip_rows_val = int(st.session_state.get(f"{key_prefix}_skip_{file_name}", 0))
+        parsed_bundle = _get_parsed_raw_csv_cached(
+            key_prefix=key_prefix,
+            file_name=file_name,
+            raw_csv_text=raw_csv_text,
+            skip_rows=skip_rows_val,
+        )
+        df_raw = parsed_bundle["df_raw"]
+        cols = parsed_bundle["cols"]
+        suggested_time = parsed_bundle["suggested_time"]
+        suggested_power = parsed_bundle["suggested_power"]
+        suggested_unit = parsed_bundle["suggested_unit"]
+        sample_raw_str = parsed_bundle["sample_raw_str"]
+        default_dayfirst = parsed_bundle["default_dayfirst"]
 
         # Check if full raw parsed data exists in session state
         raw_cache_key = f"{key_prefix}_raw_df_{file_name}"
@@ -350,8 +666,13 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                     icon=":material/info:"
                 )
 
-            # 2. Data Discontinuity / Gap Detection Warning
-            detected_gaps = detect_load_profile_gaps(df_clean, max_gap_hours=max(1.0, kpis.hours_per_step * 3))
+            # 2. Data Discontinuity / Gap Detection Warning (cached per calculation)
+            if "detected_gaps" not in cached:
+                cached["detected_gaps"] = detect_load_profile_gaps(
+                    df_clean,
+                    max_gap_hours=max(1.0, kpis.hours_per_step * 3),
+                )
+            detected_gaps = cached["detected_gaps"]
             if detected_gaps:
                 gap_desc = ", ".join([f"{g['start_str']} to {g['end_str']} ({g['duration_days']:.1f} days)" for g in detected_gaps[:3]])
                 if len(detected_gaps) > 3:
@@ -362,7 +683,6 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                     f"BESS and coupled dispatch engines will automatically neutralise these periods to protect simulation integrity.",
                     icon=":material/warning:"
                 )
-
 
             st.subheader("3. Energy Metrics & Key Performance Indicators")
             k1, k2, k3, k4 = st.columns(4)
@@ -375,210 +695,69 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
             with k4:
                 render_kpi_card("Data Points", f"{kpis.data_points_count:,}", f"Interval: {kpis.hours_per_step*60:.0f} min")
 
-            # Compact Grid Limit Option (No standalone subheader)
-            g_col1, g_col2 = st.columns([1, 1])
-            with g_col1:
-                enable_grid_limit = st.toggle(
-                    "Enable Grid Capacity Limit",
-                    value=False,
-                    help="Define a maximum grid connection capacity limit and analyze overload violations.",
-                    key=f"{key_prefix}_grid_toggle_{file_name}"
-                )
-            with g_col2:
-                if enable_grid_limit:
-                    grid_limit_kw = st.number_input(
-                        "Max Grid Capacity Limit (kW):",
-                        min_value=5.0,
-                        max_value=5000.0,
-                        value=float(np.round(kpis.peak_kw * 0.8, 0)),
-                        step=5.0,
-                        key=f"{key_prefix}_limit_val_{file_name}"
-                    )
-                else:
-                    grid_limit_kw = None
+            _render_csv_submeter_and_preview_fragment(
+                key_prefix=key_prefix,
+                file_name=file_name,
+                df_clean=df_clean,
+                kpis=kpis,
+                selected_power_cols=selected_power_cols,
+            )
 
-            # Sub-Meter Selection & Profile Confirmation Workflow
-            conf_key = f"{key_prefix}_profile_confirmed_{file_name}"
-            submeter_key = f"{key_prefix}_active_submeters_{file_name}"
 
-            available_pwr_cols = [c for c in selected_power_cols if c in df_clean.columns and c != "Total_Demand_kW"]
-            if not available_pwr_cols:
-                available_pwr_cols = [
-                    c for c in df_clean.columns
-                    if c not in ("timestamp", "Total_Demand_kW") and pd.api.types.is_numeric_dtype(df_clean[c])
-                ]
+@st.fragment
+def _render_restored_inspection_controls_fragment(
+    df_clean: pd.DataFrame,
+    file_name: str,
+    total_col: str,
+    kpis: Any,
+    selected_power_cols: List[str],
+    key_prefix: str,
+) -> None:
+    """Isolates restored grid-limit toggles and optional raw curve/table inspection inside a fragment."""
+    g_col1, g_col2 = st.columns([1, 1])
+    with g_col1:
+        enable_grid_limit = st.toggle(
+            "Enable Grid Capacity Limit",
+            value=False,
+            help="Define a maximum grid connection capacity limit and analyze overload violations.",
+            key=f"{key_prefix}_restored_grid_toggle",
+        )
+    with g_col2:
+        if enable_grid_limit:
+            grid_limit_kw = st.number_input(
+                "Max Grid Capacity Limit (kW):",
+                min_value=5.0,
+                max_value=5000.0,
+                value=float(np.round(kpis.peak_kw * 0.8, 0)),
+                step=5.0,
+                key=f"{key_prefix}_restored_limit_val",
+            )
+        else:
+            grid_limit_kw = None
 
-            if submeter_key not in st.session_state:
-                st.session_state[submeter_key] = list(available_pwr_cols)
+    with st.container(border=True):
+        rc_col1, rc_col2 = st.columns([3.4, 1.3])
+        with rc_col1:
+            st.markdown(
+                f"##### :material/check_circle: Active Consumption Profile Confirmed\n\n"
+                f"**Dataset:** `{file_name}` | **Peak Demand:** `{kpis.peak_kw:,.1f} kW` | "
+                f"**Total Energy:** `{kpis.total_kwh:,.0f} kWh` | **Average Power:** `{kpis.avg_kw:,.1f} kW`  \n"
+                f":material/bolt: **Active Power Stream:** Total Demand (kW)"
+            )
+        with rc_col2:
+            st.caption(":material/lock: Confirmed from Active Session")
 
-            is_confirmed = bool(st.session_state.get(conf_key, False))
-
-            if is_confirmed:
-                active_pwr_cols = st.session_state.get(submeter_key, available_pwr_cols)
-                if active_pwr_cols and set(active_pwr_cols).issubset(df_clean.columns):
-                    df_clean["Total_Demand_kW"] = df_clean[active_pwr_cols].sum(axis=1)
-                    kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
-
-                # Clean Confirmed Banner
-                with st.container(border=True):
-                    conf_c1, conf_c2 = st.columns([3.4, 1.3])
-                    with conf_c1:
-                        m_desc = (
-                            f"{len(active_pwr_cols)} sub-meters ({', '.join(active_pwr_cols)})"
-                            if len(active_pwr_cols) > 1
-                            else f"Single Meter: {active_pwr_cols[0] if active_pwr_cols else 'Total Demand'}"
-                        )
-                        st.markdown(
-                            f"##### :material/check_circle: Active Consumption Profile Confirmed\n\n"
-                            f"**Dataset:** `{file_name}` | **Peak Demand:** `{kpis.peak_kw:,.1f} kW` | "
-                            f"**Total Energy:** `{kpis.total_kwh:,.0f} kWh` | **Average Power:** `{kpis.avg_kw:,.1f} kW`  \n"
-                            f":material/account_tree: **Included Sub-Meters in Total Demand:** {m_desc}"
-                        )
-                    with conf_c2:
-                        st.write("")
-                        if st.button(
-                            "Edit / Change Sub-Meters",
-                            icon=":material/edit:",
-                            type="secondary",
-                            use_container_width=True,
-                            key=f"{key_prefix}_btn_edit_profile_{file_name}",
-                        ):
-                            st.session_state[conf_key] = False
-                            st.session_state["comb_profile_confirmed"] = False
-                            st.rerun()
-
-                # Collapsed Raw Curve Expander (Zero DOM / scroll penalty unless opened)
-                with st.expander(":material/visibility: Inspect Raw Sub-Meter Curve & 365-Day Baseline (Optional)", expanded=False):
-                    fig = create_csv_inspector_figure(
-                        df_clean=df_clean,
-                        file_name=file_name,
-                        selected_power_cols=active_pwr_cols,
-                        total_col="Total_Demand_kW",
-                        peak_kw=kpis.peak_kw,
-                        grid_limit_kw=grid_limit_kw,
-                    )
-                    st.plotly_chart(
-                        fig,
-                        use_container_width=True,
-                        config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
-                    )
-                    _render_annual_calculation_profile_section(
-                        df_clean=df_clean,
-                        total_col="Total_Demand_kW",
-                        kpis=kpis,
-                        file_name=file_name,
-                        key_prefix=key_prefix,
-                    )
-                    st.dataframe(df_clean, use_container_width=True, height=220)
-            else:
-                with st.container(border=True):
-                    st.markdown("##### :material/account_tree: Sub-Meter Selection & Total Demand Confirmation")
-                    st.caption(
-                        "Verify the power streams detected in this dataset. You can include all sub-meters in the aggregated Total Demand, "
-                        "or deselect specific sub-meters (e.g. EV chargers or test equipment) to exclude them from downstream simulation."
-                    )
-                    if len(available_pwr_cols) > 1:
-                        chosen_submeters = st.multiselect(
-                            "Included Power / Sub-Meter Columns in Total Demand:",
-                            options=available_pwr_cols,
-                            default=st.session_state.get(submeter_key, available_pwr_cols),
-                            key=f"{key_prefix}_ms_submeters_{file_name}",
-                            help="Only checked sub-meters will be summed into the Total Demand curve used downstream.",
-                        )
-                        if not chosen_submeters:
-                            st.warning("Please select at least one sub-meter for the total demand calculation.")
-                            chosen_submeters = list(available_pwr_cols)
-                    else:
-                        chosen_submeters = list(available_pwr_cols)
-                        st.info(f":material/bolt: Active Power Stream: **{available_pwr_cols[0] if available_pwr_cols else 'Total_Demand_kW'}**")
-
-                    if chosen_submeters and set(chosen_submeters).issubset(df_clean.columns):
-                        df_clean["Total_Demand_kW"] = df_clean[chosen_submeters].sum(axis=1)
-                        kpis = compute_load_profile_kpis(df_clean, power_col="Total_Demand_kW")
-                        st.session_state[submeter_key] = chosen_submeters
-
-                    conf_row1, conf_row2 = st.columns([2.5, 1.3])
-                    with conf_row1:
-                        st.caption(
-                            f":material/info: Resulting Total Demand: **{kpis.peak_kw:,.1f} kW Peak** | "
-                            f"**{kpis.total_kwh:,.0f} kWh/yr** across {len(chosen_submeters)} selected stream(s)."
-                        )
-                    with conf_row2:
-                        if st.button(
-                            "Confirm Total Demand for Simulation",
-                            icon=":material/check_circle:",
-                            type="primary",
-                            use_container_width=True,
-                            key=f"{key_prefix}_btn_confirm_{file_name}",
-                        ):
-                            st.session_state[conf_key] = True
-                            st.session_state["comb_profile_confirmed"] = True
-                            st.session_state[submeter_key] = chosen_submeters
-
-                            p_col = "Total_Demand_kW"
-                            t_col = "timestamp" if "timestamp" in df_clean.columns else None
-                            try:
-                                import importlib
-                                mod = importlib.import_module("ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline")
-                                normalize_fn = getattr(mod, "normalize_load_profile_2025", None)
-                                if normalize_fn:
-                                    load_2025, _ = normalize_fn(raw_df=df_clean, power_col=p_col, time_col=t_col)
-                                    st.session_state["active_load_series_2025"] = load_2025
-                                    st.session_state["comb_active_load_series"] = load_2025
-                            except Exception:
-                                pass
-                            st.rerun()
-
-                st.subheader("4. Interactive Load Profile Curve Preview")
-                fig = create_csv_inspector_figure(
-                    df_clean=df_clean,
-                    file_name=file_name,
-                    selected_power_cols=chosen_submeters,
-                    total_col="Total_Demand_kW",
-                    peak_kw=kpis.peak_kw,
-                    grid_limit_kw=grid_limit_kw,
-                )
-                st.plotly_chart(
-                    fig,
-                    use_container_width=True,
-                    config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
-                )
-
-                # Grid Limit Overload Analysis & Violation Cards
-                if enable_grid_limit and grid_limit_kw:
-                    series = df_clean["Total_Demand_kW"]
-                    overload_diff = (series - grid_limit_kw).clip(lower=0.0)
-                    overload_peak_kw = float(overload_diff.max())
-                    overload_hours = float((series > grid_limit_kw).sum() * 0.25)
-                    overload_kwh = float(overload_diff.sum() * 0.25)
-                    has_violation = overload_peak_kw > 0.0
-
-                    st.markdown("#### :material/warning: Grid Capacity Overload Analysis")
-                    o_col1, o_col2, o_col3 = st.columns(3)
-
-                    with o_col1:
-                        status_style = "alert" if has_violation else "ok"
-                        status_title = "Grid Overload Peak" if has_violation else "Grid Status"
-                        val_str = f"+{overload_peak_kw:.1f} kW" if has_violation else "Within Limit"
-                        render_kpi_card(status_title, val_str, f"Max Limit: {grid_limit_kw:.1f} kW", status=status_style)
-
-                    with o_col2:
-                        render_kpi_card("Overload Duration", f"{overload_hours:.2f} hrs", f"{int(overload_hours * 4)} intervals (15-min)")
-
-                    with o_col3:
-                        render_kpi_card("Overload Energy", f"{overload_kwh:.1f} kWh", "Excess Energy over Limit")
-
-                # 5. Standardized 365-Day Annual Baseline Profile & Calculation Basis
-                _render_annual_calculation_profile_section(
-                    df_clean=df_clean,
-                    total_col="Total_Demand_kW",
-                    kpis=kpis,
-                    file_name=file_name,
-                    key_prefix=key_prefix,
-                )
-
-                with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
-                    st.dataframe(df_clean, use_container_width=True, height=220)
+    _render_optional_raw_inspection_fragment(
+        df_clean=df_clean,
+        file_name=file_name,
+        active_pwr_cols=selected_power_cols,
+        total_col=total_col,
+        kpis=kpis,
+        grid_limit_kw=grid_limit_kw,
+        key_prefix=key_prefix,
+        expander_label=":material/visibility: Inspect Raw Load Profile Curve & 365-Day Baseline (Optional)",
+        checkbox_key=f"{key_prefix}_restored_load_raw_charts",
+    )
 
 
 def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
@@ -586,24 +765,54 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
     Renders the CSV Inspector view when an active CSV dataset has been restored from a project
     snapshot (.dracproj), without requiring the original raw CSV file to be uploaded again.
     """
-    df_clean = st.session_state["active_csv_df"].copy()
+    df_src = st.session_state["active_csv_df"]
     file_name = st.session_state.get("active_csv_filename") or "Restored_Meter_Data.csv"
-
-    # Ensure timestamp is datetime
-    if "timestamp" in df_clean.columns and not pd.api.types.is_datetime64_any_dtype(df_clean["timestamp"]):
-        df_clean["timestamp"] = pd.to_datetime(df_clean["timestamp"], errors="coerce")
-
-    # Determine total power column
     total_col = "Total_Demand_kW"
-    if total_col not in df_clean.columns:
-        num_cols = [c for c in df_clean.columns if c != "timestamp" and pd.api.types.is_numeric_dtype(df_clean[c])]
-        if num_cols:
-            df_clean[total_col] = df_clean[num_cols[0]]
-        else:
-            st.error("Restored dataset does not contain numeric load profile data.")
-            return
 
-    df_clean[total_col] = pd.to_numeric(df_clean[total_col], errors="coerce").fillna(0.0)
+    restored_sig = (id(df_src), len(df_src), file_name)
+    restored_cache_key = f"{key_prefix}_restored_meta_cache"
+    cached_meta = st.session_state.get(restored_cache_key)
+
+    if isinstance(cached_meta, dict) and cached_meta.get("sig") == restored_sig:
+        df_clean = cached_meta["df_clean"]
+        kpis = cached_meta["kpis"]
+        min_date = cached_meta["min_date"]
+        max_date = cached_meta["max_date"]
+        detected_gaps = cached_meta["detected_gaps"]
+        selected_power_cols = cached_meta["selected_power_cols"]
+    else:
+        df_clean = df_src.copy()
+
+        # Ensure timestamp is datetime
+        if "timestamp" in df_clean.columns and not pd.api.types.is_datetime64_any_dtype(df_clean["timestamp"]):
+            df_clean["timestamp"] = pd.to_datetime(df_clean["timestamp"], errors="coerce")
+
+        # Determine total power column
+        if total_col not in df_clean.columns:
+            num_cols = [c for c in df_clean.columns if c != "timestamp" and pd.api.types.is_numeric_dtype(df_clean[c])]
+            if num_cols:
+                df_clean[total_col] = df_clean[num_cols[0]]
+            else:
+                st.error("Restored dataset does not contain numeric load profile data.")
+                return
+
+        df_clean[total_col] = pd.to_numeric(df_clean[total_col], errors="coerce").fillna(0.0)
+        kpis = compute_load_profile_kpis(df_clean, power_col=total_col)
+        min_date = df_clean["timestamp"].min().date() if "timestamp" in df_clean.columns and not df_clean["timestamp"].dropna().empty else None
+        max_date = df_clean["timestamp"].max().date() if "timestamp" in df_clean.columns and not df_clean["timestamp"].dropna().empty else None
+        detected_gaps = detect_load_profile_gaps(df_clean, max_gap_hours=max(1.0, kpis.hours_per_step * 3))
+        other_cols = [c for c in df_clean.columns if c not in ["timestamp", total_col] and pd.api.types.is_numeric_dtype(df_clean[c])]
+        selected_power_cols = [total_col] + other_cols if other_cols else [total_col]
+
+        st.session_state[restored_cache_key] = {
+            "sig": restored_sig,
+            "df_clean": df_clean,
+            "kpis": kpis,
+            "min_date": min_date,
+            "max_date": max_date,
+            "detected_gaps": detected_gaps,
+            "selected_power_cols": selected_power_cols,
+        }
 
     # Informative Banner indicating restored baseline profile
     st.info(
@@ -612,13 +821,6 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
         f"*(Note: The original raw CSV file was not stored in the project snapshot to keep the file size compact. To re-process columns or change raw units, upload the original CSV file above.)*",
         icon=":material/analytics:"
     )
-
-    # Compute KPIs
-    kpis = compute_load_profile_kpis(df_clean, power_col=total_col)
-
-    # Date range and data points info
-    min_date = df_clean["timestamp"].min().date() if "timestamp" in df_clean.columns and not df_clean["timestamp"].dropna().empty else None
-    max_date = df_clean["timestamp"].max().date() if "timestamp" in df_clean.columns and not df_clean["timestamp"].dropna().empty else None
 
     if min_date and max_date:
         st.caption(
@@ -638,7 +840,6 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
         )
 
     # 2. Gap Detection Warning
-    detected_gaps = detect_load_profile_gaps(df_clean, max_gap_hours=max(1.0, kpis.hours_per_step * 3))
     if detected_gaps:
         gap_desc = ", ".join([f"{g['start_str']} to {g['end_str']} ({g['duration_days']:.1f} days)" for g in detected_gaps[:3]])
         if len(detected_gaps) > 3:
@@ -662,66 +863,15 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
     with k4:
         render_kpi_card("Data Points", f"{kpis.data_points_count:,}", f"Interval: {kpis.hours_per_step*60:.0f} min")
 
-    # Compact Grid Limit Option
-    g_col1, g_col2 = st.columns([1, 1])
-    with g_col1:
-        enable_grid_limit = st.toggle(
-            "Enable Grid Capacity Limit",
-            value=False,
-            help="Define a maximum grid connection capacity limit and analyze overload violations.",
-            key=f"{key_prefix}_restored_grid_toggle"
-        )
-    with g_col2:
-        if enable_grid_limit:
-            grid_limit_kw = st.number_input(
-                "Max Grid Capacity Limit (kW):",
-                min_value=5.0,
-                max_value=5000.0,
-                value=float(np.round(kpis.peak_kw * 0.8, 0)),
-                step=5.0,
-                key=f"{key_prefix}_restored_limit_val"
-            )
-        else:
-            grid_limit_kw = None
-
-    # 4. Profile Status & Sub-Meter Details
-    other_cols = [c for c in df_clean.columns if c not in ["timestamp", total_col] and pd.api.types.is_numeric_dtype(df_clean[c])]
-    selected_power_cols = [total_col] + other_cols if other_cols else [total_col]
-
-    with st.container(border=True):
-        rc_col1, rc_col2 = st.columns([3.4, 1.3])
-        with rc_col1:
-            st.markdown(
-                f"##### :material/check_circle: Active Consumption Profile Confirmed\n\n"
-                f"**Dataset:** `{file_name}` | **Peak Demand:** `{kpis.peak_kw:,.1f} kW` | "
-                f"**Total Energy:** `{kpis.total_kwh:,.0f} kWh` | **Average Power:** `{kpis.avg_kw:,.1f} kW`  \n"
-                f":material/bolt: **Active Power Stream:** Total Demand (kW)"
-            )
-        with rc_col2:
-            st.caption(":material/lock: Confirmed from Active Session")
-
-    with st.expander(":material/visibility: Inspect Raw Load Profile Curve & 365-Day Baseline (Optional)", expanded=False):
-        fig = create_csv_inspector_figure(
-            df_clean=df_clean,
-            file_name=file_name,
-            selected_power_cols=selected_power_cols,
-            total_col=total_col,
-            peak_kw=kpis.peak_kw,
-            grid_limit_kw=grid_limit_kw
-        )
-        st.plotly_chart(
-            fig,
-            use_container_width=True,
-            config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True}
-        )
-        _render_annual_calculation_profile_section(
-            df_clean=df_clean,
-            total_col=total_col,
-            kpis=kpis,
-            file_name=file_name,
-            key_prefix=key_prefix
-        )
-        st.dataframe(df_clean, use_container_width=True, height=220)
+    # 4. Isolated Grid-Limit & Optional Raw Curve/Table Inspection Fragment
+    _render_restored_inspection_controls_fragment(
+        df_clean=df_clean,
+        file_name=file_name,
+        total_col=total_col,
+        kpis=kpis,
+        selected_power_cols=selected_power_cols,
+        key_prefix=key_prefix,
+    )
 
 
 def _render_annual_calculation_profile_section(
