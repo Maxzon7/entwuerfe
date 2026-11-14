@@ -144,6 +144,7 @@ from ui_sandbox.Combined_sandbox.combined_charts import (
     create_financial_tco_trajectory_figure,
     create_financial_waterfall_bridge_figure,
     create_financial_monthly_cashflow_figure,
+    create_monthly_grid_bill_progression_figure,
 )
 from ui_sandbox.Combined_sandbox.combined_excel_exporter import (
     build_combined_verification_excel_bytes,
@@ -498,24 +499,24 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
             status="ok" if over_kw <= 0.05 else "alert",
         )
 
-    # 1-Click Reference Scenario Loader
+    # Reference Profiles
     with st.container(border=True):
-        st.markdown("##### :material/dataset: Standard Reference Scenarios (1-Click Loader)")
+        st.markdown("##### :material/dataset: Example Profiles")
         with st.form("comb_ref_scenario_form"):
             sc1, sc_btn = st.columns([2.5, 1.2])
             with sc1:
                 ref_names = list(REFERENCE_SCENARIOS.keys())
                 sel_sc = st.selectbox(
-                    "Standard Reference Scenarios",
+                    "Select Profile",
                     options=ref_names,
                     index=0,
                     key="comb_ref_scenario_select",
-                    help="Loads a complete, validated benchmark profile with contracted grid limits.",
+                    help="Loads a ready-made consumption profile and grid limit.",
                 )
             with sc_btn:
                 st.write("")
                 apply_sc = st.form_submit_button(
-                    "Load Reference Scenario",
+                    "Load Profile",
                     icon=":material/download:",
                     use_container_width=True,
                 )
@@ -580,7 +581,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 )
 
     with st.container(border=True):
-        st.markdown("##### :material/solar_power: Solar Configuration")
+        st.markdown("##### :material/solar_power: Solar Settings")
 
         # 1. Location: City Search & Presets (Default: Amsterdam)
         with st.form("comb_solar_location_form"):
@@ -700,7 +701,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     help="Percentage of total annual electricity demand to be supplied by solar.",
                 )
             with sz_c2:
-                st.markdown("**Installed Capacity & Inverter AC Limit:**")
+                st.markdown("**Size & Inverter Limit:**")
                 raw_solar_kwp = float(cur_sys.solar_kwp)
                 max_solar_kwp = max(100000.0, raw_solar_kwp * 2)
                 safe_solar_kwp = min(max_solar_kwp, max(1.0, raw_solar_kwp))
@@ -728,7 +729,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     help="Maximum continuous AC feed-in power to the site/grid.",
                 )
             with sz_c3:
-                st.markdown("**Inverter Efficiency & Action:**")
+                st.markdown("**Efficiency & Apply:**")
                 inv_eff_val = st.slider(
                     "Inverter Efficiency (%)",
                     min_value=85,
@@ -781,9 +782,9 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
 @st.fragment
 def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_active: bool) -> None:
     """Renders the interactive Mode A / Mode B reference box inside an isolated fragment to prevent full app reruns."""
-    st.markdown("##### :material/battery_charging_full: 1. Minimum Required Battery Sizing (100% Zero-Overload Reference)")
+    st.markdown("##### :material/battery_charging_full: 1. Recommended Battery Size")
     st.caption(
-        "Exact physical minimum sizing calculated using the multi-day cluster algorithm and enforcing grid recharge headroom constraints to ensure zero remaining overload."
+        "Minimum battery size needed to avoid exceeding the Grid Limit."
     )
 
     mode_options = [
@@ -945,7 +946,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
 
     # Block 2: Battery Hardware & Operating Limits Form
     with st.container(border=True):
-        st.markdown("##### :material/tune: 2. Battery Hardware & Operating Limits")
+        st.markdown("##### :material/tune: 2. Battery Size & Settings")
         with st.form("comb_battery_form"):
             lock_05c = st.checkbox(
                 "Lock to Standard 0.5 C (2-Hour Storage: Capacity kWh = 2 × Battery Power kW)",
@@ -1084,22 +1085,20 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
         pass_recharge = dual_bess.controlling_driver_coupled != "Available Recharge Headroom"
         pass_all = pass_power and pass_capacity and pass_recharge and is_active
 
-        st.markdown("##### :material/fact_check: 3. Simultaneous Bottleneck Audit & Physical Constraints")
-        st.caption("All 4 physical engineering criteria are evaluated simultaneously without short-circuiting.")
+        st.markdown("##### :material/fact_check: 3. System Limit Check")
+        st.caption("Checks whether power, storage capacity, and recharge headroom cover every peak.")
 
         if pass_all:
             st.success(
-                ":material/check_circle: **100% Physically Feasible: Zero Remaining Deficit**  \n"
-                "All physical constraints (inverter discharge power, multi-peak storage capacity, "
-                "recharge power, and annual grid recharge headroom) are completely satisfied."
+                ":material/check_circle: **Grid Limit Met (Zero Overload)**  \n"
+                "Your battery covers every peak above the Grid Limit."
             )
         elif not is_active:
-            st.info("Battery is inactive. Constraints are evaluated when activated.")
+            st.info("Battery is inactive. Activate to check limits.")
         else:
             st.warning(
-                ":material/warning: **Bottleneck Detected: Remaining Deficit Expected**  \n"
-                "Current battery configuration does not fully cover physical constraints. "
-                "Review the 4 bottleneck indicators below."
+                ":material/warning: **Remaining Overload Expected**  \n"
+                "The current battery size cannot shave all peaks. Check the 4 items below."
             )
 
         # 4 Diagnostic Check Cards (1:1 visual match with BESS Sandbox layout)
@@ -1153,7 +1152,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                 help="Total cumulative annual energy available below the grid limit for battery recharging.",
             )
 
-        with st.expander(":material/table_chart: Standalone vs. Coupled Sizing Comparison Table", expanded=False):
+        with st.expander(":material/table_chart: Sizing Comparison Table", expanded=False):
             bottleneck_df = refresh_bottleneck_table_configured_status(
                 dual_bess=dual_bess,
                 configured_kwh=cur_sys.battery_capacity_kwh,
@@ -1205,10 +1204,9 @@ GENERATOR_MODEL_PRESETS: dict = {
 @st.fragment
 def _render_generator_reference_fragment(dual_gen: DualGeneratorSizingResult, is_active: bool) -> None:
     """Renders the interactive Mode A / Mode B reference box inside an isolated fragment to prevent full app reruns."""
-    st.markdown("##### :material/electric_bolt: 1. Minimum Required Generator Sizing (100% Zero-Overload Reference)")
+    st.markdown("##### :material/electric_bolt: 1. Recommended Generator Size")
     st.caption(
-        "Exact physical sizing required to eliminate peak overloads above the Grid Limit "
-        "(Standalone: full unmitigated peak; Coupled: residual peak remaining after active Solar & Battery dispatch)."
+        "Minimum generator size needed to cover peaks above the Grid Limit."
     )
 
     mode_options = [
@@ -1362,13 +1360,13 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
 
     # Block 2: Standard Generator Models Preset Mini-Form
     with st.container(border=True):
-        st.markdown("##### :material/category: 2. Standard Generator Models (Quick Presets)")
+        st.markdown("##### :material/category: 2. Generator Models")
         with st.form("comb_gen_preset_form"):
             gp_c1, gp_btn = st.columns([2.5, 1.2])
             with gp_c1:
                 preset_keys = list(GENERATOR_MODEL_PRESETS.keys())
                 sel_preset = st.selectbox(
-                    "Standard Generator Models",
+                    "Select Model",
                     options=preset_keys,
                     index=0,
                     disabled=not is_active,
@@ -1398,7 +1396,7 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
 
     # Block 3: Generator Hardware & Operating Limits Form
     with st.container(border=True):
-        st.markdown("##### :material/tune: 3. Generator Hardware & Operating Limits")
+        st.markdown("##### :material/tune: 3. Generator Size & Settings")
         with st.form("comb_generator_form"):
             gc1, gc2, gc3 = st.columns(3)
             with gc1:
@@ -1427,7 +1425,7 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
                 )
             with gc3:
                 gen_min_pct_val = st.slider(
-                    "Minimum Load (%) — Wet-Stacking Protection",
+                    "Minimum Load (%)",
                     min_value=15,
                     max_value=50,
                     value=int(round(cur_sys.generator_min_load_pct)),
@@ -1484,7 +1482,7 @@ def render_subtab5_interaction_rules() -> None:
             r_c1, r_c2, r_c3 = st.columns(3)
 
             with r_c1:
-                st.markdown("##### :material/priority_high: Rule 1 – Peak Shaving Priority")
+                st.markdown("##### :material/priority_high: Rule 1 – Peak Priority")
                 st.caption("Who steps in first when remaining demand (after direct Solar) exceeds the Grid Limit?")
                 rule1_val = st.radio(
                     "Rule 1 Priority",
@@ -1500,7 +1498,7 @@ def render_subtab5_interaction_rules() -> None:
                 )
 
             with r_c2:
-                st.markdown("##### :material/battery_saver: Rule 2 – Normal Load Coverage")
+                st.markdown("##### :material/battery_saver: Rule 2 – Daily Battery Use")
                 st.caption("May stored battery energy also be used when demand is below the Grid Limit?")
                 rule2_val = st.radio(
                     "Rule 2 Strategy",
@@ -1511,7 +1509,7 @@ def render_subtab5_interaction_rules() -> None:
                     key="comb_rule2_select",
                 )
                 reserve_val = st.slider(
-                    "Peak Reserve SoC (%) — when Self-Consumption is active",
+                    "Peak Reserve SoC (%)",
                     min_value=10,
                     max_value=90,
                     value=int(np.clip(cur_rules.peak_reserve_soc_pct, 10, 90)),
@@ -1525,7 +1523,7 @@ def render_subtab5_interaction_rules() -> None:
                 )
 
             with r_c3:
-                st.markdown("##### :material/bolt: Rule 3 – Battery Charging Sources")
+                st.markdown("##### :material/bolt: Rule 3 – Charging Sources")
                 st.caption("Where and when does the Battery recharge?")
                 rule3_val = st.radio(
                     "Rule 3 Charging",
@@ -1554,14 +1552,207 @@ def render_subtab5_interaction_rules() -> None:
 
 
 # ======================================================================================
-# LEVEL 2 — SUBTAB 6: Financials (Lazy-Loaded, 4-Pillar Tariff + Cost Comparison Chart)
+# LEVEL 2 — SUBTAB 6: Financials (3-Zone Sub-Ledger Workbench, @st.fragment Isolated)
 # ======================================================================================
+
+def _render_master_cost_equation_bar(sim_res) -> str:
+    """Renders the top Live Master Cost & Savings Equation Bar inspired by Currentsituation_sandbox."""
+    fk = sim_res.financial_kpis
+    if fk is None:
+        return ""
+
+    sav_color = "#22C55E" if fk.annual_savings_eur >= 0 else "#EF4444"
+    sav_bg = "#06281e" if fk.annual_savings_eur >= 0 else "#2a0e12"
+    pb_str = f"{fk.payback_years:.1f} yrs" if fk.payback_years is not None else "N/A"
+    npv_color = "#22C55E" if fk.npv_15y_eur >= 0 else "#F87171"
+
+    return (
+        f'<div style="background-color:#0b1329; border:1.5px solid #334155; border-radius:10px; padding:12px 16px; margin-bottom:14px;">\n'
+        f'<div style="font-size:0.74rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px;">'
+        f'Annual Cost &amp; Savings'
+        f'</div>\n'
+        f'<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px;">\n'
+        f'<div style="background-color:#1e293b; border-left:4px solid #F87171; border-radius:6px; padding:7px 11px; flex:1; min-width:140px;">'
+        f'<div style="font-size:0.72rem; color:#94a3b8; font-weight:600;">Current Situation Bill</div>'
+        f'<div style="font-size:1.00rem; color:#f8fafc; font-weight:700;">&euro;{fk.baseline_total_opex_eur:,.0f} / yr</div>'
+        f'</div>\n'
+        f'<div style="color:#64748b; font-weight:800; font-size:1.05rem;">&rarr;</div>\n'
+        f'<div style="background-color:#1e293b; border-left:4px solid #38BDF8; border-radius:6px; padding:7px 11px; flex:1; min-width:140px;">'
+        f'<div style="font-size:0.72rem; color:#94a3b8; font-weight:600;">New Grid Bill</div>'
+        f'<div style="font-size:1.00rem; color:#f8fafc; font-weight:700;">&euro;{fk.combined_grid_total_eur:,.0f} / yr</div>'
+        f'</div>\n'
+        f'<div style="color:#64748b; font-weight:800; font-size:1.05rem;">+</div>\n'
+        f'<div style="background-color:#1e293b; border-left:4px solid #F59E0B; border-radius:6px; padding:7px 11px; flex:1; min-width:145px;">'
+        f'<div style="font-size:0.72rem; color:#94a3b8; font-weight:600;">Hardware O&amp;M &amp; Fuel</div>'
+        f'<div style="font-size:1.00rem; color:#f8fafc; font-weight:700;">&euro;{fk.system_om_and_fuel_y1_eur:,.0f} / yr</div>'
+        f'</div>\n'
+        f'<div style="color:#64748b; font-weight:800; font-size:1.05rem;">&minus;</div>\n'
+        f'<div style="background-color:#1e293b; border-left:4px solid #10B981; border-radius:6px; padding:7px 11px; flex:1; min-width:135px;">'
+        f'<div style="font-size:0.72rem; color:#94a3b8; font-weight:600;">Solar Export Income</div>'
+        f'<div style="font-size:1.00rem; color:#f8fafc; font-weight:700;">&euro;{fk.solar_export_revenue_eur:,.0f} / yr</div>'
+        f'</div>\n'
+        f'<div style="color:#38BDF8; font-weight:800; font-size:1.10rem;">=</div>\n'
+        f'<div style="background-color:#0f172a; border:1.5px solid #38BDF8; border-radius:6px; padding:7px 12px; flex:1.1; min-width:155px;">'
+        f'<div style="font-size:0.72rem; color:#38BDF8; font-weight:700; text-transform:uppercase;">Combined Annual Cost</div>'
+        f'<div style="font-size:1.02rem; color:#ffffff; font-weight:800;">&euro;{fk.total_annual_opex_eur:,.0f} / yr</div>'
+        f'</div>\n'
+        f'<div style="color:{sav_color}; font-weight:800; font-size:1.10rem;">&rarr;</div>\n'
+        f'<div style="background-color:{sav_bg}; border:2px solid {sav_color}; border-radius:6px; padding:7px 12px; flex:1.2; min-width:170px;">'
+        f'<div style="font-size:0.72rem; color:{sav_color}; font-weight:800; text-transform:uppercase;">Net Annual Savings</div>'
+        f'<div style="font-size:1.06rem; color:#ffffff; font-weight:800;">&euro;{fk.annual_savings_eur:+,.0f} / yr</div>'
+        f'</div>\n'
+        f'</div>\n'
+        f'<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-top:9px; padding-top:8px; border-top:1px solid #1e293b; font-size:0.80rem; color:#cbd5e1;">\n'
+        f'<div><b>Net Investment (CAPEX):</b> Solar &euro;{fk.solar_capex_eur:,.0f} + Battery &euro;{fk.battery_capex_eur:,.0f} + Generator &euro;{fk.generator_capex_eur:,.0f} &minus; Avoided Grid Upgrade &euro;{fk.avoided_grid_upgrade_capex_eur:,.0f} = <b style="color:#ffffff;">&euro;{fk.total_capex_eur:,.0f}</b></div>\n'
+        f'<div><b>Simple Payback:</b> <span style="color:#f8fafc; font-weight:700;">{pb_str}</span> &nbsp;|&nbsp; <b>15-Year NPV:</b> <span style="color:{npv_color}; font-weight:700;">&euro;{fk.npv_15y_eur:+,.0f}</span></div>\n'
+        f'</div>\n'
+        f'</div>'
+    )
+
+
+def _render_sub_ledger_html(
+    header_title: str,
+    columns: List[str],
+    rows: List[dict],
+    footer_cells: List[str],
+    accent_color: str = "#38BDF8",
+    is_enabled: bool = True,
+) -> str:
+    """
+    Renders a clean dark-themed HTML Sub-Ledger table showing how costs and savings add up.
+    Each entry in `rows` can be either:
+      - {"group": "Group Title"} for a full-width category header row, or
+      - {"cells": [...], "highlight": Optional[str]} for a standard data row.
+    """
+    wrapper_style = (
+        "border-radius:8px; border:1px solid #334155; overflow:hidden; margin-bottom:10px;"
+        if is_enabled
+        else "border-radius:8px; border:1px dashed #475569; overflow:hidden; margin-bottom:10px; opacity:0.48; filter:grayscale(100%);"
+    )
+    status_badge = "" if is_enabled else " &mdash; [INACTIVE: &euro;0]"
+
+    hdr_cells_html = "".join(
+        f'<th style="padding:7px 9px; text-align:{"left" if i < 2 else "right"}; white-space:nowrap;">{col}</th>'
+        for i, col in enumerate(columns)
+    )
+
+    body_rows_html: List[str] = []
+    data_idx = 0
+    for row in rows:
+        if "group" in row:
+            body_rows_html.append(
+                f'<tr style="background-color:#0b1329; border-bottom:1px solid #334155;">'
+                f'<td colspan="{len(columns)}" style="padding:6px 9px; color:{accent_color}; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">{row["group"]}</td>'
+                f'</tr>'
+            )
+            continue
+
+        bg = "#1e293b" if data_idx % 2 == 0 else "#0f172a"
+        data_idx += 1
+        cells = row.get("cells", [])
+        hl = row.get("highlight")
+        row_td: List[str] = []
+        for i, cell in enumerate(cells):
+            if i == 0:
+                style = "padding:6px 9px; color:#f1f5f9; font-size:0.82rem; font-weight:500;"
+            elif i == 1:
+                style = "padding:6px 9px; color:#cbd5e1; font-size:0.78rem; font-family:monospace;"
+            elif hl and i == len(cells) - 1:
+                style = f"padding:6px 9px; text-align:right; color:{hl}; font-size:0.83rem; font-weight:700; white-space:nowrap;"
+            elif i == len(cells) - 1:
+                style = "padding:6px 9px; text-align:right; color:#f8fafc; font-size:0.83rem; font-weight:600; white-space:nowrap;"
+            else:
+                style = "padding:6px 9px; text-align:right; color:#e2e8f0; font-size:0.82rem; white-space:nowrap;"
+            row_td.append(f'<td style="{style}">{cell}</td>')
+        body_rows_html.append(f'<tr style="background-color:{bg}; border-bottom:1px solid #334155;">{"".join(row_td)}</tr>')
+
+    ftr_cells_html: List[str] = []
+    for i, cell in enumerate(footer_cells):
+        align = "left" if i == 0 else "right"
+        colspan_attr = f' colspan="{len(columns) - len(footer_cells) + 1}"' if (i == 0 and len(footer_cells) < len(columns)) else ""
+        color = "#ffffff" if i == len(footer_cells) - 1 else accent_color
+        ftr_cells_html.append(
+            f'<td{colspan_attr} style="padding:8px 9px; text-align:{align}; color:{color}; font-size:0.86rem; white-space:nowrap;">{cell}</td>'
+        )
+
+    return (
+        f'<div style="{wrapper_style}">\n'
+        f'<div style="background-color:#0f172a; padding:8px 12px; border-bottom:2px solid {accent_color}; font-weight:700; color:#f8fafc; font-size:0.88rem;">'
+        f'{header_title}{status_badge}'
+        f'</div>\n'
+        f'<table style="width:100%; border-collapse:collapse; font-family:-apple-system, BlinkMacSystemFont, sans-serif;">\n'
+        f'<thead><tr style="background-color:#090d16; border-bottom:1px solid #475569; color:#94a3b8; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;">{hdr_cells_html}</tr></thead>\n'
+        f'<tbody>{"".join(body_rows_html)}</tbody>\n'
+        f'<tfoot><tr style="background-color:#0b1329; border-top:2px solid {accent_color}; font-weight:700;">{"".join(ftr_cells_html)}</tr></tfoot>\n'
+        f'</table>\n'
+        f'</div>'
+    )
+
+
+@st.fragment
+def _render_monthly_grid_bill_progression_fragment(sim_res) -> None:
+    """Isolates 12-Month Electricity & Grid Bill progression chart & ledger inside a fragment."""
+    with st.container(border=True):
+        st.markdown("##### :material/calendar_month: 3. Monthly Costs")
+        view_mode = st.radio(
+            "Monthly Progression Perspective",
+            options=[
+                "Combined System Bill",
+                "Current Situation Bill",
+                "Monthly Bill Comparison",
+            ],
+            index=0,
+            horizontal=True,
+            key="comb_fin_monthly_grid_view_mode",
+            label_visibility="collapsed",
+        )
+
+        mc_col1, mc_col2 = st.columns([0.52, 0.48], gap="medium")
+        with mc_col1:
+            fig_monthly = create_monthly_grid_bill_progression_figure(sim_res, view_mode=view_mode)
+            st.plotly_chart(
+                fig_monthly,
+                use_container_width=True,
+                config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
+                key=f"comb_fin_monthly_grid_chart_{view_mode.lower().replace(' ', '_')}",
+            )
+
+        with mc_col2:
+            m_df = sim_res.monthly_cost_df
+            if m_df is not None and not m_df.empty:
+                stmt_rows = []
+                for _, r in m_df.iterrows():
+                    comb_grid = (
+                        float(r["Combined Grid Energy & Taxes (€)"])
+                        + float(r["Combined Network & Standing (€)"])
+                        + float(r["Combined Overload Penalty (€)"])
+                    )
+                    base_bill = float(r["Current situation Total (€)"])
+                    dso_val = float(r["Combined DSO Total (€)"]) if "Combined DSO Total (€)" in m_df.columns else float(r["Combined Network & Standing (€)"])
+                    supp_tax = float(r["Combined Supply & Tax (€)"]) if "Combined Supply & Tax (€)" in m_df.columns else float(r["Combined Grid Energy & Taxes (€)"])
+                    stmt_rows.append({
+                        "Month": str(r["Month"]),
+                        "Peak (kW)": round(float(r.get("Combined Grid Peak (kW)", 0.0)), 1),
+                        "Grid Import (kWh)": round(float(r.get("Combined Grid Import (kWh)", 0.0)), 0),
+                        "Grid DSO (€)": round(dso_val, 0),
+                        "Supply & Tax (€)": round(supp_tax, 0),
+                        "Penalty (€)": round(float(r["Combined Overload Penalty (€)"]), 0),
+                        "With System Bill (€)": round(comb_grid, 0),
+                        "Grid Savings (€)": round(base_bill - comb_grid, 0),
+                    })
+                st.dataframe(
+                    pd.DataFrame(stmt_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=370,
+                )
+
 
 @st.fragment
 def _render_financial_chart_gallery_fragment(sim_res) -> None:
     """Isolates financial chart perspective switching inside a lightweight fragment."""
     with st.container(border=True):
-        st.markdown("##### :material/analytics: Financial Decision Visualizations")
+        st.markdown("##### :material/analytics: Financial Charts")
         gallery_choice = st.radio(
             "Visualization Perspective",
             options=[
@@ -1598,46 +1789,25 @@ def _render_financial_chart_gallery_fragment(sim_res) -> None:
 
 
 @st.fragment
-def render_subtab6_financials(sim_res) -> None:
-    """
-    Renders Subtab 6: Financials (Lazy-loaded for performance):
-      - When inactive: Prominent 'Activate Financials' button; skips financial calculations
-      - When active:
-          * Block A: 4-Pillar Grid & Tariff Costs (Energy Supply, Grid Network DSO, Metering, Taxes)
-          * Block B: Solar Turnkey CAPEX & O&M (shown if Solar is active)
-          * Block C: Battery Turnkey CAPEX, O&M & Year-11 Augmentation (shown if Battery is active)
-          * Block D: Generator Purchase vs. Rental & Fuel OPEX (shown if Generator is active)
-          * Consolidated Financial Evaluation: 4 KPIs, Annual Cost Comparison Chart (With vs. Without System),
-            and 15-Year Cashflow Table
-    """
-    cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
-    cur_fin: CombinedFinancialConfig = st.session_state["comb_fin_cfg"]
-    is_fin_active = bool(cur_sys.enable_financials)
+def _render_cashflow_table_expander_fragment(sim_res) -> None:
+    """Isolates the 15-year cashflow table behind a lazy expander + toggle to avoid unnecessary renders."""
+    with st.expander(":material/table_chart: 15-Year Cashflow Table", expanded=False):
+        show_cf_tbl = st.checkbox(
+            "Show 15-Year Table",
+            value=True,
+            key="comb_fin_show_15y_ledger_chk",
+        )
+        if show_cf_tbl and sim_res.cashflow_15y_df is not None and not sim_res.cashflow_15y_df.empty:
+            st.dataframe(
+                sim_res.cashflow_15y_df,
+                use_container_width=True,
+                hide_index=True,
+            )
 
-    if not is_fin_active:
-        with st.container(border=True):
-            f_col1, f_col2 = st.columns([2.5, 1.2])
-            with f_col1:
-                st.markdown(
-                    "**Financials is currently paused for maximum simulation speed.** "
-                    "Click **Activate Financials** to run the 4-Pillar Tariff billing, investment costs, "
-                    "cost comparison chart, and 15-year cashflow analysis."
-                )
-            with f_col2:
-                st.button(
-                    "Activate Financials",
-                    icon=":material/power_settings_new:",
-                    type="primary",
-                    use_container_width=True,
-                    key="comb_btn_activate_financials",
-                    on_click=_activate_module_callback,
-                    args=("comb_enable_financials_toggle",),
-                )
-        return
 
-    # 1-Click Utility Tariff Preset Mini-Form (Encapsulated to eliminate multi-dropdown intermediate reruns)
-    with st.container(border=True):
-        st.markdown("##### :material/account_balance: Standard Utility Tariff Templates (1-Click Loader)")
+def _render_subtab6_1_grid_tariffs(sim_res, cur_sys: CombinedSystemConfig, cur_fin: CombinedFinancialConfig) -> None:
+    """Sub-Tab 6.1: Electricity Bill & Grid Tariffs (3-Zone Layout: Inputs | Bill Sub-Ledger | Monthly Progression)."""
+    with st.expander(":material/account_balance: Utility Presets", expanded=False):
         with st.form("comb_utility_preset_form"):
             dso_opts = get_dso_preset_options()
             supp_opts = get_supplier_preset_options()
@@ -1691,327 +1861,492 @@ def render_subtab6_financials(sim_res) -> None:
             st.session_state.pop("comb_cached_excel_bytes", None)
             st.rerun(scope="fragment")
 
-    with st.form("comb_financials_form"):
-        # --- Block A: 4-Pillar Grid & Tariff Costs (Always visible when Financials active) ---
-        with st.container(border=True):
-            st.markdown("##### :material/receipt_long: Block A – Grid & Tariff Costs (4-Pillar Tariff)")
-            p1_col, p2_col, p3_col, p4_col = st.columns(4)
+    col_za, col_zb = st.columns([0.48, 0.52], gap="large")
 
-            with p1_col:
-                st.markdown("**1. Energy Supply (Supplier)**")
-                supp_kwh = st.number_input(
-                    "Electricity Price (€/kWh)",
-                    min_value=0.0,
-                    max_value=2.0,
-                    value=float(cur_fin.supplier_energy_price_eur_kwh),
-                    step=0.01,
-                    format="%.3f",
-                    key="comb_fin_supp_kwh",
-                )
-                supp_fix = st.number_input(
-                    "Supplier Standing Fee (€/month)",
-                    min_value=0.0,
-                    max_value=5000.0,
-                    value=float(cur_fin.supplier_fixed_fee_eur_month),
-                    step=10.0,
-                    key="comb_fin_supp_fix",
-                )
-
-            with p2_col:
-                st.markdown("**2. Grid Network (DSO)**")
-                dso_cap = st.number_input(
-                    "Contracted Capacity Fee (€/kW/mo)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=float(cur_fin.dso_capacity_fee_eur_kw_month),
-                    step=0.5,
-                    key="comb_fin_dso_cap",
-                )
-                dso_peak = st.number_input(
-                    "Monthly Peak Demand Fee (€/kW/mo)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=float(cur_fin.dso_peak_demand_fee_eur_kw_month),
-                    step=0.5,
-                    key="comb_fin_dso_peak",
-                )
-                dso_vol = st.number_input(
-                    "Volumetric Transport Fee (€/kWh)",
-                    min_value=0.0,
-                    max_value=0.50,
-                    value=float(cur_fin.dso_transport_eur_kwh),
-                    step=0.005,
-                    format="%.3f",
-                    key="comb_fin_dso_vol",
-                )
-                dso_pen = st.number_input(
-                    "Overload Penalty (€/kW)",
-                    min_value=0.0,
-                    max_value=500.0,
-                    value=float(cur_fin.grid_overload_penalty_eur_kw),
-                    step=1.0,
-                    key="comb_fin_dso_pen",
-                )
+    with col_za:
+        st.markdown("##### :material/tune: 1. Tariff Rates")
+        with st.form("comb_tariff_inputs_form"):
+            st.markdown("**A. Grid Connection, Peaks & Penalties (Grid Operator)**")
+            g1, g2 = st.columns(2)
+            with g1:
                 dso_fix = st.number_input(
-                    "Grid Standing Fee (€/month)",
-                    min_value=0.0,
-                    max_value=5000.0,
-                    value=float(cur_fin.dso_fixed_fee_eur_month),
-                    step=10.0,
+                    "Monthly Grid Base Fee (€/month)",
+                    min_value=0.0, max_value=5000.0, value=float(cur_fin.dso_fixed_fee_eur_month), step=10.0,
                     key="comb_fin_dso_fix",
                 )
+                dso_cap = st.number_input(
+                    "Booked Grid Capacity (€/kW/mo)",
+                    min_value=0.0, max_value=100.0, value=float(cur_fin.dso_capacity_fee_eur_kw_month), step=0.25, format="%.2f",
+                    key="comb_fin_dso_cap",
+                    help="Charged monthly on the contracted Grid Limit (kW).",
+                )
+                dso_vol = st.number_input(
+                    "Grid Transport Rate (€/kWh)",
+                    min_value=0.0, max_value=0.50, value=float(cur_fin.dso_transport_eur_kwh), step=0.005, format="%.4f",
+                    key="comb_fin_dso_vol",
+                )
+            with g2:
+                dso_peak = st.number_input(
+                    "Monthly Peak Demand (€/kW/mo)",
+                    min_value=0.0, max_value=100.0, value=float(cur_fin.dso_peak_demand_fee_eur_kw_month), step=0.25, format="%.2f",
+                    key="comb_fin_dso_peak",
+                    help="Charged monthly on the highest measured 15-min peak imported from the grid.",
+                )
+                dso_pen = st.number_input(
+                    "Overload Penalty (€/kW above limit)",
+                    min_value=0.0, max_value=500.0, value=float(cur_fin.grid_overload_penalty_eur_kw), step=1.0,
+                    key="comb_fin_dso_pen",
+                )
                 avoided_trafo = st.number_input(
-                    "Avoided Transformer Rent (€/mo)",
-                    min_value=0.0,
-                    max_value=50000.0,
-                    value=float(cur_fin.avoided_transformer_rent_eur_month),
-                    step=50.0,
+                    "Avoided Transformer Rental (€/mo)",
+                    min_value=0.0, max_value=50000.0, value=float(cur_fin.avoided_transformer_rent_eur_month), step=50.0,
                     key="comb_fin_avoided_trafo",
-                    help="Transformer rental fee saved by avoiding grid upgrades with the combined system.",
+                    help="Monthly transformer rent saved when staying within grid capacity.",
                 )
 
-            with p3_col:
-                st.markdown("**3. Metering & Avoided CAPEX**")
+            st.markdown("**B. Electricity Purchase & Solar Feed-in (Supplier)**")
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                supp_kwh = st.number_input(
+                    "Electricity Price (€/kWh)",
+                    min_value=0.0, max_value=2.0, value=float(cur_fin.supplier_energy_price_eur_kwh), step=0.01, format="%.3f",
+                    key="comb_fin_supp_kwh",
+                )
+            with s2:
+                supp_fix = st.number_input(
+                    "Supplier Base Fee (€/mo)",
+                    min_value=0.0, max_value=5000.0, value=float(cur_fin.supplier_fixed_fee_eur_month), step=10.0,
+                    key="comb_fin_supp_fix",
+                )
+            with s3:
+                solar_fi = st.number_input(
+                    "Solar Feed-in (€/kWh)",
+                    min_value=0.0, max_value=0.50, value=float(cur_fin.solar_export_feed_in_eur_kwh), step=0.01, format="%.3f",
+                    key="comb_fin_solar_fi",
+                    help="Revenue received per kWh of solar surplus exported to the grid.",
+                )
+
+            st.markdown("**C. Metering & Government Taxes**")
+            m1, m2, m3 = st.columns(3)
+            with m1:
                 meter_fix = st.number_input(
-                    "Metering Fee (€/month)",
-                    min_value=0.0,
-                    max_value=2000.0,
-                    value=float(cur_fin.metering_fixed_fee_eur_month),
-                    step=5.0,
+                    "Metering Fee (€/mo)",
+                    min_value=0.0, max_value=2000.0, value=float(cur_fin.metering_fixed_fee_eur_month), step=5.0,
                     key="comb_fin_meter_fix",
                 )
-                avoided_upgrade = st.number_input(
-                    "Avoided Grid Upgrade CAPEX (€)",
-                    min_value=0.0,
-                    max_value=5000000.0,
-                    value=float(cur_fin.avoided_grid_upgrade_capex_eur),
-                    step=5000.0,
-                    key="comb_fin_avoided_upgrade",
-                    help="Capital expenditure avoided by peak shaving instead of paying the DSO for a grid expansion.",
-                )
-
-            with p4_col:
-                st.markdown("**4. Taxes & Discount Rate**")
+            with m2:
                 tax_kwh = st.number_input(
                     "Energy Tax (€/kWh)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=float(cur_fin.energy_tax_eur_kwh),
-                    step=0.005,
-                    format="%.3f",
+                    min_value=0.0, max_value=1.0, value=float(cur_fin.energy_tax_eur_kwh), step=0.005, format="%.4f",
                     key="comb_fin_tax_kwh",
                 )
+            with m3:
                 tax_pct = st.number_input(
-                    "Levy / Tax Surcharge (%)",
-                    min_value=0.0,
-                    max_value=50.0,
-                    value=float(cur_fin.tax_surcharge_pct),
-                    step=1.0,
+                    "Tax Surcharge (%)",
+                    min_value=0.0, max_value=50.0, value=float(cur_fin.tax_surcharge_pct), step=1.0,
                     key="comb_fin_tax_pct",
                 )
-                disc_rate = st.number_input(
-                    "Discount Rate for 15Y NPV (%)",
-                    min_value=0.0,
-                    max_value=20.0,
-                    value=float(cur_fin.discount_rate_pct),
-                    step=0.5,
-                    key="comb_fin_disc_rate",
+
+            tariffs_submitted = st.form_submit_button(
+                "Apply Grid & Electricity Tariffs",
+                icon=":material/check_circle:",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if tariffs_submitted:
+            cur_fin.dso_fixed_fee_eur_month = float(dso_fix)
+            cur_fin.dso_capacity_fee_eur_kw_month = float(dso_cap)
+            cur_fin.dso_peak_demand_fee_eur_kw_month = float(dso_peak)
+            cur_fin.dso_transport_eur_kwh = float(dso_vol)
+            cur_fin.grid_overload_penalty_eur_kw = float(dso_pen)
+            cur_fin.avoided_transformer_rent_eur_month = float(avoided_trafo)
+            cur_fin.supplier_energy_price_eur_kwh = float(supp_kwh)
+            cur_fin.supplier_fixed_fee_eur_month = float(supp_fix)
+            cur_fin.solar_export_feed_in_eur_kwh = float(solar_fi)
+            cur_fin.metering_fixed_fee_eur_month = float(meter_fix)
+            cur_fin.energy_tax_eur_kwh = float(tax_kwh)
+            cur_fin.tax_surcharge_pct = float(tax_pct)
+            evaluate_combined_financials(sim_res, cur_fin)
+            st.session_state.pop("comb_cached_excel_bytes", None)
+            st.rerun(scope="fragment")
+
+    with col_zb:
+        st.markdown("##### :material/receipt_long: 2. Annual Bill Summary")
+        fk = sim_res.financial_kpis
+        kpis = sim_res.kpis
+        m_df = sim_res.monthly_cost_df
+
+        base_kwh = float(kpis.annual_consumption_kwh)
+        comb_kwh = float(kpis.grid_import_total_kwh)
+        avg_base_pk = float(m_df["Current situation Peak (kW)"].mean()) if (not m_df.empty and "Current situation Peak (kW)" in m_df.columns) else float(kpis.original_peak_kw)
+        avg_comb_pk = float(m_df["Combined Grid Peak (kW)"].mean()) if (not m_df.empty and "Combined Grid Peak (kW)" in m_df.columns) else float(kpis.new_grid_peak_kw)
+
+        def _row_bill(item: str, calc: str, b_val: float, c_val: float) -> dict:
+            sav = b_val - c_val
+            hl = "#22C55E" if sav > 0.5 else ("#EF4444" if sav < -0.5 else None)
+            return {
+                "cells": [
+                    item,
+                    calc,
+                    f"&euro;{b_val:,.0f}",
+                    f"&euro;{c_val:,.0f}",
+                    f"&euro;{sav:+,.0f}",
+                ],
+                "highlight": hl,
+            }
+
+        bill_rows = [
+            {"group": "1. Electricity Supply (Retailer)"},
+            _row_bill(
+                "1.1 Purchased Energy",
+                f"{comb_kwh:,.0f} vs {base_kwh:,.0f} kWh &times; &euro;{cur_fin.supplier_energy_price_eur_kwh:.3f}",
+                fk.baseline_supply_energy_eur,
+                fk.combined_supply_energy_eur,
+            ),
+            _row_bill(
+                "1.2 Supplier Base Fee",
+                f"12 mos &times; &euro;{cur_fin.supplier_fixed_fee_eur_month:.2f}/mo",
+                fk.baseline_supply_fixed_eur,
+                fk.combined_supply_fixed_eur,
+            ),
+            {"group": "2. Grid Network (DSO)"},
+            _row_bill(
+                "2.1 Fixed Grid Connection Fee",
+                f"12 mos &times; &euro;{cur_fin.dso_fixed_fee_eur_month:.2f}/mo",
+                fk.baseline_dso_fixed_eur,
+                fk.combined_dso_fixed_eur,
+            ),
+            _row_bill(
+                "2.2 Booked Grid Capacity",
+                f"{cur_sys.grid_limit_kw:,.0f} kW &times; 12 &times; &euro;{cur_fin.dso_capacity_fee_eur_kw_month:.2f}",
+                fk.baseline_dso_capacity_eur,
+                fk.combined_dso_capacity_eur,
+            ),
+            _row_bill(
+                "2.3 Monthly Peak Demand",
+                f"Avg {avg_comb_pk:.0f} vs {avg_base_pk:.0f} kW &times; 12 &times; &euro;{cur_fin.dso_peak_demand_fee_eur_kw_month:.2f}",
+                fk.baseline_dso_peak_eur,
+                fk.combined_dso_peak_eur,
+            ),
+            _row_bill(
+                "2.4 Grid Transport Volume",
+                f"{comb_kwh:,.0f} kWh &times; &euro;{cur_fin.dso_transport_eur_kwh:.3f}/kWh",
+                fk.baseline_dso_transport_eur,
+                fk.combined_dso_transport_eur,
+            ),
+            _row_bill(
+                "2.5 Overload Penalties",
+                f"Peak &gt; {cur_sys.grid_limit_kw:,.0f} kW &times; &euro;{cur_fin.grid_overload_penalty_eur_kw:.2f}/kW",
+                fk.baseline_penalty_cost_eur,
+                fk.combined_grid_penalty_cost_eur,
+            ),
+        ]
+
+        if cur_fin.avoided_transformer_rent_eur_month > 0.0:
+            bill_rows.append(
+                _row_bill(
+                    "2.6 Avoided Transformer Rent",
+                    f"12 mos &times; &euro;{cur_fin.avoided_transformer_rent_eur_month:,.0f}/mo",
+                    fk.baseline_dso_transformer_rent_eur,
+                    fk.combined_dso_transformer_rent_eur,
                 )
+            )
 
-            # Long-Term Assumptions Expander (v13.7)
-            with st.expander(":material/trending_up: Long-Term Escalation, Degradation & Feed-in Assumptions", expanded=False):
-                lt1, lt2, lt3, lt4 = st.columns(4)
-                with lt1:
-                    tariff_esc = st.number_input(
-                        "Tariff Escalation (% p.a.)",
-                        min_value=0.0,
-                        max_value=15.0,
-                        value=float(cur_fin.tariff_escalation_pct_pa),
-                        step=0.5,
-                        key="comb_fin_tariff_esc",
-                        help="Annual inflation rate for utility grid energy and capacity charges.",
-                    )
-                with lt2:
-                    om_inf = st.number_input(
-                        "O&M Inflation (% p.a.)",
-                        min_value=0.0,
-                        max_value=15.0,
-                        value=float(cur_fin.om_inflation_pct_pa),
-                        step=0.5,
-                        key="comb_fin_om_inf",
-                        help="Annual inflation rate for system O&M, maintenance, and fuel prices.",
-                    )
-                with lt3:
-                    solar_fi = st.number_input(
-                        "PV Export Feed-in (€/kWh)",
-                        min_value=0.0,
-                        max_value=0.50,
-                        value=float(cur_fin.solar_export_feed_in_eur_kwh),
-                        step=0.01,
-                        format="%.3f",
-                        key="comb_fin_solar_fi",
-                        help="Remuneration for exported solar surplus fed into the grid.",
-                    )
-                with lt4:
-                    sys_deg = st.number_input(
-                        "System Degradation (% p.a.)",
-                        min_value=0.0,
-                        max_value=5.0,
-                        value=float(cur_fin.system_degradation_pct_pa),
-                        step=0.1,
-                        format="%.2f",
-                        key="comb_fin_sys_deg",
-                        help="Annual efficiency degradation of solar panels and battery storage.",
-                    )
+        bill_rows.extend([
+            {"group": "3. Metering & Statutory Taxes"},
+            _row_bill(
+                "3.1 Metering & Telemetry",
+                f"12 mos &times; &euro;{cur_fin.metering_fixed_fee_eur_month:.2f}/mo",
+                fk.baseline_pillar3_metering_eur,
+                fk.combined_pillar3_metering_eur,
+            ),
+            _row_bill(
+                "3.2 Government Energy Tax",
+                f"{comb_kwh:,.0f} kWh &times; &euro;{cur_fin.energy_tax_eur_kwh:.4f}/kWh",
+                fk.baseline_energy_tax_eur,
+                fk.combined_energy_tax_eur,
+            ),
+        ])
+        if cur_fin.tax_surcharge_pct > 0.0:
+            bill_rows.append(
+                _row_bill(
+                    "3.3 Tax / Levy Surcharge",
+                    f"{cur_fin.tax_surcharge_pct:.1f}% on net charges",
+                    fk.baseline_tax_surcharge_eur,
+                    fk.combined_tax_surcharge_eur,
+                )
+            )
 
-        # --- Conditional Technology Cost Blocks (Only shown for active modules) ---
-        if cur_sys.enable_solar:
-            with st.container(border=True):
+        if cur_sys.enable_solar and fk.solar_export_revenue_eur > 0.0:
+            bill_rows.append({"group": "4. Solar Export Credit"})
+            bill_rows.append(
+                {
+                    "cells": [
+                        "4.1 Grid Feed-in Revenue",
+                        f"{kpis.solar_export_kwh:,.0f} kWh &times; &euro;{cur_fin.solar_export_feed_in_eur_kwh:.3f}",
+                        "&euro;0",
+                        f"-&euro;{fk.solar_export_revenue_eur:,.0f}",
+                        f"&euro;{fk.solar_export_revenue_eur:+,.0f}",
+                    ],
+                    "highlight": "#22C55E",
+                }
+            )
+
+        comb_bill_net_of_export = fk.combined_grid_total_eur - fk.solar_export_revenue_eur
+        bill_savings_total = fk.baseline_total_opex_eur - comb_bill_net_of_export
+        sub_html = _render_sub_ledger_html(
+            header_title="Annual Electricity Bill Breakdown",
+            columns=["Bill Line Item", "Calculation (Qty &times; Rate)", "Current (/yr)", "With System (/yr)", "Savings (/yr)"],
+            rows=bill_rows,
+            footer_cells=[
+                "= TOTAL ANNUAL UTILITY BILL (NET OF EXPORT)",
+                f"&euro;{fk.baseline_total_opex_eur:,.0f}",
+                f"&euro;{comb_bill_net_of_export:,.0f}",
+                f"&euro;{bill_savings_total:+,.0f}",
+            ],
+            accent_color="#38BDF8",
+            is_enabled=True,
+        )
+        st.markdown(sub_html, unsafe_allow_html=True)
+
+        # System Impact & Compliance Box
+        if kpis.grid_limit_met:
+            st.success(
+                f":material/check_circle: **Grid Compliance & Bill Impact:** Peak reduced from **{kpis.original_peak_kw:,.1f} kW** to **{kpis.new_grid_peak_kw:,.1f} kW** "
+                f"(within {cur_sys.grid_limit_kw:,.0f} kW limit).  \n"
+                f"**Where Grid Savings Come From:** **€{fk.grid_volume_savings_y1_eur:,.0f}/yr** from reduced energy imports + "
+                f"**€{fk.grid_peak_and_penalty_savings_y1_eur:,.0f}/yr** from peak shaving & avoided penalties"
+                + (f" + **€{fk.solar_export_revenue_eur:,.0f}/yr** solar export income." if fk.solar_export_revenue_eur > 0 else "."),
+            )
+        else:
+            st.warning(
+                f":material/warning: **Remaining Overload Warning:** Peak reduced from **{kpis.original_peak_kw:,.1f} kW** to **{kpis.new_grid_peak_kw:,.1f} kW** "
+                f"(**+{kpis.remaining_overload_kw:,.1f} kW** above {cur_sys.grid_limit_kw:,.0f} kW limit).  \n"
+                f"**Where Grid Savings Come From:** **€{fk.grid_volume_savings_y1_eur:,.0f}/yr** from reduced energy imports + "
+                f"**€{fk.grid_peak_and_penalty_savings_y1_eur:,.0f}/yr** from peak & penalty reductions."
+            )
+
+    _render_monthly_grid_bill_progression_fragment(sim_res)
+
+
+def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur_fin: CombinedFinancialConfig) -> None:
+    """Sub-Tab 6.2: System Hardware & Operating Costs (Component CAPEX/OPEX Inputs + How It Adds Up Sub-Ledgers)."""
+    fk = sim_res.financial_kpis
+    kpis = sim_res.kpis
+    deriv = sim_res.solar_derivation
+
+    with st.form("comb_hardware_costs_form"):
+        # --- 1. Solar PV System ---
+        sol_badge = f"{deriv.installed_kwp:,.1f} kWp Active" if cur_sys.enable_solar else "INACTIVE — €0"
+        with st.expander(f":material/solar_power: Solar Costs ({sol_badge})", expanded=cur_sys.enable_solar):
+            s_in, s_led = st.columns([0.44, 0.56], gap="large")
+            with s_in:
+                sol_mod = st.number_input(
+                    "Solar Modules (€/Wp)",
+                    min_value=0.0, max_value=3.0, value=float(cur_fin.solar_modules_eur_wp), step=0.02, format="%.2f",
+                    key="comb_fin_sol_mod", disabled=not cur_sys.enable_solar,
+                )
+                sol_inv = st.number_input(
+                    "Solar Inverter (€/W)",
+                    min_value=0.0, max_value=2.0, value=float(cur_fin.solar_inverter_eur_w), step=0.01, format="%.2f",
+                    key="comb_fin_sol_inv", disabled=not cur_sys.enable_solar,
+                )
+                sol_mnt = st.number_input(
+                    "Mounting & Installation (€/Wp)",
+                    min_value=0.0, max_value=3.0, value=float(cur_fin.solar_mounting_eur_wp), step=0.02, format="%.2f",
+                    key="comb_fin_sol_mnt", disabled=not cur_sys.enable_solar,
+                )
+                sol_om = st.number_input(
+                    "Annual Maintenance (% of CAPEX/yr)",
+                    min_value=0.0, max_value=15.0, value=float(cur_fin.solar_om_pct_of_capex), step=0.25,
+                    key="comb_fin_sol_om", disabled=not cur_sys.enable_solar,
+                )
+            with s_led:
+                sol_net_benefit = fk.solar_direct_value_y1_eur + fk.solar_export_revenue_eur - fk.solar_om_eur
+                sol_rows = [
+                    {"group": "Upfront Investment (CAPEX)"},
+                    {"cells": ["1.1 Solar Modules", f"{deriv.installed_kwp:,.1f} kWp &times; 1,000 &times; &euro;{cur_fin.solar_modules_eur_wp:.2f}", "&mdash;", f"&euro;{fk.solar_modules_capex_eur:,.0f}"]},
+                    {"cells": ["1.2 Solar Inverters", f"{deriv.installed_kwp:,.1f} kWp &times; 1,000 &times; &euro;{cur_fin.solar_inverter_eur_w:.2f}", "&mdash;", f"&euro;{fk.solar_inverter_capex_eur:,.0f}"]},
+                    {"cells": ["1.3 Mounting &amp; Installation", f"{deriv.installed_kwp:,.1f} kWp &times; 1,000 &times; &euro;{cur_fin.solar_mounting_eur_wp:.2f}", "&mdash;", f"&euro;{fk.solar_mounting_capex_eur:,.0f}"]},
+                    {"group": "Annual Operating Cost &amp; Value Generated"},
+                    {"cells": ["Annual Maintenance (O&amp;M)", f"{cur_fin.solar_om_pct_of_capex:.2f}% &times; &euro;{fk.solar_capex_eur:,.0f}", f"-&euro;{fk.solar_om_eur / 12.0:,.0f}", f"-&euro;{fk.solar_om_eur:,.0f}"], "highlight": "#EF4444"},
+                    {"cells": ["Direct Electricity Saved", f"{kpis.solar_direct_kwh:,.0f} kWh &times; &euro;{fk.variable_grid_rate_eur_kwh:.3f}", f"+&euro;{fk.solar_direct_value_y1_eur / 12.0:,.0f}", f"+&euro;{fk.solar_direct_value_y1_eur:,.0f}"], "highlight": "#22C55E"},
+                    {"cells": ["Export Feed-in Revenue", f"{kpis.solar_export_kwh:,.0f} kWh &times; &euro;{cur_fin.solar_export_feed_in_eur_kwh:.3f}", f"+&euro;{fk.solar_export_revenue_eur / 12.0:,.0f}", f"+&euro;{fk.solar_export_revenue_eur:,.0f}"], "highlight": "#22C55E"},
+                ]
                 st.markdown(
-                    f"##### :material/solar_power: Block B – Solar Costs ({sim_res.solar_derivation.installed_kwp:,.1f} kWp Active)"
+                    _render_sub_ledger_html(
+                        header_title=f"Solar PV Financial Breakdown (Total CAPEX: &euro;{fk.solar_capex_eur:,.0f})",
+                        columns=["Line Item", "Calculation (Qty &times; Rate)", "Monthly", "One-Off / Annual"],
+                        rows=sol_rows,
+                        footer_cells=[
+                            "= NET ANNUAL SOLAR VALUE (AFTER O&amp;M)",
+                            f"&euro;{sol_net_benefit / 12.0:+,.0f}/mo",
+                            f"&euro;{sol_net_benefit:+,.0f}/yr",
+                        ],
+                        accent_color="#FACC15",
+                        is_enabled=cur_sys.enable_solar,
+                    ),
+                    unsafe_allow_html=True,
                 )
-                sc1, sc2, sc3, sc4 = st.columns(4)
-                with sc1:
-                    sol_mod = st.number_input(
-                        "Modules (€/Wp)",
-                        min_value=0.0, max_value=3.0, value=float(cur_fin.solar_modules_eur_wp), step=0.02, format="%.2f",
-                        key="comb_fin_sol_mod",
-                    )
-                with sc2:
-                    sol_inv = st.number_input(
-                        "Inverter (€/W)",
-                        min_value=0.0, max_value=2.0, value=float(cur_fin.solar_inverter_eur_w), step=0.01, format="%.2f",
-                        key="comb_fin_sol_inv",
-                    )
-                with sc3:
-                    sol_mnt = st.number_input(
-                        "Mounting & Installation (€/Wp)",
-                        min_value=0.0, max_value=3.0, value=float(cur_fin.solar_mounting_eur_wp), step=0.02, format="%.2f",
-                        key="comb_fin_sol_mnt",
-                    )
-                with sc4:
-                    sol_om = st.number_input(
-                        "Annual O&M (% of CAPEX/year)",
-                        min_value=0.0, max_value=15.0, value=float(cur_fin.solar_om_pct_of_capex), step=0.25,
-                        key="comb_fin_sol_om",
-                    )
 
-        if cur_sys.enable_battery:
-            with st.container(border=True):
-                st.markdown(
-                    f"##### :material/battery_charging_full: Block C – Battery Costs "
-                    f"({cur_sys.battery_capacity_kwh:,.0f} kWh / {cur_sys.battery_power_kw:,.0f} kW Active)"
-                )
-                bc1, bc2, bc3, bc4 = st.columns(4)
-                with bc1:
+        # --- 2. Battery Storage (BESS) ---
+        bat_badge = f"{cur_sys.battery_capacity_kwh:,.0f} kWh / {cur_sys.battery_power_kw:,.0f} kW Active" if cur_sys.enable_battery else "INACTIVE — €0"
+        with st.expander(f":material/battery_charging_full: Battery Costs ({bat_badge})", expanded=cur_sys.enable_battery):
+            b_in, b_led = st.columns([0.44, 0.56], gap="large")
+            with b_in:
+                b1, b2 = st.columns(2)
+                with b1:
                     bat_rack = st.number_input(
                         "Storage Racks (€/kWh)",
                         min_value=0.0, max_value=2000.0, value=float(cur_fin.battery_capex_eur_kwh), step=10.0,
-                        key="comb_fin_bat_rack",
+                        key="comb_fin_bat_rack", disabled=not cur_sys.enable_battery,
                     )
-                with bc2:
-                    bat_inv = st.number_input(
-                        "Inverter (€/kW)",
-                        min_value=0.0, max_value=2000.0, value=float(cur_fin.battery_capex_eur_kw), step=10.0,
-                        key="comb_fin_bat_inv",
-                    )
-                with bc3:
                     bat_bop = st.number_input(
                         "Installation & Cabling (€)",
                         min_value=0.0, max_value=500000.0, value=float(cur_fin.battery_fixed_bop_eur), step=1000.0,
-                        key="comb_fin_bat_bop",
+                        key="comb_fin_bat_bop", disabled=not cur_sys.enable_battery,
                     )
-                with bc4:
+                with b2:
+                    bat_inv = st.number_input(
+                        "Power Inverter (€/kW)",
+                        min_value=0.0, max_value=2000.0, value=float(cur_fin.battery_capex_eur_kw), step=10.0,
+                        key="comb_fin_bat_inv", disabled=not cur_sys.enable_battery,
+                    )
                     bat_om = st.number_input(
-                        "Annual O&M (% of CAPEX/year)",
+                        "Annual Maintenance (% of CAPEX/yr)",
                         min_value=0.0, max_value=15.0, value=float(cur_fin.battery_om_pct_of_capex), step=0.25,
-                        key="comb_fin_bat_om",
+                        key="comb_fin_bat_om", disabled=not cur_sys.enable_battery,
                     )
-
-                aug1, aug2, aug3 = st.columns([1.4, 1.1, 1.1])
-                with aug1:
+                a1, a2, a3 = st.columns([1.3, 0.85, 0.85])
+                with a1:
                     en_aug = st.checkbox(
-                        "Include Mid-Life Cell Replacement (Augmentation)",
+                        "Mid-Life Cell Replacement",
                         value=bool(cur_fin.enable_battery_augmentation),
-                        key="comb_fin_bat_aug_chk",
+                        key="comb_fin_bat_aug_chk", disabled=not cur_sys.enable_battery,
                     )
-                with aug2:
+                with a2:
                     aug_yr = st.number_input(
-                        "Replacement Year",
-                        min_value=5, max_value=14, value=int(cur_fin.battery_augmentation_year), step=1,
-                        key="comb_fin_bat_aug_yr",
+                        "Year", min_value=5, max_value=14, value=int(cur_fin.battery_augmentation_year), step=1,
+                        key="comb_fin_bat_aug_yr", disabled=not cur_sys.enable_battery,
                     )
-                with aug3:
+                with a3:
                     aug_pct = st.number_input(
-                        "Replacement Cost (% of Storage Racks)",
-                        min_value=10.0, max_value=100.0, value=float(cur_fin.battery_augmentation_pct_of_racks), step=5.0,
-                        key="comb_fin_bat_aug_pct",
+                        "Cost (% Racks)", min_value=10.0, max_value=100.0, value=float(cur_fin.battery_augmentation_pct_of_racks), step=5.0,
+                        key="comb_fin_bat_aug_pct", disabled=not cur_sys.enable_battery,
                     )
-
-        if cur_sys.enable_generator:
-            with st.container(border=True):
+            with b_led:
+                bat_rows = [
+                    {"group": "Upfront Investment (CAPEX)"},
+                    {"cells": ["2.1 Storage Racks", f"{cur_sys.battery_capacity_kwh:,.0f} kWh &times; &euro;{cur_fin.battery_capex_eur_kwh:,.0f}/kWh", "&mdash;", f"&euro;{fk.battery_rack_capex_eur:,.0f}"]},
+                    {"cells": ["2.2 Bidirectional Inverter", f"{cur_sys.battery_power_kw:,.0f} kW &times; &euro;{cur_fin.battery_capex_eur_kw:,.0f}/kW", "&mdash;", f"&euro;{fk.battery_inverter_capex_eur:,.0f}"]},
+                    {"cells": ["2.3 Installation &amp; Cabling", "Fixed Balance of Plant", "&mdash;", f"&euro;{fk.battery_bop_capex_eur:,.0f}"]},
+                    {"cells": [f"Planned Cell Replacement (Yr {int(cur_fin.battery_augmentation_year)})", f"{cur_fin.battery_augmentation_pct_of_racks:.0f}% of Racks (if enabled)", "&mdash;", f"&euro;{fk.battery_augmentation_eur:,.0f}"]},
+                    {"group": "Annual Operating Cost &amp; Value Enabled"},
+                    {"cells": ["Annual Battery Maintenance (O&amp;M)", f"{cur_fin.battery_om_pct_of_capex:.2f}% &times; &euro;{fk.battery_capex_eur:,.0f}", f"&euro;{fk.battery_om_eur / 12.0:,.0f}", f"&euro;{fk.battery_om_eur:,.0f}"], "highlight": "#EF4444"},
+                    {"cells": ["Stored Solar Discharged", f"{kpis.solar_via_battery_kwh:,.0f} kWh &times; &euro;{fk.variable_grid_rate_eur_kwh:.3f}", f"+&euro;{fk.solar_stored_value_y1_eur / 12.0:,.0f}", f"+&euro;{fk.solar_stored_value_y1_eur:,.0f}"], "highlight": "#22C55E"},
+                    {"cells": ["Peak Shaving &amp; Penalty Savings", f"Shared peak reduction ({kpis.peak_reduction_kw:,.1f} kW)", f"+&euro;{fk.grid_peak_and_penalty_savings_y1_eur / 12.0:,.0f}", f"+&euro;{fk.grid_peak_and_penalty_savings_y1_eur:,.0f}"], "highlight": "#22C55E"},
+                ]
                 st.markdown(
-                    f"##### :material/power: Block D – Generator Costs "
-                    f"({cur_sys.generator_rated_kw:,.0f} kW {cur_sys.fuel_type} Active)"
+                    _render_sub_ledger_html(
+                        header_title=f"Battery Storage (BESS) Financial Breakdown (Total CAPEX: &euro;{fk.battery_capex_eur:,.0f})",
+                        columns=["Line Item", "Calculation (Qty &times; Rate)", "Monthly", "One-Off / Annual"],
+                        rows=bat_rows,
+                        footer_cells=[
+                            "= ANNUAL BATTERY MAINTENANCE (O&amp;M)",
+                            f"&euro;{fk.battery_om_eur / 12.0:,.0f}/mo",
+                            f"&euro;{fk.battery_om_eur:,.0f}/yr",
+                        ],
+                        accent_color="#22C55E",
+                        is_enabled=cur_sys.enable_battery,
+                    ),
+                    unsafe_allow_html=True,
                 )
-                gc1, gc2, gc3, gc4, gc5 = st.columns([1.2, 1.1, 1.1, 0.9, 1.0])
-                with gc1:
-                    gen_model = st.selectbox(
-                        "Acquisition Mode",
-                        options=["Purchase (CAPEX)", "Monthly Rental (OPEX)"],
-                        index=0 if cur_fin.generator_cost_model == "Purchase (CAPEX)" else 1,
-                        key="comb_fin_gen_model",
-                    )
-                with gc2:
+
+        # --- 3. Peaking Generator ---
+        gen_badge = f"{cur_sys.generator_rated_kw:,.0f} kW {cur_sys.fuel_type} Active" if cur_sys.enable_generator else "INACTIVE — €0"
+        with st.expander(f":material/power: Generator Costs ({gen_badge})", expanded=cur_sys.enable_generator):
+            gn_in, gn_led = st.columns([0.44, 0.56], gap="large")
+            with gn_in:
+                gen_model = st.selectbox(
+                    "Acquisition Mode",
+                    options=["Purchase (CAPEX)", "Monthly Rental (OPEX)"],
+                    index=0 if cur_fin.generator_cost_model == "Purchase (CAPEX)" else 1,
+                    key="comb_fin_gen_model", disabled=not cur_sys.enable_generator,
+                )
+                g_c1, g_c2 = st.columns(2)
+                with g_c1:
                     gen_capex = st.number_input(
                         "Purchase Price (€)",
                         min_value=0.0, max_value=2000000.0, value=float(cur_fin.generator_capex_eur), step=1000.0,
-                        key="comb_fin_gen_capex",
+                        key="comb_fin_gen_capex", disabled=not cur_sys.enable_generator,
                     )
-                with gc3:
-                    gen_rent = st.number_input(
-                        "Monthly Rental (€/month)",
-                        min_value=0.0, max_value=100000.0, value=float(cur_fin.generator_rental_eur_month), step=100.0,
-                        key="comb_fin_gen_rent",
-                    )
-                with gc4:
                     fuel_pr = st.number_input(
-                        f"Fuel Price (€/{sim_res.kpis.generator_fuel_unit})",
+                        f"Fuel Price (€/{kpis.generator_fuel_unit})",
                         min_value=0.0, max_value=10.0, value=float(cur_fin.fuel_price_eur_per_unit), step=0.05, format="%.2f",
-                        key="comb_fin_gen_fuel",
+                        key="comb_fin_gen_fuel", disabled=not cur_sys.enable_generator,
                     )
-                with gc5:
+                with g_c2:
+                    gen_rent = st.number_input(
+                        "Monthly Rental (€/mo)",
+                        min_value=0.0, max_value=100000.0, value=float(cur_fin.generator_rental_eur_month), step=100.0,
+                        key="comb_fin_gen_rent", disabled=not cur_sys.enable_generator,
+                    )
                     gen_maint = st.number_input(
-                        "Maintenance (€/operating hour)",
+                        "Maintenance (€/op hr)",
                         min_value=0.0, max_value=500.0, value=float(cur_fin.generator_maintenance_eur_per_hour), step=0.5,
-                        key="comb_fin_gen_maint",
+                        key="comb_fin_gen_maint", disabled=not cur_sys.enable_generator,
                     )
+            with gn_led:
+                gen_rows = [
+                    {"group": f"Acquisition ({cur_fin.generator_cost_model})"},
+                    {"cells": ["3.1 Purchase Investment (CAPEX)", "One-off purchase (if selected)", "&mdash;", f"&euro;{fk.generator_capex_eur:,.0f}"]},
+                    {"cells": ["3.2 Rental / Leasing Fee (OPEX)", f"12 mos &times; &euro;{cur_fin.generator_rental_eur_month:,.0f}/mo (if rental)", f"&euro;{fk.generator_rental_cost_eur / 12.0:,.0f}", f"&euro;{fk.generator_rental_cost_eur:,.0f}"]},
+                    {"group": "Annual Fuel &amp; Operating Maintenance"},
+                    {"cells": [f"3.3 Fuel Consumption ({cur_sys.fuel_type})", f"{kpis.generator_fuel_total:,.1f} {kpis.generator_fuel_unit} &times; &euro;{cur_fin.fuel_price_eur_per_unit:.2f}", f"&euro;{fk.generator_fuel_cost_eur / 12.0:,.0f}", f"&euro;{fk.generator_fuel_cost_eur:,.0f}"]},
+                    {"cells": ["3.4 Running Hour Service", f"{kpis.generator_runtime_hours:,.1f} hrs &times; &euro;{cur_fin.generator_maintenance_eur_per_hour:.2f}/hr", f"&euro;{fk.generator_maintenance_cost_eur / 12.0:,.0f}", f"&euro;{fk.generator_maintenance_cost_eur:,.0f}"]},
+                ]
+                st.markdown(
+                    _render_sub_ledger_html(
+                        header_title=f"Generator Financial Breakdown (Generated to Load: {kpis.generator_to_load_kwh:,.0f} kWh/yr)",
+                        columns=["Line Item", "Calculation (Qty &times; Rate)", "Monthly", "One-Off / Annual"],
+                        rows=gen_rows,
+                        footer_cells=[
+                            "= TOTAL GENERATOR ANNUAL OPEX",
+                            f"&euro;{fk.generator_total_opex_eur / 12.0:,.0f}/mo",
+                            f"&euro;{fk.generator_total_opex_eur:,.0f}/yr",
+                        ],
+                        accent_color="#F97316",
+                        is_enabled=cur_sys.enable_generator,
+                    ),
+                    unsafe_allow_html=True,
+                )
 
-        fin_submitted = st.form_submit_button(
-            "Calculate Financials",
+        # --- 4. Avoided Grid Expansion Credits ---
+        with st.expander(":material/savings: Saved Grid Upgrade Cost", expanded=bool(cur_fin.avoided_grid_upgrade_capex_eur > 0.0)):
+            av_in, av_led = st.columns([0.44, 0.56], gap="large")
+            with av_in:
+                avoided_upgrade = st.number_input(
+                    "One-Off Avoided Grid Upgrade Cost (€)",
+                    min_value=0.0, max_value=5000000.0, value=float(cur_fin.avoided_grid_upgrade_capex_eur), step=5000.0,
+                    key="comb_fin_avoided_upgrade",
+                    help="Capital expenditure avoided by peak shaving instead of paying the DSO for a grid expansion.",
+                )
+            with av_led:
+                st.info(
+                    f":material/info: **Net Project Investment Summary:**  \n"
+                    f"Gross Hardware CAPEX (**€{fk.gross_capex_eur:,.0f}**) &minus; Avoided Grid Upgrade (**€{fk.avoided_grid_upgrade_capex_eur:,.0f}**) "
+                    f"= **Net Turnkey Investment: €{fk.total_capex_eur:,.0f}**."
+                )
+
+        hw_submitted = st.form_submit_button(
+            "Apply Hardware & Operating Costs",
+            icon=":material/check_circle:",
             type="primary",
             use_container_width=True,
         )
 
-    if fin_submitted or sim_res.financial_kpis is None:
-        cur_fin.supplier_energy_price_eur_kwh = float(supp_kwh)
-        cur_fin.supplier_fixed_fee_eur_month = float(supp_fix)
-        cur_fin.dso_capacity_fee_eur_kw_month = float(dso_cap)
-        cur_fin.dso_peak_demand_fee_eur_kw_month = float(dso_peak)
-        cur_fin.dso_transport_eur_kwh = float(dso_vol)
-        cur_fin.grid_overload_penalty_eur_kw = float(dso_pen)
-        cur_fin.dso_fixed_fee_eur_month = float(dso_fix)
-        cur_fin.avoided_transformer_rent_eur_month = float(avoided_trafo)
-        cur_fin.metering_fixed_fee_eur_month = float(meter_fix)
-        cur_fin.avoided_grid_upgrade_capex_eur = float(avoided_upgrade)
-        cur_fin.energy_tax_eur_kwh = float(tax_kwh)
-        cur_fin.tax_surcharge_pct = float(tax_pct)
-        cur_fin.discount_rate_pct = float(disc_rate)
-        cur_fin.tariff_escalation_pct_pa = float(tariff_esc)
-        cur_fin.om_inflation_pct_pa = float(om_inf)
-        cur_fin.solar_export_feed_in_eur_kwh = float(solar_fi)
-        cur_fin.system_degradation_pct_pa = float(sys_deg)
-
+    if hw_submitted:
         if cur_sys.enable_solar:
             cur_fin.solar_modules_eur_wp = float(sol_mod)
             cur_fin.solar_inverter_eur_w = float(sol_inv)
@@ -2035,12 +2370,65 @@ def render_subtab6_financials(sim_res) -> None:
             cur_fin.fuel_price_eur_per_unit = float(fuel_pr)
             cur_fin.generator_maintenance_eur_per_hour = float(gen_maint)
 
+        cur_fin.avoided_grid_upgrade_capex_eur = float(avoided_upgrade)
         evaluate_combined_financials(sim_res, cur_fin)
         st.session_state.pop("comb_cached_excel_bytes", None)
+        st.rerun(scope="fragment")
+
+
+def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig, cur_fin: CombinedFinancialConfig) -> None:
+    """Sub-Tab 6.3: Executive Summary, 15-Year Dynamics, Component Cost Matrix & Financial Charts."""
+    # Long-Term Escalation, Degradation & Discount Rate Form
+    with st.form("comb_fin_longterm_form"):
+        st.markdown("##### :material/trending_up: Price Increases & Lifespan")
+        lt1, lt2, lt3, lt4, lt_btn = st.columns([1.0, 1.0, 1.0, 1.0, 1.1])
+        with lt1:
+            tariff_esc = st.number_input(
+                "Tariff Escalation (% p.a.)",
+                min_value=0.0, max_value=15.0, value=float(cur_fin.tariff_escalation_pct_pa), step=0.5,
+                key="comb_fin_tariff_esc",
+                help="Annual electricity & grid tariff inflation.",
+            )
+        with lt2:
+            om_inf = st.number_input(
+                "O&M Inflation (% p.a.)",
+                min_value=0.0, max_value=15.0, value=float(cur_fin.om_inflation_pct_pa), step=0.5,
+                key="comb_fin_om_inf",
+                help="Annual inflation for hardware maintenance and fuel.",
+            )
+        with lt3:
+            sys_deg = st.number_input(
+                "System Degradation (% p.a.)",
+                min_value=0.0, max_value=5.0, value=float(cur_fin.system_degradation_pct_pa), step=0.1, format="%.2f",
+                key="comb_fin_sys_deg",
+                help="Annual yield/capacity degradation of solar & battery.",
+            )
+        with lt4:
+            disc_rate = st.number_input(
+                "Discount Rate for NPV (%)",
+                min_value=0.0, max_value=20.0, value=float(cur_fin.discount_rate_pct), step=0.5,
+                key="comb_fin_disc_rate",
+            )
+        with lt_btn:
+            st.write("")
+            st.write("")
+            lt_submitted = st.form_submit_button(
+                "Update Projection",
+                icon=":material/refresh:",
+                type="primary",
+                use_container_width=True,
+            )
+
+    if lt_submitted:
+        cur_fin.tariff_escalation_pct_pa = float(tariff_esc)
+        cur_fin.om_inflation_pct_pa = float(om_inf)
+        cur_fin.system_degradation_pct_pa = float(sys_deg)
+        cur_fin.discount_rate_pct = float(disc_rate)
+        evaluate_combined_financials(sim_res, cur_fin)
+        st.session_state.pop("comb_cached_excel_bytes", None)
+        st.rerun(scope="fragment")
 
     fin_kpis = sim_res.financial_kpis
-
-    st.markdown("---")
 
     # Economic Bottleneck Alert (Automatic Diagnostic)
     if cur_sys.enable_battery and fin_kpis.battery_om_eur > 0:
@@ -2055,7 +2443,7 @@ def render_subtab6_financials(sim_res) -> None:
                 f"substantially reduces CAPEX and O&M costs."
             )
 
-    st.markdown("##### :material/account_balance: Consolidated Financial Summary")
+    st.markdown("##### :material/account_balance: Financial Summary")
 
     # Row 1: Year-1 Operations & Turnkey Investment
     fk1, fk2, fk3, fk4 = st.columns(4)
@@ -2066,30 +2454,30 @@ def render_subtab6_financials(sim_res) -> None:
             else f"Solar: €{fin_kpis.solar_capex_eur:,.0f} | Battery: €{fin_kpis.battery_capex_eur:,.0f} | Gen: €{fin_kpis.generator_capex_eur:,.0f}"
         )
         render_kpi_card(
-            title="Total Turnkey Investment (CAPEX)",
+            title="Net Turnkey Investment (CAPEX)",
             value=f"€{fin_kpis.total_capex_eur:,.0f}",
             subtext=capex_subtext,
             status="default",
         )
     with fk2:
         render_kpi_card(
-            title="Year-1 Operational Cost (OPEX)",
+            title="Year-1 Operating Cost (OPEX)",
             value=f"€{fin_kpis.total_annual_opex_eur:,.0f} / yr",
-            subtext=f"Grid: €{fin_kpis.combined_grid_total_eur:,.0f} | O&M: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
+            subtext=f"Grid: €{fin_kpis.combined_grid_total_eur:,.0f} | O&M + Fuel: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
             status="default",
         )
     with fk3:
         render_kpi_card(
             title="Year-1 Net Cash Savings",
             value=f"€{fin_kpis.annual_savings_eur:,.0f} / yr",
-            subtext=f"Gross Savings: €{fin_kpis.gross_bill_savings_y1_eur:,.0f} - O&M: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
+            subtext=f"Gross Bill Savings: €{fin_kpis.gross_bill_savings_y1_eur:,.0f} - O&M: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
             status="ok" if fin_kpis.annual_savings_eur > 0 else "alert",
         )
     with fk4:
         pb_str = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
         disc_pb_str = f"{fin_kpis.discounted_payback_years:.1f} yrs" if fin_kpis.discounted_payback_years is not None else "N/A"
         render_kpi_card(
-            title="Simple & Discounted Payback",
+            title="Payback (Simple & Discounted)",
             value=f"{pb_str} | {disc_pb_str}",
             subtext="Simple Payback vs. Discounted Break-Even",
             status="ok" if fin_kpis.payback_years is not None else "alert",
@@ -2107,14 +2495,14 @@ def render_subtab6_financials(sim_res) -> None:
     with fk6:
         irr_str = f"IRR: {fin_kpis.irr_15y_pct:.1f}%" if fin_kpis.irr_15y_pct is not None else "IRR: N/A"
         render_kpi_card(
-            title="15-Year Net Present Value & IRR",
+            title="15-Year Net Profit (NPV) & IRR",
             value=f"€{fin_kpis.npv_15y_eur:,.0f} | {irr_str}",
             subtext=f"15-Year NPV at {cur_fin.discount_rate_pct:.1f}% discount rate",
             status="ok" if fin_kpis.npv_15y_eur > 0 else "default",
         )
     with fk7:
         render_kpi_card(
-            title="System LCOE vs. Grid Rate",
+            title="On-Site Energy Cost vs. Grid",
             value=f"€{fin_kpis.system_lcoe_eur_kwh:.3f} / kWh",
             subtext=f"Effective Grid Rate: €{fin_kpis.effective_blended_grid_rate_eur_kwh:.3f} / kWh",
             status="ok" if (0.0 < fin_kpis.system_lcoe_eur_kwh < fin_kpis.effective_blended_grid_rate_eur_kwh) else "default",
@@ -2127,17 +2515,99 @@ def render_subtab6_financials(sim_res) -> None:
             status="default",
         )
 
+    # Complete Component & Cost Summary Matrix
+    with st.container(border=True):
+        st.markdown("##### :material/summarize: System Cost Summary")
+        comp_rows = [
+            {"cells": ["1. Electricity Supply (Retailer)", "&euro;0", f"&euro;{fin_kpis.baseline_pillar1_supply_eur:,.0f}", f"&euro;{fin_kpis.combined_pillar1_supply_eur:,.0f}", f"&euro;{fin_kpis.baseline_pillar1_supply_eur - fin_kpis.combined_pillar1_supply_eur:+,.0f}"], "highlight": "#22C55E" if fin_kpis.baseline_pillar1_supply_eur > fin_kpis.combined_pillar1_supply_eur else None},
+            {"cells": ["2. Grid Network (DSO &amp; Peaks)", f"-&euro;{fin_kpis.avoided_grid_upgrade_capex_eur:,.0f}" if fin_kpis.avoided_grid_upgrade_capex_eur > 0 else "&euro;0", f"&euro;{fin_kpis.baseline_pillar2_dso_eur:,.0f}", f"&euro;{fin_kpis.combined_pillar2_dso_eur:,.0f}", f"&euro;{fin_kpis.baseline_pillar2_dso_eur - fin_kpis.combined_pillar2_dso_eur:+,.0f}"], "highlight": "#22C55E" if fin_kpis.baseline_pillar2_dso_eur > fin_kpis.combined_pillar2_dso_eur else None},
+            {"cells": ["3. Metering &amp; Statutory Taxes", "&euro;0", f"&euro;{fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur:,.0f}", f"&euro;{fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur:,.0f}", f"&euro;{(fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur) - (fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur):+,.0f}"], "highlight": "#22C55E" if fin_kpis.baseline_pillar4_taxes_eur > fin_kpis.combined_pillar4_taxes_eur else None},
+            {"cells": ["4. Solar PV System (O&amp;M)", f"&euro;{fin_kpis.solar_capex_eur:,.0f}", "&euro;0", f"&euro;{fin_kpis.solar_om_eur:,.0f}", f"-&euro;{fin_kpis.solar_om_eur:,.0f}" if fin_kpis.solar_om_eur > 0 else "&euro;0"], "highlight": "#EF4444" if fin_kpis.solar_om_eur > 0 else None},
+            {"cells": ["5. Battery Storage BESS (O&amp;M)", f"&euro;{fin_kpis.battery_capex_eur:,.0f}", "&euro;0", f"&euro;{fin_kpis.battery_om_eur:,.0f}", f"-&euro;{fin_kpis.battery_om_eur:,.0f}" if fin_kpis.battery_om_eur > 0 else "&euro;0"], "highlight": "#EF4444" if fin_kpis.battery_om_eur > 0 else None},
+            {"cells": ["6. Peaking Generator (Fuel &amp; Service)", f"&euro;{fin_kpis.generator_capex_eur:,.0f}", "&euro;0", f"&euro;{fin_kpis.generator_total_opex_eur:,.0f}", f"-&euro;{fin_kpis.generator_total_opex_eur:,.0f}" if fin_kpis.generator_total_opex_eur > 0 else "&euro;0"], "highlight": "#EF4444" if fin_kpis.generator_total_opex_eur > 0 else None},
+            {"cells": ["7. Solar Export Feed-in Revenue", "&euro;0", "&euro;0", f"-&euro;{fin_kpis.solar_export_revenue_eur:,.0f}" if fin_kpis.solar_export_revenue_eur > 0 else "&euro;0", f"+&euro;{fin_kpis.solar_export_revenue_eur:,.0f}" if fin_kpis.solar_export_revenue_eur > 0 else "&euro;0"], "highlight": "#22C55E" if fin_kpis.solar_export_revenue_eur > 0 else None},
+        ]
+        st.markdown(
+            _render_sub_ledger_html(
+                header_title="Costs &amp; Savings by Component",
+                columns=["Cost Component", "One-Off CAPEX", "Current (/yr)", "With System (/yr)", "Annual Impact (/yr)"],
+                rows=comp_rows,
+                footer_cells=[
+                    "= TOTAL COMBINED SYSTEM (NET)",
+                    f"&euro;{fin_kpis.total_capex_eur:,.0f}",
+                    f"&euro;{fin_kpis.baseline_total_opex_eur:,.0f}/yr",
+                    f"&euro;{fin_kpis.total_annual_opex_eur:,.0f}/yr",
+                    f"&euro;{fin_kpis.annual_savings_eur:+,.0f}/yr",
+                ],
+                accent_color="#10B981",
+                is_enabled=True,
+            ),
+            unsafe_allow_html=True,
+        )
+
     # Interactive Financial Chart Gallery (isolated fragment)
     _render_financial_chart_gallery_fragment(sim_res)
 
-    # 15-Year Cashflow Table
-    with st.container(border=True):
-        st.markdown("##### :material/table_chart: 15-Year Lifecycle Cashflow Table")
-        st.dataframe(
-            sim_res.cashflow_15y_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+    # Expandable 15-Year Cashflow Table (isolated fragment)
+    _render_cashflow_table_expander_fragment(sim_res)
+
+
+@st.fragment
+def render_subtab6_financials(sim_res) -> None:
+    """
+    Renders Subtab 6: Financials (Lazy-loaded, @st.fragment isolated):
+      - Live Master Cost & Savings Equation Bar
+      - 3 Structured Inner Sub-Tabs modeled after Currentsituation_sandbox:
+          * 6.1: Electricity Bill & Grid Tariffs (3-Zone: Inputs | Bill Sub-Ledger | Monthly Progression)
+          * 6.2: System Hardware & Operating Costs (Solar, Battery, Generator & Avoided Grid Credit)
+          * 6.3: Executive Summary & 15-Year Projection (8 KPIs, Component Matrix, Charts, 15Y Ledger)
+    """
+    cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
+    cur_fin: CombinedFinancialConfig = st.session_state["comb_fin_cfg"]
+    is_fin_active = bool(cur_sys.enable_financials)
+
+    if not is_fin_active:
+        with st.container(border=True):
+            f_col1, f_col2 = st.columns([2.5, 1.2])
+            with f_col1:
+                st.markdown(
+                    "**Financials is currently paused for maximum simulation speed.** "
+                    "Click **Activate Financials** to run the 4-Pillar Tariff billing, component investment breakdown, "
+                    "monthly progression charts, and 15-year cashflow analysis."
+                )
+            with f_col2:
+                st.button(
+                    "Activate Financials",
+                    icon=":material/power_settings_new:",
+                    type="primary",
+                    use_container_width=True,
+                    key="comb_btn_activate_financials",
+                    on_click=_activate_module_callback,
+                    args=("comb_enable_financials_toggle",),
+                )
+        return
+
+    if sim_res.financial_kpis is None:
+        evaluate_combined_financials(sim_res, cur_fin)
+
+    # Top: Live Master Cost & Savings Equation Bar
+    st.markdown(_render_master_cost_equation_bar(sim_res), unsafe_allow_html=True)
+
+    # 3 Structured Financial Inner Sub-Tabs
+    fin_tabs = st.tabs([
+        ":material/receipt_long: 1. Electricity Bill",
+        ":material/precision_manufacturing: 2. Hardware & Running Costs",
+        ":material/analytics: 3. 15-Year Overview",
+    ])
+
+    with fin_tabs[0]:
+        _render_subtab6_1_grid_tariffs(sim_res, cur_sys, cur_fin)
+
+    with fin_tabs[1]:
+        _render_subtab6_2_hardware_costs(sim_res, cur_sys, cur_fin)
+
+    with fin_tabs[2]:
+        _render_subtab6_3_executive_overview(sim_res, cur_sys, cur_fin)
 
 
 # ======================================================================================
@@ -2192,24 +2662,20 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
 
     if has_active_system and not has_unmet:
         st.success(
-            "**:material/check_circle: 100% Physically Feasible: Zero Remaining Deficit**\n\n"
-            "All physical constraints (inverter discharge power, multi-peak storage capacity, recharge power, "
-            "and annual grid recharge headroom) are completely satisfied."
+            "**:material/check_circle: Grid Limit Met (Zero Overload)**\n\n"
+            "Your system covers all demand peaks above the Grid Limit."
         )
     elif has_active_system and has_unmet:
         st.warning(
-            f"**:material/warning: Active Overload Detected ({unmet_kwh:,.0f} kWh across {unmet_hours:,.1f} hrs)**\n\n"
-            "Remaining overload above contracted grid limit requires additional storage capacity, inverter power, or peaker assist."
+            f"**:material/warning: Remaining Overload ({unmet_kwh:,.0f} kWh across {unmet_hours:,.1f} hrs)**\n\n"
+            "Some peaks still exceed the Grid Limit. Increase battery or generator size if needed."
         )
 
     with st.container(border=True):
         hdr1, hdr2 = st.columns([3.5, 1.3])
         with hdr1:
-            st.markdown("#### :material/monitoring: Synchronized 15-Min Power Dispatch & Battery SoC")
-            st.caption(
-                "Linked 2-panel Plotly subplot (shared X-axis): Zooming, panning, or selecting time ranges "
-                "synchronously updates both active power flows (kW) and battery State of Charge envelope."
-            )
+            st.markdown("#### :material/monitoring: Power Flow & Battery Level")
+            st.caption("Zoom or select a timeframe to inspect power flows and battery charge.")
         with hdr2:
             st.write("")
             _render_excel_export_fragment(sim_res)
@@ -2239,7 +2705,7 @@ def render_level3_permanent_master_output(sim_res) -> None:
     fin_kpis = sim_res.financial_kpis
 
     st.markdown("---")
-    st.markdown("#### :material/monitoring: Master System Output (Live 15-Minute Simulation)")
+    st.markdown("#### :material/monitoring: Simulation Results")
 
     # 1. 4 Compact Master KPIs
     mk1, mk2, mk3, mk4 = st.columns(4)
@@ -2309,7 +2775,7 @@ def render_level3_permanent_master_output(sim_res) -> None:
 
     # 3. Compact System Comparison Table
     with st.container(border=True):
-        st.markdown("##### :material/table_chart: System Comparison Table (vs. Current situation)")
+        st.markdown("##### :material/table_chart: System Comparison")
         if cfg.enable_financials and not sim_res.financial_table_df.empty:
             st.dataframe(
                 sim_res.financial_table_df,
@@ -2326,14 +2792,15 @@ def render_level3_permanent_master_output(sim_res) -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="Combined system (Grid + Solar + Battery + Generator)",
+        page_title="Combined System",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
     apply_custom_styles()
     _init_session_defaults()
 
-    st.markdown("### :material/hub: Combined system (Grid + Solar + Battery + Generator)")
+    st.markdown("### :material/hub: Combined System")
+    st.caption("Grid + Solar + Battery + Generator")
 
     load_series, load_label = _get_active_load_series()
 

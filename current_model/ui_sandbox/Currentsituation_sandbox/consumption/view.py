@@ -43,8 +43,8 @@ def render_tab1_consumption(key_prefix: str = "tab1") -> None:
         st.session_state["tab1_active_source"] = active_source
 
     options = [
-        ":material/bolt: Synthetic Load Simulator (24h / 365-Day)",
-        ":material/upload_file: CSV Real Meter Data Visualizer"
+        ":material/bolt: Custom Profile Builder",
+        ":material/upload_file: Upload CSV Data"
     ]
     default_idx = 1 if active_source == "csv" else 0
 

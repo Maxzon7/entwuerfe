@@ -387,6 +387,39 @@ class CombinedFinancialKPIs:
     system_lcoe_eur_kwh: float = 0.0
     annualized_cost_per_shaved_kw_eur: float = 0.0
 
+    # Granular Sub-Ledger Itemization (for 3-Zone Financial Workbench)
+    baseline_supply_energy_eur: float = 0.0
+    combined_supply_energy_eur: float = 0.0
+    baseline_supply_fixed_eur: float = 0.0
+    combined_supply_fixed_eur: float = 0.0
+    baseline_dso_fixed_eur: float = 0.0
+    combined_dso_fixed_eur: float = 0.0
+    baseline_dso_capacity_eur: float = 0.0
+    combined_dso_capacity_eur: float = 0.0
+    baseline_dso_peak_eur: float = 0.0
+    combined_dso_peak_eur: float = 0.0
+    baseline_dso_transport_eur: float = 0.0
+    combined_dso_transport_eur: float = 0.0
+    baseline_dso_transformer_rent_eur: float = 0.0
+    combined_dso_transformer_rent_eur: float = 0.0
+    baseline_energy_tax_eur: float = 0.0
+    combined_energy_tax_eur: float = 0.0
+    baseline_tax_surcharge_eur: float = 0.0
+    combined_tax_surcharge_eur: float = 0.0
+
+    # Hardware CAPEX Sub-Itemization & Component Impact Attribution
+    solar_modules_capex_eur: float = 0.0
+    solar_inverter_capex_eur: float = 0.0
+    solar_mounting_capex_eur: float = 0.0
+    battery_rack_capex_eur: float = 0.0
+    battery_inverter_capex_eur: float = 0.0
+    battery_bop_capex_eur: float = 0.0
+    variable_grid_rate_eur_kwh: float = 0.0
+    grid_volume_savings_y1_eur: float = 0.0
+    grid_peak_and_penalty_savings_y1_eur: float = 0.0
+    solar_direct_value_y1_eur: float = 0.0
+    solar_stored_value_y1_eur: float = 0.0
+
 
 @dataclass
 class SolarDerivationInfo:
@@ -2401,6 +2434,19 @@ def evaluate_combined_financials(
     # 1. Itemized Turnkey CAPEX
     solar_capex_kwp = fin_cfg.effective_solar_capex_eur_kwp
     solar_capex = (solar_deriv.installed_kwp * solar_capex_kwp) if cfg.enable_solar else 0.0
+    if cfg.enable_solar:
+        if fin_cfg.solar_capex_eur_kwp is not None:
+            solar_modules_capex = solar_capex
+            solar_inverter_capex = 0.0
+            solar_mounting_capex = 0.0
+        else:
+            solar_modules_capex = solar_deriv.installed_kwp * 1000.0 * float(fin_cfg.solar_modules_eur_wp)
+            solar_inverter_capex = solar_deriv.installed_kwp * 1000.0 * float(fin_cfg.solar_inverter_eur_w)
+            solar_mounting_capex = solar_deriv.installed_kwp * 1000.0 * float(fin_cfg.solar_mounting_eur_wp)
+    else:
+        solar_modules_capex = 0.0
+        solar_inverter_capex = 0.0
+        solar_mounting_capex = 0.0
 
     battery_rack_capex = cfg.battery_capacity_kwh * fin_cfg.battery_capex_eur_kwh if cfg.enable_battery else 0.0
     battery_inv_capex = cfg.battery_power_kw * fin_cfg.battery_capex_eur_kw if cfg.enable_battery else 0.0
@@ -2458,12 +2504,22 @@ def evaluate_combined_financials(
     base_p3_sum = 0.0
     base_p4_sum = 0.0
     base_pen_sum = 0.0
+    base_supp_energy_sum = 0.0
+    base_dso_peak_sum = 0.0
+    base_dso_vol_sum = 0.0
+    base_tax_kwh_sum = 0.0
+    base_tax_surcharge_sum = 0.0
 
     comb_p1_sum = 0.0
     comb_p2_sum = 0.0
     comb_p3_sum = 0.0
     comb_p4_sum = 0.0
     comb_pen_sum = 0.0
+    comb_supp_energy_sum = 0.0
+    comb_dso_peak_sum = 0.0
+    comb_dso_vol_sum = 0.0
+    comb_tax_kwh_sum = 0.0
+    comb_tax_surcharge_sum = 0.0
 
     gen_fuel_cost_sum = 0.0
     gen_maint_cost_sum = 0.0
@@ -2486,19 +2542,31 @@ def evaluate_combined_financials(
         gen_fuel = float(row["Generator Fuel"])
 
         # Baseline (Current situation) 4 Pillars
-        b_p1 = cons_kwh * supp_kwh_rate + supp_fixed_mo
+        b_supp_en = cons_kwh * supp_kwh_rate
+        b_p1 = b_supp_en + supp_fixed_mo
         b_pen = base_over_kw * pen_rate_kw
-        b_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (base_peak_kw * dso_peak_rate) + dso_fixed_mo + (cons_kwh * dso_vol_rate) + trafo_rent_mo + b_pen
+        b_cap = cfg.grid_limit_kw * dso_cap_rate
+        b_pk = base_peak_kw * dso_peak_rate
+        b_vol = cons_kwh * dso_vol_rate
+        b_p2 = b_cap + b_pk + dso_fixed_mo + b_vol + trafo_rent_mo + b_pen
         b_p3 = meter_fixed_mo
-        b_p4 = (cons_kwh * tax_kwh_rate) + (b_p1 + b_p2 + b_p3) * tax_pct
+        b_tax_kwh = cons_kwh * tax_kwh_rate
+        b_tax_sur = (b_p1 + b_p2 + b_p3) * tax_pct
+        b_p4 = b_tax_kwh + b_tax_sur
         b_tot = b_p1 + b_p2 + b_p3 + b_p4
 
         # Combined system 4 Pillars + Component OPEX
-        c_p1 = comb_imp_kwh * supp_kwh_rate + supp_fixed_mo
+        c_supp_en = comb_imp_kwh * supp_kwh_rate
+        c_p1 = c_supp_en + supp_fixed_mo
         c_pen = comb_over_kw * pen_rate_kw
-        c_p2 = (cfg.grid_limit_kw * dso_cap_rate) + (comb_peak_kw * dso_peak_rate) + dso_fixed_mo + (comb_imp_kwh * dso_vol_rate) + c_pen
+        c_cap = cfg.grid_limit_kw * dso_cap_rate
+        c_pk = comb_peak_kw * dso_peak_rate
+        c_vol = comb_imp_kwh * dso_vol_rate
+        c_p2 = c_cap + c_pk + dso_fixed_mo + c_vol + c_pen
         c_p3 = meter_fixed_mo
-        c_p4 = (comb_imp_kwh * tax_kwh_rate) + (c_p1 + c_p2 + c_p3) * tax_pct
+        c_tax_kwh = comb_imp_kwh * tax_kwh_rate
+        c_tax_sur = (c_p1 + c_p2 + c_p3) * tax_pct
+        c_p4 = c_tax_kwh + c_tax_sur
 
         c_fuel = (gen_fuel * fin_cfg.fuel_price_eur_per_unit) if cfg.enable_generator else 0.0
         c_maint = (gen_hrs * fin_cfg.generator_maintenance_eur_per_hour) if cfg.enable_generator else 0.0
@@ -2510,12 +2578,22 @@ def evaluate_combined_financials(
         base_p3_sum += b_p3
         base_p4_sum += b_p4
         base_pen_sum += b_pen
+        base_supp_energy_sum += b_supp_en
+        base_dso_peak_sum += b_pk
+        base_dso_vol_sum += b_vol
+        base_tax_kwh_sum += b_tax_kwh
+        base_tax_surcharge_sum += b_tax_sur
 
         comb_p1_sum += c_p1
         comb_p2_sum += c_p2
         comb_p3_sum += c_p3
         comb_p4_sum += c_p4
         comb_pen_sum += c_pen
+        comb_supp_energy_sum += c_supp_en
+        comb_dso_peak_sum += c_pk
+        comb_dso_vol_sum += c_vol
+        comb_tax_kwh_sum += c_tax_kwh
+        comb_tax_surcharge_sum += c_tax_sur
 
         gen_fuel_cost_sum += c_fuel
         gen_maint_cost_sum += c_maint
@@ -2523,6 +2601,17 @@ def evaluate_combined_financials(
 
         monthly_cost_rows.append({
             "Month": m_name,
+            "Current situation Peak (kW)": round(base_peak_kw, 1),
+            "Combined Grid Peak (kW)": round(comb_peak_kw, 1),
+            "Combined Grid Import (kWh)": round(comb_imp_kwh, 0),
+            "Combined Standing & Metering (€)": round(supp_fixed_mo + dso_fixed_mo + meter_fixed_mo, 2),
+            "Combined Booked Capacity (€)": round(c_cap, 2),
+            "Combined Peak Demand Fee (€)": round(c_pk, 2),
+            "Combined DSO Transport (€)": round(c_vol, 2),
+            "Combined DSO Total (€)": round(c_p2, 2),
+            "Current situation DSO Total (€)": round(b_p2, 2),
+            "Combined Supply & Tax (€)": round(c_supp_en + c_p4, 2),
+            "Current situation Supply & Tax (€)": round(b_supp_en + b_p4, 2),
             "Current situation Energy & Taxes (€)": round(b_p1 - supp_fixed_mo + b_p4, 2),
             "Current situation Network & Standing (€)": round(b_p2 - b_pen + supp_fixed_mo + b_p3, 2),
             "Current situation Overload Penalty (€)": round(b_pen, 2),
@@ -2656,10 +2745,18 @@ def evaluate_combined_financials(
 
     irr_val = _calculate_irr(net_cfs_for_irr)
 
-    # Unit metrics
+    # Unit metrics & sub-ledger savings attribution
     ann_cons = max(1.0, float(kpis.annual_consumption_kwh))
     eff_grid_rate = baseline_total_opex / ann_cons
     sys_lcoe = (disc_sys_cost_acc / disc_sys_energy_acc) if disc_sys_energy_acc > 1.0 else 0.0
+
+    var_grid_rate = (supp_kwh_rate + dso_vol_rate) * (1.0 + tax_pct) + tax_kwh_rate
+    total_cons_kwh_m = float(mb_df["Consumption (kWh)"].sum()) if not mb_df.empty else ann_cons
+    total_imp_kwh_m = float(mb_df["Combined Grid Import (kWh)"].sum()) if not mb_df.empty else float(kpis.grid_import_total_kwh)
+    grid_vol_savings = (total_cons_kwh_m - total_imp_kwh_m) * var_grid_rate
+    grid_peak_pen_savings = (baseline_total_opex - combined_grid_total) - grid_vol_savings
+    solar_direct_val = float(getattr(kpis, "solar_direct_kwh", 0.0)) * var_grid_rate if cfg.enable_solar else 0.0
+    solar_stored_val = float(getattr(kpis, "solar_via_battery_kwh", 0.0)) * var_grid_rate if (cfg.enable_solar and cfg.enable_battery) else 0.0
 
     peak_red = float(getattr(kpis, "peak_reduction_kw", 0.0))
     if peak_red > 0.1:
@@ -2719,6 +2816,35 @@ def evaluate_combined_financials(
         effective_blended_grid_rate_eur_kwh=round(eff_grid_rate, 4),
         system_lcoe_eur_kwh=round(sys_lcoe, 4),
         annualized_cost_per_shaved_kw_eur=round(ann_cost_shaved_kw, 1),
+        baseline_supply_energy_eur=round(base_supp_energy_sum, 2),
+        combined_supply_energy_eur=round(comb_supp_energy_sum, 2),
+        baseline_supply_fixed_eur=round(12.0 * supp_fixed_mo, 2),
+        combined_supply_fixed_eur=round(12.0 * supp_fixed_mo, 2),
+        baseline_dso_fixed_eur=round(12.0 * dso_fixed_mo, 2),
+        combined_dso_fixed_eur=round(12.0 * dso_fixed_mo, 2),
+        baseline_dso_capacity_eur=round(12.0 * cfg.grid_limit_kw * dso_cap_rate, 2),
+        combined_dso_capacity_eur=round(12.0 * cfg.grid_limit_kw * dso_cap_rate, 2),
+        baseline_dso_peak_eur=round(base_dso_peak_sum, 2),
+        combined_dso_peak_eur=round(comb_dso_peak_sum, 2),
+        baseline_dso_transport_eur=round(base_dso_vol_sum, 2),
+        combined_dso_transport_eur=round(comb_dso_vol_sum, 2),
+        baseline_dso_transformer_rent_eur=round(12.0 * trafo_rent_mo, 2),
+        combined_dso_transformer_rent_eur=0.0,
+        baseline_energy_tax_eur=round(base_tax_kwh_sum, 2),
+        combined_energy_tax_eur=round(comb_tax_kwh_sum, 2),
+        baseline_tax_surcharge_eur=round(base_tax_surcharge_sum, 2),
+        combined_tax_surcharge_eur=round(comb_tax_surcharge_sum, 2),
+        solar_modules_capex_eur=round(solar_modules_capex, 0),
+        solar_inverter_capex_eur=round(solar_inverter_capex, 0),
+        solar_mounting_capex_eur=round(solar_mounting_capex, 0),
+        battery_rack_capex_eur=round(battery_rack_capex, 0),
+        battery_inverter_capex_eur=round(battery_inv_capex, 0),
+        battery_bop_capex_eur=round(battery_bop_capex, 0),
+        variable_grid_rate_eur_kwh=round(var_grid_rate, 4),
+        grid_volume_savings_y1_eur=round(grid_vol_savings, 0),
+        grid_peak_and_penalty_savings_y1_eur=round(grid_peak_pen_savings, 0),
+        solar_direct_value_y1_eur=round(solar_direct_val, 0),
+        solar_stored_value_y1_eur=round(solar_stored_val, 0),
     )
 
     denom = max(1.0, kpis.annual_consumption_kwh)

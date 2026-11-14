@@ -280,7 +280,7 @@ def _render_synthetic_inspection_and_charts_fragment(
             overload_kwh = float(overload_diff.sum() * 0.25)
             has_violation = overload_peak > 0.0
 
-            st.markdown("#### Grid Capacity Overload Analysis")
+            st.markdown("#### Grid Limit Exceedances")
             o1, o2, o3 = st.columns(3)
             with o1:
                 render_kpi_card(
@@ -310,7 +310,7 @@ def _render_synthetic_inspection_and_charts_fragment(
             overload_kwh = float(overload_diff.sum() * 0.25)
             has_violation = overload_peak > 0.0
 
-            st.markdown("#### Annual Grid Capacity Overload Analysis")
+            st.markdown("#### Annual Grid Limit Exceedances")
             o1, o2, o3 = st.columns(3)
             with o1:
                 render_kpi_card(
@@ -343,7 +343,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
         st.session_state[state_holidays_key] = pd.DataFrame(columns=["date", "holiday_name"])
 
     # 1. Preset & File Transfer Toolbar (.drac / Templates)
-    with st.expander("Profile Presets & File Transfer (.drac)", icon=":material/folder_open:", expanded=True):
+    with st.expander("Saved Profiles & Templates", icon=":material/folder_open:", expanded=True):
         f_col1, f_col2 = st.columns([1, 1])
 
         # LEFT: Upload & Predefined Templates
@@ -423,7 +423,7 @@ def render_synthetic_simulator(key_prefix: str = "synthetic") -> None:
             _render_synthetic_export_fragment(key_prefix=key_prefix, consumers=consumers)
 
     # 2. System-wide Holiday Calendar Expander (Treated as Sundays)
-    with st.expander("System-wide Holiday Calendar (Treated as Sundays)", icon=":material/calendar_month:", expanded=False):
+    with st.expander("Public Holidays", icon=":material/calendar_month:", expanded=False):
         st.caption("Add specific holiday dates (YYYY-MM-DD) which will automatically be simulated using the Sunday schedule.")
         edited_holidays = st.data_editor(
             st.session_state[state_holidays_key],

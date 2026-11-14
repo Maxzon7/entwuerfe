@@ -18,12 +18,12 @@ def render_csv_uploader_section(key_prefix: str = "csv_inspector") -> Tuple[Opti
     Renders the file uploader and demo loader button.
     Returns (uploaded_files, demo_requested).
     """
-    st.subheader("1. CSV Data Ingestion & Demo Data")
+    st.subheader("1. Upload CSV or Demo Data")
     col_up, col_demo = st.columns([5, 2])
 
     with col_up:
         uploaded_files = st.file_uploader(
-            "Upload Load Profile CSV(s) or ZIP folder:",
+            "Upload CSV or ZIP file(s):",
             type=["csv", "txt", "zip"],
             accept_multiple_files=True,
             key=f"{key_prefix}_uploader"
@@ -39,7 +39,7 @@ def render_csv_uploader_section(key_prefix: str = "csv_inspector") -> Tuple[Opti
         st.write("")
         st.write("")
         if st.session_state.get(f"{key_prefix}_demo_loaded"):
-            if st.button("Reset / Reload Demo Data", icon=":material/refresh:", key=f"{key_prefix}_reload_btn", use_container_width=True):
+            if st.button("Reload Demo Data", icon=":material/refresh:", key=f"{key_prefix}_reload_btn", use_container_width=True):
                 keys_to_clear = [k for k in list(st.session_state.keys()) if k.startswith(key_prefix)]
                 for k in keys_to_clear:
                     del st.session_state[k]
@@ -49,7 +49,7 @@ def render_csv_uploader_section(key_prefix: str = "csv_inspector") -> Tuple[Opti
                 st.session_state[f"{key_prefix}_demo_loaded"] = True
                 st.rerun()
         elif has_active_csv:
-            if st.button("Clear / Remove Uploaded Data", icon=":material/delete:", key=f"{key_prefix}_clear_btn", use_container_width=True):
+            if st.button("Clear Data", icon=":material/delete:", key=f"{key_prefix}_clear_btn", use_container_width=True):
                 keys_to_clear = [k for k in list(st.session_state.keys()) if k.startswith(key_prefix)]
                 for k in keys_to_clear:
                     del st.session_state[k]
@@ -58,7 +58,7 @@ def render_csv_uploader_section(key_prefix: str = "csv_inspector") -> Tuple[Opti
                         del st.session_state[k]
                 st.rerun()
         else:
-            if st.button("Load 15-Min Demo CSV (Full Year 2025)", icon=":material/play_circle:", key=f"{key_prefix}_demo_btn", use_container_width=True):
+            if st.button("Load Demo CSV", icon=":material/play_circle:", key=f"{key_prefix}_demo_btn", use_container_width=True):
                 keys_to_clear = [k for k in list(st.session_state.keys()) if k.startswith(key_prefix)]
                 for k in keys_to_clear:
                     del st.session_state[k]

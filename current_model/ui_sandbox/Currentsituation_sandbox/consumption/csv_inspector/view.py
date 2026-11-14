@@ -123,7 +123,7 @@ def _get_parsed_raw_csv_cached(
 @st.fragment
 def _render_csv_header_preview_fragment(key_prefix: str, file_name: str, raw_csv_text: str) -> None:
     """Isolates CSV header preview & skip-row changes inside a fragment."""
-    with st.expander(":material/search: **CSV Preview & Table Inspector**", expanded=False):
+    with st.expander(":material/search: **Raw File Preview**", expanded=False):
         skip_key = f"{key_prefix}_skip_{file_name}"
         prev_skip_key = f"{key_prefix}_prev_skip_{file_name}"
         if prev_skip_key not in st.session_state:
@@ -292,7 +292,7 @@ def _render_csv_submeter_and_preview_fragment(
         )
     else:
         with st.container(border=True):
-            st.markdown("##### :material/account_tree: Sub-Meter Selection & Total Demand Confirmation")
+            st.markdown("##### :material/account_tree: Select Meters & Total Load")
             st.caption(
                 "Verify the power streams detected in this dataset. You can include all sub-meters in the aggregated Total Demand, "
                 "or deselect specific sub-meters (e.g. EV chargers or test equipment) to exclude them from downstream simulation."
@@ -325,7 +325,7 @@ def _render_csv_submeter_and_preview_fragment(
                 )
             with conf_row2:
                 if st.button(
-                    "Confirm Total Demand for Simulation",
+                    "Confirm Total Load",
                     icon=":material/check_circle:",
                     type="primary",
                     use_container_width=True,
@@ -346,7 +346,7 @@ def _render_csv_submeter_and_preview_fragment(
                         pass
                     st.rerun(scope="app")
 
-        st.subheader("4. Interactive Load Profile Curve Preview")
+        st.subheader("4. Load Profile Chart")
         fig = create_csv_inspector_figure(
             df_clean=df_clean,
             file_name=file_name,
@@ -370,7 +370,7 @@ def _render_csv_submeter_and_preview_fragment(
             overload_kwh = float(overload_diff.sum() * 0.25)
             has_violation = overload_peak_kw > 0.0
 
-            st.markdown("#### :material/warning: Grid Capacity Overload Analysis")
+            st.markdown("#### :material/warning: Grid Limit Exceedances")
             o_col1, o_col2, o_col3 = st.columns(3)
 
             with o_col1:
@@ -394,7 +394,7 @@ def _render_csv_submeter_and_preview_fragment(
             key_prefix=key_prefix,
         )
 
-        with st.expander(":material/table_chart: Processed Raw Data Table Preview", expanded=False):
+        with st.expander(":material/table_chart: Data Table", expanded=False):
             if st.checkbox("Display Full Data Table", value=False, key=f"{key_prefix}_show_tbl_{file_name}"):
                 st.dataframe(df_clean, use_container_width=True, height=220)
 
@@ -522,7 +522,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
 
 
         with st.form(key=f"{key_prefix}_form_{file_name}"):
-            st.subheader("2. Column Mapping & Unit Assignment")
+            st.subheader("2. Select Columns & Units")
             map_col1, map_col2, map_col3 = st.columns([4, 4, 3])
 
             with map_col1:
@@ -573,8 +573,8 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                     except Exception:
                         pass
 
-            st.subheader("3. Active Date Range Filter (Day-Accurate)")
-            st.caption("By default, the complete uploaded recording is analyzed. You can optionally restrict the evaluation window to a specific single year or custom date interval.")
+            st.subheader("3. Date Filter")
+            st.caption("Optionally limit the uploaded data to a specific date range.")
             
             f_col1, f_col2 = st.columns(2)
             with f_col1:
@@ -743,7 +743,7 @@ def render_csv_inspector(key_prefix: str = "csv_inspector") -> None:
                 )
 
 
-            st.subheader("3. Energy Metrics & Key Performance Indicators")
+            st.subheader("3. Energy Summary")
             k1, k2, k3, k4 = st.columns(4)
             with k1:
                 render_kpi_card("Peak Demand (P_max)", f"{kpis.peak_kw:,.1f} kW", "Maximum measured power")
@@ -905,7 +905,7 @@ def _render_restored_csv_inspector(key_prefix: str = "csv_inspector") -> None:
         )
 
     # 3. Energy Metrics & Key Performance Indicators
-    st.subheader("2. Energy Metrics & Key Performance Indicators")
+    st.subheader("2. Energy Summary")
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         render_kpi_card("Peak Demand (P_max)", f"{kpis.peak_kw:,.1f} kW", "Maximum measured power")
@@ -937,10 +937,9 @@ def _render_annual_calculation_profile_section(
     Allows inspecting the 1-year reference profile in full 15-min resolution and explains how it is derived.
     """
     st.write("")
-    st.subheader("5. Standardized 365-Day Annual Baseline Profile & Calculation Basis")
+    st.subheader("5. Full-Year Reference Profile")
     st.caption(
-        "Downstream modules (**Tab 2: Contracts & Tariffs**, **Tab 3: Solar PV Sizing & Coupling**, and **Tab 4: BESS Storage**) "
-        "rely on a standardized 365-day annual calculation profile. Inspect the derived reference year and calculation methodology below:"
+        "All downstream calculations use a standardized 365-day year profile derived from your data."
     )
 
     # 1. Compute 365-Day baseline statistics and 12-month calendar aggregation
@@ -969,7 +968,7 @@ def _render_annual_calculation_profile_section(
         df_365 = df_clean.iloc[:min(len(df_clean), 35040)].copy()
 
     # 3. Interactive Inspection Expander (Auf Knopfdruck einsehen)
-    with st.expander(":material/visibility: **Inspect 365-Day Reference Profile (15-Min Timeseries & Monthly Schedule)**", expanded=False):
+    with st.expander(":material/visibility: **Full-Year Chart & Monthly Table**", expanded=False):
         insp_tab1, insp_tab2 = st.tabs([
             ":material/timeline: 15-Minute Annual Curve (35,040 Intervals)",
             ":material/calendar_month: 12-Month Calendar Schedule & Table"

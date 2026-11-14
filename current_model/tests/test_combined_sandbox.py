@@ -50,6 +50,7 @@ from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
     create_financial_tco_trajectory_figure,
     create_financial_waterfall_bridge_figure,
     create_financial_monthly_cashflow_figure,
+    create_monthly_grid_bill_progression_figure,
 )
 from current_model.ui_sandbox.Combined_sandbox.combined_excel_exporter import (
     build_combined_verification_excel_bytes,
@@ -552,7 +553,9 @@ class TestCombinedSandbox(unittest.TestCase):
             'st.form("comb_generator_form")',
             'st.form("comb_rules_form")',
             'st.form("comb_utility_preset_form")',
-            'st.form("comb_financials_form")',
+            'st.form("comb_tariff_inputs_form")',
+            'st.form("comb_hardware_costs_form")',
+            'st.form("comb_fin_longterm_form")',
         ]
         for form_str in required_forms:
             self.assertIn(
@@ -565,6 +568,9 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("@st.fragment\ndef _render_battery_reference_fragment", code)
         self.assertIn("@st.fragment\ndef _render_generator_reference_fragment", code)
         self.assertIn("@st.fragment\ndef _render_master_dispatch_chart_fragment", code)
+        self.assertIn("@st.fragment\ndef _render_monthly_grid_bill_progression_fragment", code)
+        self.assertIn("@st.fragment\ndef _render_financial_chart_gallery_fragment", code)
+        self.assertIn("@st.fragment\ndef _render_cashflow_table_expander_fragment", code)
 
     def test_battery_exact_cluster_and_usable_kwh(self):
         """Verifies exact 100% Zero-Overload battery sizing with usable chemical energy and cluster duration."""
@@ -877,6 +883,104 @@ class TestCombinedSandbox(unittest.TestCase):
         for trace in fig.data:
             if hasattr(trace, "y") and isinstance(trace.y, np.ndarray) and len(trace.y) == 35040:
                 self.assertTrue(np.any(np.isnan(trace.y)), f"Trace '{trace.name}' should have NaNs during gaps")
+
+    def test_financial_subledger_itemization_and_monthly_progression(self):
+        """Verify itemized 4-Pillar bill sub-ledger, hardware breakdown, savings split, and 12-month progression chart."""
+        cfg = CombinedSystemConfig(
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=200.0,
+            enable_battery=True,
+            battery_capacity_kwh=200.0,
+            battery_power_kw=100.0,
+            enable_generator=True,
+            generator_rated_kw=100.0,
+            grid_limit_kw=180.0,
+        )
+        sim_res = simulate_combined_system_dispatch(
+            self.load_kw, self.timestamps, cfg, InteractionRulesConfig()
+        )
+        fin_cfg = CombinedFinancialConfig()
+        evaluate_combined_financials(sim_res, fin_cfg)
+
+        kpi = sim_res.financial_kpis
+        self.assertIsNotNone(kpi)
+
+        # 1. Itemized Pillar 1..4 bill sums reconcile with totals
+        base_sum = (
+            kpi.baseline_supply_energy_eur
+            + kpi.baseline_supply_fixed_eur
+            + kpi.baseline_dso_fixed_eur
+            + kpi.baseline_dso_capacity_eur
+            + kpi.baseline_dso_peak_eur
+            + kpi.baseline_dso_transport_eur
+            + kpi.baseline_dso_transformer_rent_eur
+            + kpi.baseline_penalty_cost_eur
+            + kpi.baseline_pillar3_metering_eur
+            + kpi.baseline_energy_tax_eur
+            + kpi.baseline_tax_surcharge_eur
+        )
+        comb_sum = (
+            kpi.combined_supply_energy_eur
+            + kpi.combined_supply_fixed_eur
+            + kpi.combined_dso_fixed_eur
+            + kpi.combined_dso_capacity_eur
+            + kpi.combined_dso_peak_eur
+            + kpi.combined_dso_transport_eur
+            + kpi.combined_dso_transformer_rent_eur
+            + kpi.combined_grid_penalty_cost_eur
+            + kpi.combined_pillar3_metering_eur
+            + kpi.combined_energy_tax_eur
+            + kpi.combined_tax_surcharge_eur
+        )
+        self.assertAlmostEqual(base_sum, kpi.baseline_total_opex_eur, delta=1.0)
+        self.assertAlmostEqual(comb_sum, kpi.combined_grid_total_eur, delta=1.0)
+
+        # 2. Hardware CAPEX line items sum to total solar / battery CAPEX
+        self.assertAlmostEqual(
+            kpi.solar_modules_capex_eur + kpi.solar_inverter_capex_eur + kpi.solar_mounting_capex_eur,
+            kpi.solar_capex_eur,
+            delta=1.0,
+        )
+        self.assertAlmostEqual(
+            kpi.battery_rack_capex_eur + kpi.battery_inverter_capex_eur + kpi.battery_bop_capex_eur,
+            kpi.battery_capex_eur,
+            delta=1.0,
+        )
+
+        # 3. Year-1 bill savings split reconciles with gross bill reduction
+        expected_bill_savings = kpi.baseline_total_opex_eur - kpi.combined_grid_total_eur
+        self.assertAlmostEqual(
+            kpi.grid_volume_savings_y1_eur + kpi.grid_peak_and_penalty_savings_y1_eur,
+            expected_bill_savings,
+            delta=1.0,
+        )
+        self.assertGreater(kpi.variable_grid_rate_eur_kwh, 0.0)
+        self.assertGreaterEqual(kpi.solar_direct_value_y1_eur, 0.0)
+        self.assertGreaterEqual(kpi.solar_stored_value_y1_eur, 0.0)
+
+        # 4. Monthly progression columns and chart modes
+        df_m = sim_res.monthly_cost_df
+        expected_cols = [
+            "Current situation Peak (kW)",
+            "Combined Grid Peak (kW)",
+            "Combined Grid Import (kWh)",
+            "Combined Standing & Metering (€)",
+            "Combined Booked Capacity (€)",
+            "Combined Peak Demand Fee (€)",
+            "Combined DSO Transport (€)",
+            "Combined DSO Total (€)",
+            "Current situation DSO Total (€)",
+            "Combined Supply & Tax (€)",
+            "Current situation Supply & Tax (€)",
+        ]
+        for col in expected_cols:
+            self.assertIn(col, df_m.columns, f"Missing monthly column '{col}'")
+        self.assertEqual(len(df_m), 12)
+
+        for mode in ["Combined System Bill", "Current Situation Bill", "Monthly Bill Comparison"]:
+            fig_m = create_monthly_grid_bill_progression_figure(sim_res, view_mode=mode)
+            self.assertGreaterEqual(len(fig_m.data), 2)
 
 
 if __name__ == "__main__":

@@ -116,12 +116,12 @@ def create_consumption_baseline_figure(
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text=f"15-Minute Consumption Profile ({timeframe})",
+            text=f"Consumption Profile ({timeframe})",
             font=dict(size=15, color="#F8FAFC"),
             x=0.0,
         ),
         xaxis=dict(
-            title="Time (15-min intervals)",
+            title="Time",
             gridcolor="rgba(148, 163, 184, 0.12)",
             showspikes=True,
             rangeslider=dict(visible=False),
@@ -768,12 +768,12 @@ def create_financial_tco_trajectory_figure(
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text="15-Year Cumulative TCO & Break-Even Trajectory (€)",
+            text="15-Year Cumulative Cost & Break-Even (€)",
             font=dict(size=15, color="#F8FAFC"),
             x=0.0,
         ),
         xaxis=dict(
-            title="Project Lifecycle (Years)",
+            title="Year",
             gridcolor="rgba(148, 163, 184, 0.12)",
             tickmode="linear",
             tick0=0,
@@ -980,7 +980,7 @@ def create_financial_monthly_cashflow_figure(
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text="12-Month Seasonal Financial Cashflow & Net Savings (€/month)",
+            text="Monthly Costs & Net Savings (€/month)",
             font=dict(size=15, color="#F8FAFC"),
             x=0.0,
         ),
@@ -996,6 +996,178 @@ def create_financial_monthly_cashflow_figure(
             side="right",
             showgrid=False,
         ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.04,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_monthly_grid_bill_progression_figure(
+    sim_res: CombinedSimulationResult,
+    view_mode: str = "Combined System Bill",
+) -> go.Figure:
+    """
+    Creates the 12-Month Grid & Electricity Bill Progression Chart (inspired by
+    Currentsituation_sandbox), decomposing monthly utility charges across cost drivers.
+    Supports:
+      - "Combined System Bill": Stacked bars by tariff driver + Total Grid Bill line
+      - "Current Situation Bill": Stacked baseline utility charges + Total Bill line
+      - "Monthly Bill Comparison": Side-by-side grid bill bars + savings trajectory
+    """
+    m_df = sim_res.monthly_cost_df
+    if m_df is None or m_df.empty:
+        return go.Figure()
+
+    months = m_df["Month"].tolist()
+
+    if view_mode == "Monthly Bill Comparison":
+        base_bills = m_df["Current situation Total (€)"].tolist()
+        comb_grid_bills = [
+            float(r["Combined Grid Energy & Taxes (€)"])
+            + float(r["Combined Network & Standing (€)"])
+            + float(r["Combined Overload Penalty (€)"])
+            for _, r in m_df.iterrows()
+        ]
+        grid_savings = [b - c for b, c in zip(base_bills, comb_grid_bills)]
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(
+            go.Bar(
+                x=months,
+                y=base_bills,
+                name="Current Situation Grid Bill (€)",
+                marker_color="#F87171",
+                hovertemplate="%{x}<br>Current Bill: €%{y:,.0f}<extra></extra>",
+            ),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Bar(
+                x=months,
+                y=comb_grid_bills,
+                name="With System Grid Bill (€)",
+                marker_color="#38BDF8",
+                hovertemplate="%{x}<br>With System Grid Bill: €%{y:,.0f}<extra></extra>",
+            ),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=months,
+                y=grid_savings,
+                mode="lines+markers",
+                name="Gross Monthly Grid Savings (€)",
+                line=dict(color="#22C55E", width=2.4),
+                marker=dict(size=7, color="#22C55E"),
+                hovertemplate="%{x}<br>Grid Bill Savings: €%{y:,.0f}<extra></extra>",
+            ),
+            secondary_y=True,
+        )
+        fig.update_layout(
+            barmode="group",
+            template="plotly_dark",
+            height=380,
+            margin=dict(l=50, r=50, t=70, b=40),
+            paper_bgcolor="rgba(15, 23, 42, 0.0)",
+            plot_bgcolor="rgba(15, 23, 42, 0.45)",
+            title=dict(
+                text="Monthly Electricity Bill Comparison (€/month)",
+                font=dict(size=14, color="#F8FAFC"),
+                x=0.0,
+            ),
+            yaxis=dict(title="Monthly Bill (€)", gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero"),
+            yaxis2=dict(title="Grid Bill Savings (€)", gridcolor="rgba(0,0,0,0)", overlaying="y", side="right", showgrid=False),
+            legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0.0, bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
+            hovermode="x unified",
+        )
+        return fig
+
+    fig = go.Figure()
+
+    if view_mode == "Current Situation Bill":
+        series_defs = [
+            ("Network, Capacity & Standing (€)", m_df["Current situation Network & Standing (€)"].tolist(), "#F59E0B"),
+            ("Electricity & Taxes (€)", m_df["Current situation Energy & Taxes (€)"].tolist(), "#3B82F6"),
+            ("Overload Penalties (€)", m_df["Current situation Overload Penalty (€)"].tolist(), "#EF4444"),
+        ]
+        total_line = m_df["Current situation Total (€)"].tolist()
+        chart_title = "Monthly Electricity & Grid Cost Progression — Current Situation (€/month)"
+    else:
+        has_granular = "Combined Booked Capacity (€)" in m_df.columns
+        if has_granular:
+            series_defs = [
+                ("Standing & Metering", m_df["Combined Standing & Metering (€)"].tolist(), "#8B5CF6"),
+                ("Booked Grid Capacity", m_df["Combined Booked Capacity (€)"].tolist(), "#F59E0B"),
+                ("Measured Peak Demand Fee", m_df["Combined Peak Demand Fee (€)"].tolist(), "#F97316"),
+                ("Grid Transport (kWh)", m_df["Combined DSO Transport (€)"].tolist(), "#06B6D4"),
+                ("Electricity Supply & Taxes", m_df["Combined Supply & Tax (€)"].tolist(), "#3B82F6"),
+                ("Overload Penalties", m_df["Combined Overload Penalty (€)"].tolist(), "#EF4444"),
+            ]
+        else:
+            series_defs = [
+                ("Network & Standing", m_df["Combined Network & Standing (€)"].tolist(), "#F59E0B"),
+                ("Electricity & Taxes", m_df["Combined Grid Energy & Taxes (€)"].tolist(), "#3B82F6"),
+                ("Overload Penalties", m_df["Combined Overload Penalty (€)"].tolist(), "#EF4444"),
+            ]
+        total_line = [
+            float(r["Combined Grid Energy & Taxes (€)"])
+            + float(r["Combined Network & Standing (€)"])
+            + float(r["Combined Overload Penalty (€)"])
+            for _, r in m_df.iterrows()
+        ]
+        chart_title = "Monthly Electricity & Grid Cost Progression — Combined System (€/month)"
+
+    for label, vals, color_hex in series_defs:
+        if sum(abs(float(v)) for v in vals) > 0.01:
+            fig.add_trace(
+                go.Bar(
+                    x=months,
+                    y=vals,
+                    name=label,
+                    marker_color=color_hex,
+                    hovertemplate=f"%{{x}}<br>{label}: €%{{y:,.0f}}<extra></extra>",
+                )
+            )
+
+    fig.add_trace(
+        go.Scatter(
+            x=months,
+            y=total_line,
+            mode="lines+markers",
+            name="Total Grid Bill (€)",
+            line=dict(color="#F8FAFC", width=2.2),
+            marker=dict(size=6, color="#F8FAFC"),
+            hovertemplate="%{x}<br>Total Grid Bill: €%{y:,.0f}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        barmode="stack",
+        template="plotly_dark",
+        height=380,
+        margin=dict(l=50, r=20, t=70, b=40),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        title=dict(
+            text=chart_title,
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.0,
+        ),
+        yaxis=dict(
+            title="Monthly Cost (€)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            rangemode="tozero",
+        ),
+        xaxis=dict(gridcolor="rgba(148, 163, 184, 0.12)"),
         legend=dict(
             orientation="h",
             yanchor="bottom",
