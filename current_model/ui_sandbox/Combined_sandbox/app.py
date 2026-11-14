@@ -37,6 +37,15 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+try:
+    import folium
+    from streamlit_folium import st_folium
+    _HAS_FOLIUM = True
+except ImportError:
+    folium = None  # type: ignore
+    st_folium = None  # type: ignore
+    _HAS_FOLIUM = False
+
 # Ensure root and parent directories are on sys.path for standalone execution
 _CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
 _UI_SANDBOX_DIR = os.path.abspath(os.path.join(_CURRENT_DIR, ".."))
@@ -87,17 +96,20 @@ try:
         RULE1_OPTIONS,
         RULE2_OPTIONS,
         RULE3_OPTIONS,
+        MIX_STRATEGY_OPTIONS,
         CombinedSystemConfig,
         InteractionRulesConfig,
         CombinedFinancialConfig,
         DualBatterySizingResult,
         DualGeneratorSizingResult,
+        CoordinatedMixRecommendation,
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
         determine_smart_modular_units,
         compute_dual_battery_sizing,
         refresh_bottleneck_table_configured_status,
         compute_dual_generator_sizing,
+        compute_coordinated_mix_sizing,
         simulate_combined_system_dispatch,
         evaluate_combined_financials,
         get_dso_preset_options,
@@ -116,17 +128,20 @@ except (ImportError, AttributeError):
         RULE1_OPTIONS,
         RULE2_OPTIONS,
         RULE3_OPTIONS,
+        MIX_STRATEGY_OPTIONS,
         CombinedSystemConfig,
         InteractionRulesConfig,
         CombinedFinancialConfig,
         DualBatterySizingResult,
         DualGeneratorSizingResult,
+        CoordinatedMixRecommendation,
         get_unit_solar_generation_profile,
         derive_solar_sizing_and_formula,
         determine_smart_modular_units,
         compute_dual_battery_sizing,
         refresh_bottleneck_table_configured_status,
         compute_dual_generator_sizing,
+        compute_coordinated_mix_sizing,
         simulate_combined_system_dispatch,
         evaluate_combined_financials,
         get_dso_preset_options,
@@ -152,7 +167,7 @@ from ui_sandbox.Combined_sandbox.combined_excel_exporter import (
 
 
 def _init_session_defaults() -> None:
-    """Initializes default session state values (all add-on modules start deactivated)."""
+    """Initializes default session state values and applies any pending coordinated-mix widget sync."""
     if "comb_system_cfg" not in st.session_state:
         st.session_state["comb_system_cfg"] = CombinedSystemConfig(
             enable_grid=True,
@@ -166,6 +181,11 @@ def _init_session_defaults() -> None:
         st.session_state["comb_rules_cfg"] = InteractionRulesConfig()
     if "comb_fin_cfg" not in st.session_state:
         st.session_state["comb_fin_cfg"] = CombinedFinancialConfig()
+
+    pending_sync = st.session_state.pop("comb_pending_mix_widget_sync", None)
+    if isinstance(pending_sync, dict):
+        for sk, sv in pending_sync.items():
+            st.session_state[sk] = sv
 
     defaults = {
         "tab1_active_source": "csv",
@@ -184,6 +204,7 @@ def _init_session_defaults() -> None:
         # Dual-Sizing mode selections
         "comb_bess_sizing_mode": "Coupled (With active Solar / Generator & Rules)",
         "comb_gen_sizing_mode": "Coupled (With active Solar / Battery & Rules)",
+        "comb_mix_strategy_key": "hybrid_2h",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -306,6 +327,22 @@ def _sync_shared_load_series() -> None:
 def _activate_module_callback(toggle_key: str) -> None:
     """Callback for 1-click module activation buttons inside inactive sub-tabs."""
     st.session_state[toggle_key] = True
+    if (
+        toggle_key == "comb_enable_battery_toggle"
+        and not st.session_state.get("comb_bess_user_configured", False)
+    ):
+        cfg: Optional[CombinedSystemConfig] = st.session_state.get("comb_system_cfg")
+        dual_bess: Optional[DualBatterySizingResult] = st.session_state.get("comb_cached_dual_bess")
+        if cfg is not None and dual_bess is not None and dual_bess.coupled_100_kwh > 0.0:
+            cfg.battery_capacity_kwh = max(10.0, float(dual_bess.coupled_100_kwh))
+            cfg.battery_power_kw = max(5.0, float(dual_bess.coupled_100_kw))
+            units, unit_kwh = determine_smart_modular_units(cfg.battery_capacity_kwh)
+            st.session_state["comb_bess_unit_count"] = units
+            st.session_state["comb_bess_unit_kwh"] = unit_kwh
+            st.session_state["comb_bess_unit_count_num"] = units
+            st.session_state["comb_bess_unit_kwh_num"] = unit_kwh
+            st.session_state["comb_battery_power_kw_num"] = cfg.battery_power_kw
+            st.session_state["comb_bess_user_configured"] = True
     st.session_state.pop("comb_cached_excel_bytes", None)
 
 
@@ -332,6 +369,7 @@ def _apply_bess_quick_size(cap_kwh: float, p_kw: float) -> None:
     st.session_state["comb_bess_unit_count_num"] = units
     st.session_state["comb_bess_unit_kwh_num"] = unit_kwh
     st.session_state["comb_battery_power_kw_num"] = cfg.battery_power_kw
+    st.session_state["comb_bess_user_configured"] = True
     st.session_state.pop("comb_cached_excel_bytes", None)
 
 
@@ -549,13 +587,64 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
 # LEVEL 2 — SUBTAB 2: Solar (Grayed Out Until Activated)
 # ======================================================================================
 
+@st.fragment
+def _render_solar_map_fragment(eff_lat: float, eff_lon: float, site_disp: str, is_active: bool) -> None:
+    """Renders an interactive Folium map fragment so panning/zooming never reloads the app."""
+    if not _HAS_FOLIUM:
+        st.info(
+            f"Map preview unavailable (`folium` / `streamlit-folium` not installed). "
+            f"Active Pin: **{site_disp}** ({eff_lat:.4f}°N, {eff_lon:.4f}°E).",
+            icon=":material/map:",
+        )
+        return
+
+    st.caption("Click anywhere on the map to move the Solar location pin and recalculate PVGIS irradiance.")
+    m = folium.Map(
+        location=[eff_lat, eff_lon],
+        zoom_start=8,
+        tiles="OpenStreetMap",
+        control_scale=True,
+    )
+    folium.Marker(
+        [eff_lat, eff_lon],
+        tooltip=f"{site_disp} ({eff_lat:.4f}°, {eff_lon:.4f}°)",
+        popup=site_disp,
+        icon=folium.Icon(color="orange", icon="sun", prefix="fa"),
+    ).add_to(m)
+
+    map_out = st_folium(
+        m,
+        width="100%",
+        height=300,
+        returned_objects=["last_clicked"],
+        key="comb_solar_interactive_map",
+    )
+    if is_active and map_out and map_out.get("last_clicked"):
+        c_lat = float(map_out["last_clicked"]["lat"])
+        c_lon = float(map_out["last_clicked"]["lng"])
+        click_sig = (round(c_lat, 5), round(c_lon, 5))
+        prev_sig = st.session_state.get("comb_solar_last_map_click")
+        if click_sig != prev_sig and (abs(c_lat - eff_lat) > 1e-4 or abs(c_lon - eff_lon) > 1e-4):
+            st.session_state["comb_solar_last_map_click"] = click_sig
+            st.session_state["comb_solar_lat"] = c_lat
+            st.session_state["comb_solar_lon"] = c_lon
+            st.session_state["comb_solar_site_name"] = f"Map Pin ({c_lat:.4f}°, {c_lon:.4f}°)"
+            st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
+            cur_sys_ref: Optional[CombinedSystemConfig] = st.session_state.get("comb_system_cfg")
+            if cur_sys_ref is not None:
+                cur_sys_ref.latitude = c_lat
+                cur_sys_ref.longitude = c_lon
+            st.session_state.pop("comb_cached_excel_bytes", None)
+            st.rerun()
+
+
 def render_subtab2_solar(load_series: LoadSeries2025) -> None:
     """
     Renders Subtab 2: Solar
       - 1-Click Activate button if inactive
-      - Location (City search & Presets, Default: Amsterdam) + EU PVGIS source line
+      - Location (City search, Presets, Manual GPS & Interactive Map) + EU PVGIS source line
       - Dual Quick-Sizing (% of Annual Consumption: 20/40/60/100% vs. Direct Size kWp)
-      - Blue live formula box
+      - Blue live formula box + Plain-language Solar & Weather Explanation Expander
       - Inverter AC Limit (kW) & Inverter Efficiency (%) (Default: 98%)
     """
     cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
@@ -583,9 +672,12 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
     with st.container(border=True):
         st.markdown("##### :material/solar_power: Solar Settings")
 
-        # 1. Location: City Search & Presets (Default: Amsterdam)
+        curr_lat = float(st.session_state.get("comb_solar_lat", 52.3676))
+        curr_lon = float(st.session_state.get("comb_solar_lon", 4.9041))
+
+        # 1. Location: City Search, Presets & Manual GPS Coordinates (Default: Amsterdam)
         with st.form("comb_solar_location_form"):
-            loc_c1, loc_c2, loc_btn = st.columns([1.5, 1.5, 0.9])
+            loc_c1, loc_c2 = st.columns(2)
             with loc_c1:
                 search_query = st.text_input(
                     "City Search",
@@ -605,6 +697,28 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     disabled=not is_active,
                     key="comb_solar_preset_select",
                 )
+
+            gps_c1, gps_c2, loc_btn = st.columns([1.2, 1.2, 1.0])
+            with gps_c1:
+                lat_input = st.number_input(
+                    "Latitude (°N)",
+                    min_value=-90.0,
+                    max_value=90.0,
+                    value=curr_lat,
+                    step=0.01,
+                    format="%.4f",
+                    disabled=not is_active,
+                )
+            with gps_c2:
+                lon_input = st.number_input(
+                    "Longitude (°E)",
+                    min_value=-180.0,
+                    max_value=180.0,
+                    value=curr_lon,
+                    step=0.01,
+                    format="%.4f",
+                    disabled=not is_active,
+                )
             with loc_btn:
                 st.write("")
                 loc_submitted = st.form_submit_button(
@@ -614,21 +728,51 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 )
 
         if loc_submitted:
-            if search_query and len(search_query.strip()) >= 2 and search_query.strip() != st.session_state.get("comb_solar_site_name", ""):
-                search_results = search_locations_open_meteo(search_query.strip(), count=1)
+            clean_q = (search_query or "").strip()
+            manual_changed = (
+                abs(float(lat_input) - curr_lat) > 1e-5
+                or abs(float(lon_input) - curr_lon) > 1e-5
+            )
+            preset_changed = (
+                preset_choice in SOLAR_SITE_PRESETS
+                and preset_choice != st.session_state.get("comb_solar_preset_choice")
+            )
+            search_changed = (
+                len(clean_q) >= 2
+                and clean_q != st.session_state.get("comb_solar_last_search", "")
+            )
+
+            if preset_changed:
+                p_data = SOLAR_SITE_PRESETS[preset_choice]
+                st.session_state["comb_solar_lat"] = float(p_data["latitude"])
+                st.session_state["comb_solar_lon"] = float(p_data["longitude"])
+                st.session_state["comb_solar_site_name"] = p_data["name"]
+                st.session_state["comb_solar_preset_choice"] = preset_choice
+            elif search_changed:
+                search_results = search_locations_open_meteo(clean_q, count=1)
                 if search_results:
                     chosen = search_results[0]
                     st.session_state["comb_solar_lat"] = float(chosen["lat"])
                     st.session_state["comb_solar_lon"] = float(chosen["lon"])
                     st.session_state["comb_solar_site_name"] = chosen["display_name"]
                     st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
+                st.session_state["comb_solar_last_search"] = clean_q
+            elif manual_changed:
+                st.session_state["comb_solar_lat"] = float(lat_input)
+                st.session_state["comb_solar_lon"] = float(lon_input)
+                st.session_state["comb_solar_site_name"] = (
+                    f"Custom ({float(lat_input):.4f}°N, {float(lon_input):.4f}°E)"
+                )
+                st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
             elif preset_choice in SOLAR_SITE_PRESETS:
                 p_data = SOLAR_SITE_PRESETS[preset_choice]
                 st.session_state["comb_solar_lat"] = float(p_data["latitude"])
                 st.session_state["comb_solar_lon"] = float(p_data["longitude"])
                 st.session_state["comb_solar_site_name"] = p_data["name"]
                 st.session_state["comb_solar_preset_choice"] = preset_choice
+
             st.session_state.pop("comb_cached_excel_bytes", None)
+            st.rerun()
 
         eff_lat = float(st.session_state.get("comb_solar_lat", 52.3676))
         eff_lon = float(st.session_state.get("comb_solar_lon", 4.9041))
@@ -641,9 +785,17 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         )
         site_disp = st.session_state.get("comb_solar_site_name", "Amsterdam, Netherlands")
         st.caption(
-            f"Data source: **EU PVGIS (ERA5 15-min TMY)** | Location: **{site_disp}** | "
-            f"Specific Yield: **{spec_yield:,.0f} kWh/kWp/year**"
+            f"Data source: **EU PVGIS (ERA5 15-min TMY)** | Location: **{site_disp}** "
+            f"(`{eff_lat:.4f}°N, {eff_lon:.4f}°E`) | Specific Yield: **{spec_yield:,.0f} kWh/kWp/year**"
         )
+
+        with st.expander("Location Map & Pin Selection", expanded=False, icon=":material/map:"):
+            _render_solar_map_fragment(
+                eff_lat=eff_lat,
+                eff_lon=eff_lon,
+                site_disp=site_disp,
+                is_active=is_active,
+            )
 
         st.markdown("---")
 
@@ -774,6 +926,23 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         )
         st.info(solar_deriv.formula_text, icon=":material/calculate:")
 
+        with st.expander("How Solar Sizing & Weather Data Work", expanded=False, icon=":material/help_outline:"):
+            st.markdown(
+                f"""
+**1. Quick Sizing Presets (`20% / 40% / 60% / 100%`)**  
+Each percentage scales the PV array so its expected **annual electricity generation** equals that share of your annual facility consumption (`{ann_kwh:,.0f} kWh/yr`):
+- `Target Solar Generation (kWh/yr) = Annual Consumption (kWh/yr) × Target Share (%)`
+- `Required PV Size (kWp) = Target Solar Generation / Specific Yield ({spec_yield:,.0f} kWh/kWp/yr)`
+
+**2. Why 100% Annual Solar Does Not Mean 100% Direct Self-Consumption**  
+Solar irradiance peaks around midday and during summer months, whereas electricity demand also occurs at night, early mornings, and overcast winter weeks. Without a battery or generator, daytime surpluses above your live load are exported while evening/winter peaks still require Grid, Battery, or Generator power.  
+*Tip:* In the bottom **Power Flow & Battery Level** chart, click **Solar Total Potential (kW)** in the legend to compare maximum possible PV output against **Solar Direct (kW)** actually absorbed on-site.
+
+**3. Weather Data Basis (Typical Meteorological Year — TMY)**  
+Solar generation is simulated from **EU PVGIS (ERA5) 15-minute TMY** profiles for your active GPS pin (`{eff_lat:.4f}°N, {eff_lon:.4f}°E`). A TMY dataset combines statistically typical months from multi-year satellite/reanalysis weather records to represent normal seasonal sunlight and temperature rather than a single outlier weather year.
+                """.strip()
+            )
+
 
 # ======================================================================================
 # LEVEL 2 — SUBTAB 3: Battery (Dual-Sizing & 4-Bottleneck Diagnostic Table)
@@ -809,6 +978,25 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
     req_power = dual_bess.standalone_100_kw if is_sa else dual_bess.coupled_100_kw
     req_duration = dual_bess.standalone_cluster_duration_hrs if is_sa else dual_bess.coupled_cluster_duration_hrs
 
+    cur_sys_ref: Optional[CombinedSystemConfig] = st.session_state.get("comb_system_cfg")
+    cur_rules_ref: Optional[InteractionRulesConfig] = st.session_state.get("comb_rules_cfg")
+    if cur_sys_ref is not None and cur_rules_ref is not None and not is_sa:
+        r1_lbl = RULE1_OPTIONS.get(cur_rules_ref.rule1_peak_priority, cur_rules_ref.rule1_peak_priority)
+        r2_lbl = RULE2_OPTIONS.get(cur_rules_ref.rule2_battery_strategy, cur_rules_ref.rule2_battery_strategy)
+        r3_lbl = RULE3_OPTIONS.get(cur_rules_ref.rule3_charging_sources, cur_rules_ref.rule3_charging_sources)
+        active_partners: List[str] = []
+        if cur_sys_ref.enable_solar:
+            active_partners.append("Solar")
+        if cur_sys_ref.enable_generator and cur_sys_ref.generator_rated_kw > 0:
+            active_partners.append(f"Generator ({cur_sys_ref.generator_rated_kw:,.0f} kW)")
+        partners_str = " + ".join(active_partners) if active_partners else "Grid Only"
+        st.info(
+            f"**Active Sizing Assumptions ({partners_str}):** "
+            f"**Rule 1:** {r1_lbl} | **Rule 2:** {r2_lbl} "
+            f"(Reserve {cur_rules_ref.peak_reserve_soc_pct:.0f}%) | **Rule 3:** {r3_lbl}",
+            icon=":material/rule:",
+        )
+
     # 4 Metric Cards (1:1 with Screenshot 2)
     m1, m2, m3, m4 = st.columns(4)
     with m1:
@@ -836,8 +1024,11 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
             help="Duration of the most demanding overload sequence until battery fully recharges below grid limit.",
         )
 
-    # Quick Apply Buttons (100%, 80%, 50%)
-    st.caption(f"Apply Quick Size ({'Standalone: Battery alone' if is_sa else 'Coupled: With active Solar/Generator'}):")
+    # Quick Apply Buttons (100%, 80%, 50% capacity while keeping 100% required discharge power kW)
+    st.caption(
+        f"Apply Quick Size ({'Standalone: Battery alone' if is_sa else 'Coupled: With active Solar/Generator'} — "
+        "80% / 50% scales kWh storage while preserving 100% peak power kW):"
+    )
     q_col1, q_col2, q_col3 = st.columns(3)
     with q_col1:
         if st.button(
@@ -852,7 +1043,7 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
             st.rerun()
     with q_col2:
         q80_kwh = round(req_gross * 0.80, 1)
-        q80_kw = round(req_power * 0.80, 1)
+        q80_kw = float(req_power)
         if st.button(
             f"Apply 80% Quick-Size ({q80_kwh:,.0f} kWh / {q80_kw:,.1f} kW)",
             use_container_width=True,
@@ -863,7 +1054,7 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
             st.rerun()
     with q_col3:
         q50_kwh = round(req_gross * 0.50, 1)
-        q50_kw = round(req_power * 0.50, 1)
+        q50_kw = float(req_power)
         if st.button(
             f"Apply 50% Quick-Size ({q50_kwh:,.0f} kWh / {q50_kw:,.1f} kW)",
             use_container_width=True,
@@ -1049,6 +1240,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
             st.session_state["comb_bess_lock_05c"] = bool(lock_05c)
             st.session_state["comb_bess_unit_count"] = int(unit_count)
             st.session_state["comb_bess_unit_kwh"] = float(cap_per_unit)
+            st.session_state["comb_bess_user_configured"] = True
             new_kwh = float(unit_count * cap_per_unit)
             new_kw = round(new_kwh / 2.0, 1) if lock_05c else float(bat_kw)
 
@@ -1085,20 +1277,61 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
         pass_recharge = dual_bess.controlling_driver_coupled != "Available Recharge Headroom"
         pass_all = pass_power and pass_capacity and pass_recharge and is_active
 
+        # Live utilization insights when prior simulation matches current physical sizing
+        sim_cached = st.session_state.get("comb_sandbox_result")
+        live_min_soc_pct: Optional[float] = None
+        live_cycles: Optional[float] = None
+        if (
+            sim_cached is not None
+            and is_active
+            and getattr(sim_cached, "bess_soc_pct", None) is not None
+            and abs(float(sim_cached.system_config.battery_capacity_kwh) - cfg_kwh) < 1.0
+            and abs(float(sim_cached.system_config.battery_power_kw) - cfg_kw) < 0.5
+        ):
+            gaps = getattr(load_series, "is_gap", None)
+            soc_arr = np.asarray(sim_cached.bess_soc_pct, dtype=float)
+            valid_soc = soc_arr[~np.asarray(gaps, dtype=bool)] if gaps is not None and len(gaps) == len(soc_arr) else soc_arr
+            if valid_soc.size > 0:
+                live_min_soc_pct = float(np.min(valid_soc))
+            live_cycles = float(sim_cached.kpis.battery_equivalent_cycles)
+
         st.markdown("##### :material/fact_check: 3. System Limit Check")
-        st.caption("Checks whether power, storage capacity, and recharge headroom cover every peak.")
+        st.caption("Checks whether inverter discharge power, storage capacity, and recharge headroom cover every peak.")
 
         if pass_all:
             st.success(
                 ":material/check_circle: **Grid Limit Met (Zero Overload)**  \n"
                 "Your battery covers every peak above the Grid Limit."
             )
+            if live_min_soc_pct is not None and live_min_soc_pct > max(50.0, float(cur_sys.min_soc_pct) + 35.0):
+                st.info(
+                    f":material/compress: **Battery Oversized (Min SoC {live_min_soc_pct:.1f}% | "
+                    f"{live_cycles or 0.0:.1f} cyc/yr)**  \n"
+                    f"Over {live_min_soc_pct - float(cur_sys.min_soc_pct):.0f}% of usable capacity stayed untouched all year "
+                    "(usually sized around a rare multi-day winter cluster). Visit **5. System Mix & Rules** "
+                    "to pair a compact 2h/4h Battery with Generator backup.",
+                )
         elif not is_active:
             st.info("Battery is inactive. Activate to check limits.")
         else:
+            diag_reasons: List[str] = []
+            if not pass_power:
+                diag_reasons.append(
+                    f"**Inverter Power Bottleneck (`kW`):** Configured **{cfg_kw:,.1f} kW** is below required "
+                    f"**{req_kw:,.1f} kW**. Discharge power clips during steep peaks even while battery energy (SoC%) remains."
+                )
+            if not pass_capacity:
+                diag_reasons.append(
+                    f"**Energy Capacity Bottleneck (`kWh`):** Configured **{cfg_kwh:,.0f} kWh** is below required "
+                    f"**{req_kwh:,.0f} kWh**. Storage depletes down to SoC Min ({cur_sys.min_soc_pct:.0f}%) during sustained peak clusters."
+                )
+            if not pass_recharge:
+                diag_reasons.append(
+                    "**Recharge Headroom Deficit:** Available below-limit periods cannot refill all consecutive peaks cleanly without Solar or Generator support."
+                )
+            reason_body = "  \n".join(diag_reasons) if diag_reasons else "Check the 4 items below."
             st.warning(
-                ":material/warning: **Remaining Overload Expected**  \n"
-                "The current battery size cannot shave all peaks. Check the 4 items below."
+                f":material/warning: **Remaining Overload Expected**  \n{reason_body}"
             )
 
         # 4 Diagnostic Check Cards (1:1 visual match with BESS Sandbox layout)
@@ -1452,20 +1685,360 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
 
 
 # ======================================================================================
-# LEVEL 2 — SUBTAB 5: Interaction Rules
+# LEVEL 2 — SUBTAB 5: System Mix & Rules (Central Co-Sizing & Operating Rules Cockpit)
 # ======================================================================================
 
-def render_subtab5_interaction_rules() -> None:
-    """
-    Renders Subtab 5: Interaction Rules in simple, clear language:
-      - Automatic Solar direct priority explanation
-      - Rule 1: Peak Shaving Priority (Above Grid Limit)
-      - Rule 2: Normal Load Coverage (Below Grid Limit)
-      - Rule 3: Battery Charging Sources & Timing (Options A, B, C, D)
-      - Encapsulated in st.form("comb_rules_form") to prevent intermediate 20s reruns while adjusting
-    """
-    cur_rules: InteractionRulesConfig = st.session_state["comb_rules_cfg"]
+def _ensure_live_sim_for_mix_tab(
+    load_series: LoadSeries2025,
+    cur_sys: CombinedSystemConfig,
+    cur_rules: InteractionRulesConfig,
+):
+    """Returns cached simulation result or computes it cleanly once for Zone 1 utilization metrics."""
+    dispatch_fp = (
+        _load_fingerprint(load_series),
+        _physical_sys_tuple(cur_sys),
+        _rules_tuple(cur_rules),
+    )
+    if (
+        st.session_state.get("comb_dispatch_fp") == dispatch_fp
+        and "comb_sandbox_result" in st.session_state
+    ):
+        return st.session_state["comb_sandbox_result"]
 
+    sim_res = simulate_combined_system_dispatch(
+        load_kw=load_series.power_kw,
+        timestamps=load_series.timestamps,
+        system_cfg=cur_sys,
+        rules_cfg=cur_rules,
+        is_gap=getattr(load_series, "is_gap", None),
+    )
+    if "comb_latest_bottleneck_df" in st.session_state:
+        sim_res.bess_bottleneck_df = st.session_state["comb_latest_bottleneck_df"]
+    st.session_state["comb_sandbox_result"] = sim_res
+    st.session_state["comb_dispatch_fp"] = dispatch_fp
+    st.session_state.pop("comb_cached_excel_bytes", None)
+    return sim_res
+
+
+def render_subtab5_interaction_rules(load_series: Optional[LoadSeries2025] = None) -> None:
+    """
+    Renders Subtab 5: Central System Mix & Rules Cockpit:
+      - Zone 1: Live Power Mix & Utilization Check across Grid, Solar, Battery & Generator
+      - Zone 2: Coordinated System Mix Workbench (st.form("comb_system_mix_form")) to tune Grid Limit,
+                Solar Share %, Battery Peak Role / Size, and Generator Backup in one place
+      - Zone 3: Interaction Rules (st.form("comb_rules_form")) governing Rules 1-3
+    """
+    if load_series is None:
+        load_series, _ = _get_active_load_series()
+
+    cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
+    cur_rules: InteractionRulesConfig = st.session_state["comb_rules_cfg"]
+    sim_res = _ensure_live_sim_for_mix_tab(load_series, cur_sys, cur_rules)
+    kpis = sim_res.kpis
+
+    # ----------------------------------------------------------------------------------
+    # ZONE 1: Live Power Mix & Utilization Check
+    # ----------------------------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown("##### :material/donut_large: 1. Live Power Mix & Utilization Check")
+        st.caption(
+            "Shows how well your current Grid, Solar, Battery, and Generator components work together."
+        )
+
+        # Compute valid min SoC on non-gap intervals
+        live_min_soc = 0.0
+        if cur_sys.enable_battery and getattr(sim_res, "bess_soc_pct", None) is not None:
+            gaps = getattr(load_series, "is_gap", None)
+            soc_arr = np.asarray(sim_res.bess_soc_pct, dtype=float)
+            valid_soc = (
+                soc_arr[~np.asarray(gaps, dtype=bool)]
+                if gaps is not None and len(gaps) == len(soc_arr)
+                else soc_arr
+            )
+            if valid_soc.size > 0:
+                live_min_soc = float(np.min(valid_soc))
+
+        z1, z2, z3, z4 = st.columns(4)
+        with z1:
+            mix_str = (
+                f"Grid {kpis.grid_supply_share_pct:.0f}% | Sol {kpis.solar_supply_share_pct:.0f}% | "
+                f"Gen {kpis.generator_supply_share_pct:.0f}%"
+            )
+            ov_delta = (
+                "Zero Overload"
+                if kpis.grid_limit_met
+                else f"{kpis.remaining_overload_hours:.1f} hrs Overload Left"
+            )
+            st.metric(
+                label="Supply Share Split",
+                value=mix_str,
+                delta=ov_delta,
+                delta_color="normal" if kpis.grid_limit_met else "inverse",
+            )
+        with z2:
+            if cur_sys.enable_solar and kpis.solar_total_generation_kwh > 0:
+                sol_used_kwh = kpis.solar_direct_kwh + kpis.solar_via_battery_kwh
+                sol_used_pct = min(100.0, (sol_used_kwh / kpis.solar_total_generation_kwh) * 100.0)
+                exp_mwh = kpis.solar_export_kwh / 1000.0
+                st.metric(
+                    label="Solar Self-Consumption Ratio",
+                    value=f"{sol_used_pct:.1f}%",
+                    delta=f"{exp_mwh:,.1f} MWh/yr Exported/Curtailed",
+                    delta_color="off",
+                )
+            else:
+                st.metric(
+                    label="Solar Self-Consumption Ratio",
+                    value="Inactive",
+                    delta="Enable Solar to track PV yield usage",
+                    delta_color="off",
+                )
+        with z3:
+            if cur_sys.enable_battery and cur_sys.battery_capacity_kwh > 0:
+                cycles = float(kpis.battery_equivalent_cycles)
+                if live_min_soc > max(50.0, float(cur_sys.min_soc_pct) + 35.0):
+                    bat_delta = f"Oversized (Min SoC {live_min_soc:.1f}%)"
+                    bat_color = "inverse"
+                elif cycles < 10.0 and not cur_sys.enable_generator:
+                    bat_delta = f"Low Use (Min SoC {live_min_soc:.1f}%)"
+                    bat_color = "off"
+                else:
+                    bat_delta = f"Well Utilized (Min SoC {live_min_soc:.1f}%)"
+                    bat_color = "normal"
+                st.metric(
+                    label="Battery Cycling & Depth",
+                    value=f"{cycles:.1f} cyc/yr",
+                    delta=bat_delta,
+                    delta_color=bat_color,
+                )
+            else:
+                st.metric(
+                    label="Battery Cycling & Depth",
+                    value="Inactive",
+                    delta="Enable Battery for peak shaving & PV shift",
+                    delta_color="off",
+                )
+        with z4:
+            if cur_sys.enable_generator and cur_sys.generator_rated_kw > 0:
+                gen_mwh = kpis.generator_total_generation_kwh / 1000.0
+                st.metric(
+                    label="Generator Usage",
+                    value=f"{kpis.generator_runtime_hours:,.1f} hrs/yr",
+                    delta=f"{gen_mwh:,.1f} MWh/yr ({kpis.generator_starts_count} starts)",
+                    delta_color="off",
+                )
+            else:
+                st.metric(
+                    label="Generator Usage",
+                    value="Inactive",
+                    delta="Add Generator for compact battery winter backup",
+                    delta_color="off",
+                )
+
+    # ----------------------------------------------------------------------------------
+    # ZONE 2: Coordinated System Mix Workbench (Grid + Solar + Battery + Generator)
+    # ----------------------------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown("##### :material/hub: 2. Coordinated System Mix Workbench")
+        st.caption(
+            "Coordinate Grid Limit, Solar share, compact Battery duration, and automatic Generator backup "
+            "so no component sits oversized or bottlenecked."
+        )
+
+        strat_keys = list(MIX_STRATEGY_OPTIONS.keys())
+        curr_strat = st.session_state.get("comb_mix_strategy_key", "hybrid_2h")
+        if curr_strat not in strat_keys:
+            curr_strat = "hybrid_2h"
+
+        # Seed default preview once per load + rules fingerprint
+        preview_seed_fp = (
+            _load_fingerprint(load_series),
+            _rules_tuple(cur_rules),
+            round(float(cur_sys.grid_limit_kw), 1),
+            round(float(cur_sys.target_consumption_share_pct if cur_sys.enable_solar else 0.0), 1),
+            round(float(cur_sys.latitude), 3),
+            round(float(cur_sys.longitude), 3),
+        )
+        if (
+            "comb_mix_preview" not in st.session_state
+            or st.session_state.get("comb_mix_preview_fp") != preview_seed_fp
+        ):
+            def_sol_pct = float(cur_sys.target_consumption_share_pct) if cur_sys.enable_solar else 60.0
+            st.session_state["comb_mix_preview"] = compute_coordinated_mix_sizing(
+                load_kw=load_series.power_kw,
+                system_cfg=cur_sys,
+                rules_cfg=cur_rules,
+                strategy_key=curr_strat,
+                target_grid_limit_kw=float(cur_sys.grid_limit_kw),
+                solar_share_pct=def_sol_pct,
+                solar_enabled=bool(def_sol_pct > 0.0),
+                bess_duration_hours=2.0,
+                gen_cover_remaining_peaks=True,
+                is_gap=getattr(load_series, "is_gap", None),
+            )
+            st.session_state["comb_mix_preview_fp"] = preview_seed_fp
+
+        with st.form("comb_system_mix_form"):
+            mc1, mc2 = st.columns([1.4, 1.0])
+            with mc1:
+                sel_strat = st.radio(
+                    "Peak Coverage Strategy",
+                    options=strat_keys,
+                    index=strat_keys.index(curr_strat),
+                    format_func=lambda k: MIX_STRATEGY_OPTIONS[k],
+                    key="comb_mix_strategy_radio",
+                )
+            with mc2:
+                orig_peak = float(load_series.peak_demand_kw)
+                max_gl = max(100000.0, orig_peak * 2.0, float(cur_sys.grid_limit_kw) * 2.0)
+                mix_grid_kw = st.number_input(
+                    "Target Grid Limit (kW)",
+                    min_value=10.0,
+                    max_value=max_gl,
+                    value=min(max_gl, max(10.0, float(cur_sys.grid_limit_kw))),
+                    step=10.0,
+                    key="comb_mix_grid_limit_num",
+                )
+                def_share_val = float(cur_sys.target_consumption_share_pct) if cur_sys.enable_solar else 60.0
+                mix_solar_pct = st.slider(
+                    "Solar Target (% of Annual Consumption, 0 = Off)",
+                    min_value=0,
+                    max_value=150,
+                    value=int(round(np.clip(def_share_val, 0.0, 150.0))),
+                    step=10,
+                    key="comb_mix_solar_share_slider",
+                )
+                mix_bess_dur = st.slider(
+                    "Battery Peak Buffer Duration (hrs)",
+                    min_value=1.0,
+                    max_value=8.0,
+                    value=float(st.session_state.get("comb_mix_bess_dur", 2.0)),
+                    step=0.5,
+                    help="Used by Hybrid Split / Solar Buffer / Custom sizing strategies.",
+                    key="comb_mix_bess_dur_slider",
+                )
+                mix_auto_gen = st.checkbox(
+                    "Auto-size Generator to cover any remaining winter/cluster overload",
+                    value=st.session_state.get("comb_mix_auto_gen", True),
+                    key="comb_mix_auto_gen_chk",
+                )
+
+            btn_c1, btn_c2 = st.columns(2)
+            with btn_c1:
+                preview_clicked = st.form_submit_button(
+                    "Calculate Mix Preview",
+                    icon=":material/preview:",
+                    use_container_width=True,
+                )
+            with btn_c2:
+                apply_mix_clicked = st.form_submit_button(
+                    "Apply Coordinated Mix to System",
+                    icon=":material/check_circle:",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+        if preview_clicked or apply_mix_clicked:
+            st.session_state["comb_mix_strategy_key"] = str(sel_strat)
+            st.session_state["comb_mix_bess_dur"] = float(mix_bess_dur)
+            st.session_state["comb_mix_auto_gen"] = bool(mix_auto_gen)
+
+            rec: CoordinatedMixRecommendation = compute_coordinated_mix_sizing(
+                load_kw=load_series.power_kw,
+                system_cfg=cur_sys,
+                rules_cfg=cur_rules,
+                strategy_key=str(sel_strat),
+                target_grid_limit_kw=float(mix_grid_kw),
+                solar_share_pct=float(mix_solar_pct),
+                solar_enabled=bool(mix_solar_pct > 0),
+                bess_duration_hours=float(mix_bess_dur),
+                gen_cover_remaining_peaks=bool(mix_auto_gen),
+                is_gap=getattr(load_series, "is_gap", None),
+            )
+            st.session_state["comb_mix_preview"] = rec
+            st.session_state["comb_mix_preview_fp"] = preview_seed_fp
+
+            if apply_mix_clicked:
+                cur_sys.enable_grid = True
+                cur_sys.grid_limit_kw = float(rec.grid_limit_kw)
+
+                cur_sys.enable_solar = bool(rec.solar_enabled)
+                if rec.solar_enabled:
+                    cur_sys.solar_sizing_method = "target_share_pct"
+                    cur_sys.target_consumption_share_pct = float(rec.solar_share_pct)
+                    cur_sys.solar_kwp = float(rec.solar_kwp)
+                    cur_sys.inverter_ac_limit_kw = 0.0
+
+                cur_sys.enable_battery = bool(rec.battery_enabled)
+                if rec.battery_enabled:
+                    cur_sys.battery_power_kw = max(5.0, float(rec.battery_power_kw))
+                    cur_sys.battery_capacity_kwh = max(10.0, float(rec.battery_capacity_kwh))
+                    units, unit_kwh = determine_smart_modular_units(cur_sys.battery_capacity_kwh)
+                else:
+                    units, unit_kwh = (2, 50.0)
+
+                cur_sys.enable_generator = bool(rec.generator_enabled)
+                if rec.generator_enabled:
+                    cur_sys.generator_rated_kw = max(10.0, float(rec.generator_rated_kw))
+
+                st.session_state["comb_bess_user_configured"] = True
+                st.session_state["comb_bess_unit_count"] = units
+                st.session_state["comb_bess_unit_kwh"] = unit_kwh
+                pending_widgets = {
+                    "comb_enable_solar_toggle": bool(cur_sys.enable_solar),
+                    "comb_enable_battery_toggle": bool(cur_sys.enable_battery),
+                    "comb_enable_generator_toggle": bool(cur_sys.enable_generator),
+                    "comb_grid_limit_input": float(cur_sys.grid_limit_kw),
+                    "comb_solar_sizing_radio": "% of Annual Consumption",
+                    "comb_solar_target_share_num": float(rec.solar_share_pct) if rec.solar_enabled else float(cur_sys.target_consumption_share_pct),
+                    "comb_bess_unit_count_num": units,
+                    "comb_bess_unit_kwh_num": unit_kwh,
+                    "comb_battery_power_kw_num": float(cur_sys.battery_power_kw),
+                    "comb_generator_rated_kw_num": float(cur_sys.generator_rated_kw),
+                }
+                st.session_state["comb_pending_mix_widget_sync"] = pending_widgets
+                st.session_state.pop("comb_cached_dual_bess", None)
+                st.session_state.pop("comb_bess_sizing_fp", None)
+                st.session_state.pop("comb_cached_dual_gen", None)
+                st.session_state.pop("comb_gen_sizing_fp", None)
+                st.session_state.pop("comb_cached_excel_bytes", None)
+                st.rerun()
+
+        rec_disp: Optional[CoordinatedMixRecommendation] = st.session_state.get("comb_mix_preview")
+        if rec_disp is not None:
+            st.markdown(f"**Recommended Plan — {rec_disp.strategy_label}**")
+            pm1, pm2, pm3, pm4 = st.columns(4)
+            pm1.metric("Grid Limit", f"{rec_disp.grid_limit_kw:,.0f} kW")
+            pm2.metric(
+                "Solar Array",
+                f"{rec_disp.solar_kwp:,.1f} kWp" if rec_disp.solar_enabled else "Off",
+                delta=f"{rec_disp.solar_share_pct:.0f}% Target" if rec_disp.solar_enabled else None,
+                delta_color="off",
+            )
+            pm3.metric(
+                "Battery System",
+                f"{rec_disp.battery_capacity_kwh:,.0f} kWh / {rec_disp.battery_power_kw:,.1f} kW"
+                if rec_disp.battery_enabled
+                else "Off",
+                delta=f"{rec_disp.est_battery_cycles:.1f} cyc | Min SoC {rec_disp.est_battery_min_soc_pct:.0f}%"
+                if rec_disp.battery_enabled
+                else None,
+                delta_color="off",
+            )
+            pm4.metric(
+                "Generator Backup",
+                f"{rec_disp.generator_rated_kw:,.1f} kW" if rec_disp.generator_enabled else "Off",
+                delta=f"{rec_disp.est_generator_runtime_hrs:.1f} hrs/yr | {rec_disp.est_unmet_overload_hrs:.1f}h Unmet"
+                if rec_disp.generator_enabled
+                else f"{rec_disp.est_unmet_overload_hrs:.1f}h Unmet Overload",
+                delta_color="normal" if rec_disp.est_unmet_overload_hrs <= 0.05 else "inverse",
+            )
+            st.info(rec_disp.rationale_text, icon=":material/tips_and_updates:")
+
+    # ----------------------------------------------------------------------------------
+    # ZONE 3: Interaction Rules (Rules 1-3)
+    # ----------------------------------------------------------------------------------
+    st.markdown("##### :material/rule: 3. Dispatch Interaction Rules")
     st.info(
         "**How Solar Works Automatically:** Whenever Solar is active, solar power always feeds your "
         "Consumption directly first. This automatically reduces your grid demand and lowers daytime "
@@ -1548,7 +2121,9 @@ def render_subtab5_interaction_rules() -> None:
         cur_rules.rule2_battery_strategy = str(rule2_val)
         cur_rules.peak_reserve_soc_pct = float(reserve_val)
         cur_rules.rule3_charging_sources = str(rule3_val)
+        st.session_state.pop("comb_mix_preview_fp", None)
         st.session_state.pop("comb_cached_excel_bytes", None)
+        st.rerun()
 
 
 # ======================================================================================
@@ -2660,15 +3235,62 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
         and (cfg.enable_solar or cfg.enable_battery or cfg.enable_generator)
     )
 
+    live_min_soc: Optional[float] = None
+    if cfg is not None and cfg.enable_battery and getattr(sim_res, "bess_soc_pct", None) is not None:
+        gaps = getattr(sim_res, "is_gap", None)
+        soc_arr = np.asarray(sim_res.bess_soc_pct, dtype=float)
+        valid_soc = (
+            soc_arr[~np.asarray(gaps, dtype=bool)]
+            if gaps is not None and len(gaps) == len(soc_arr)
+            else soc_arr
+        )
+        if valid_soc.size > 0:
+            live_min_soc = float(np.min(valid_soc))
+
     if has_active_system and not has_unmet:
         st.success(
             "**:material/check_circle: Grid Limit Met (Zero Overload)**\n\n"
             "Your system covers all demand peaks above the Grid Limit."
         )
+        if (
+            cfg is not None
+            and cfg.enable_battery
+            and live_min_soc is not None
+            and live_min_soc > max(50.0, float(cfg.min_soc_pct) + 35.0)
+        ):
+            cycles_yr = float(getattr(kpis, "battery_equivalent_cycles", 0.0)) if kpis is not None else 0.0
+            st.info(
+                f"**:material/compress: Battery Utilization Notice (Min SoC {live_min_soc:.1f}% | {cycles_yr:.1f} cyc/yr)**\n\n"
+                "Your battery stays above 50% SoC all year. Visit **5. System Mix & Rules** to test a compact "
+                "Battery + Generator mix for higher storage utilization."
+            )
     elif has_active_system and has_unmet:
+        reason_hint = "Some peaks still exceed the Grid Limit. Increase battery or generator size if needed."
+        dual_bess_cached = st.session_state.get("comb_cached_dual_bess")
+        if cfg is not None and cfg.enable_battery:
+            req_kw_hint = (
+                float(dual_bess_cached.coupled_100_kw)
+                if dual_bess_cached is not None
+                else float(getattr(kpis, "baseline_overload_kw", 0.0)) if kpis is not None else 0.0
+            )
+            if (
+                req_kw_hint > float(cfg.battery_power_kw) + 0.5
+                and live_min_soc is not None
+                and live_min_soc > float(cfg.min_soc_pct) + 10.0
+            ):
+                reason_hint = (
+                    f"**Inverter Power Bottleneck (`kW`):** Battery inverter is limited to "
+                    f"**{cfg.battery_power_kw:,.1f} kW** while up to **{req_kw_hint:,.1f} kW** is needed "
+                    f"(Min SoC remained {live_min_soc:.1f}%). Increase Inverter Power (`kW`) in **3. Battery**."
+                )
+            elif live_min_soc is not None and live_min_soc <= float(cfg.min_soc_pct) + 2.0:
+                reason_hint = (
+                    f"**Storage Capacity Depleted (`kWh`):** Battery emptied to SoC Min ({cfg.min_soc_pct:.0f}%) "
+                    "during multi-hour / multi-day clusters. Increase Battery `kWh` or add a Generator in **5. System Mix & Rules**."
+                )
         st.warning(
             f"**:material/warning: Remaining Overload ({unmet_kwh:,.0f} kWh across {unmet_hours:,.1f} hrs)**\n\n"
-            "Some peaks still exceed the Grid Limit. Increase battery or generator size if needed."
+            f"{reason_hint}"
         )
 
     with st.container(border=True):
@@ -2814,7 +3436,7 @@ def main() -> None:
             ":material/solar_power: 2. Solar",
             ":material/battery_charging_full: 3. Battery",
             ":material/power: 4. Generator",
-            ":material/rule: 5. Interaction Rules",
+            ":material/tune: 5. System Mix & Rules",
             ":material/payments: 6. Financials",
         ]
     )
@@ -2835,7 +3457,7 @@ def main() -> None:
         render_subtab4_generator(load_series)
 
     with subtabs[4]:
-        render_subtab5_interaction_rules()
+        render_subtab5_interaction_rules(load_series)
 
     # Run fast physical 15-minute simulation only when physical fingerprint changes
     cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]

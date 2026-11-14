@@ -161,6 +161,33 @@ def compute_focus_range_for_timestamps(
     return [start.isoformat(), end.isoformat()]
 
 
+def _mask_gap_for_webgl_fill(arr: np.ndarray, gap_b: np.ndarray) -> np.ndarray:
+    """
+    Masks measurement data gaps for WebGL Scattergl traces that use fill='tozeroy'.
+    Sets interior gap indices to NaN (preserving blank breaks) while anchoring the
+    first and last index of multi-step gaps (>2 steps) to 0.0 so WebGL never draws
+    diagonal filled polygons across missing weeks.
+    """
+    out = np.asarray(arr, dtype=np.float32).copy()
+    if out.size == 0 or not np.any(gap_b):
+        return out
+    padded = np.empty(len(gap_b) + 2, dtype=bool)
+    padded[0] = False
+    padded[-1] = False
+    padded[1:-1] = gap_b
+    diffs = np.diff(padded.astype(np.int8))
+    starts = np.where(diffs == 1)[0]
+    ends = np.where(diffs == -1)[0]
+    for s, e in zip(starts, ends):
+        if (e - s) > 2:
+            out[s] = np.float32(0.0)
+            out[s + 1 : e - 1] = np.nan
+            out[e - 1] = np.float32(0.0)
+        else:
+            out[s:e] = np.nan
+    return out
+
+
 def create_combined_dispatch_soc_figure(
     sim_res: CombinedSimulationResult,
     initial_range: Optional[List[Any]] = None,
@@ -173,6 +200,7 @@ def create_combined_dispatch_soc_figure(
           * Facility Load (kW) line (#94A3B8)
           * Grid Import (kW) line (#3B82F6) capped at Grid Limit
           * Solar Direct (kW) yellow area (#FACC15) when Solar enabled
+          * Solar Total Potential (kW) dashed amber line (#F59E0B), hidden by default
           * BESS Discharge (kW) green area (#22C55E) when Battery enabled
           * BESS Charge (kW, shown negative) cyan dotted area (#06B6D4) when Battery enabled
           * Generator Output (kW) orange area (#F97316) when Generator enabled
@@ -191,6 +219,7 @@ def create_combined_dispatch_soc_figure(
     """
     ts = sim_res.timestamps
     p_load = np.asarray(sim_res.load_kw, dtype=np.float32)
+    p_solar_gen = np.asarray(sim_res.solar_gen_kw, dtype=np.float32)
     p_solar_dir = np.asarray(sim_res.solar_direct_kw, dtype=np.float32)
     p_bess_dis = np.asarray(sim_res.bess_discharge_kw, dtype=np.float32)
     p_bess_chg = np.asarray(
@@ -206,20 +235,21 @@ def create_combined_dispatch_soc_figure(
     soc_kwh = np.asarray(sim_res.bess_energy_kwh, dtype=np.float32)
     gen_active_pct = np.where(sim_res.gen_running_mask, np.float32(100.0), np.float32(0.0))
 
-    # Mask measurement data gaps with NaN so Plotly connectgaps=False leaves intervals visually blank
+    # Mask measurement data gaps so Plotly leaves intervals blank without WebGL fill polygons
     is_gap = getattr(sim_res, "is_gap", None)
     if is_gap is not None and np.any(is_gap):
         gap_b = np.asarray(is_gap, dtype=bool)
         p_load = np.where(gap_b, np.nan, p_load)
-        p_solar_dir = np.where(gap_b, np.nan, p_solar_dir)
-        p_bess_dis = np.where(gap_b, np.nan, p_bess_dis)
-        p_bess_chg = np.where(gap_b, np.nan, p_bess_chg)
-        p_unmet = np.where(gap_b, np.nan, p_unmet)
-        p_gen_out = np.where(gap_b, np.nan, p_gen_out)
+        p_solar_gen = np.where(gap_b, np.nan, p_solar_gen)
+        p_solar_dir = _mask_gap_for_webgl_fill(p_solar_dir, gap_b)
+        p_bess_dis = _mask_gap_for_webgl_fill(p_bess_dis, gap_b)
+        p_bess_chg = _mask_gap_for_webgl_fill(p_bess_chg, gap_b)
+        p_unmet = _mask_gap_for_webgl_fill(p_unmet, gap_b)
+        p_gen_out = _mask_gap_for_webgl_fill(p_gen_out, gap_b)
         p_grid_imp = np.where(gap_b, np.nan, p_grid_imp)
         soc_pct = np.where(gap_b, np.nan, soc_pct)
         soc_kwh = np.where(gap_b, np.nan, soc_kwh)
-        gen_active_pct = np.where(gap_b, np.nan, gen_active_pct)
+        gen_active_pct = _mask_gap_for_webgl_fill(gen_active_pct, gap_b)
 
     cfg = sim_res.system_config
     rules = sim_res.rules_config
@@ -268,7 +298,7 @@ def create_combined_dispatch_soc_figure(
         col=1,
     )
 
-    # 3. Solar Direct (when enabled)
+    # 3. Solar Direct & Total Potential (when enabled)
     if cfg.enable_solar:
         fig.add_trace(
             go.Scattergl(
@@ -281,6 +311,20 @@ def create_combined_dispatch_soc_figure(
                 fill="tozeroy",
                 fillcolor="rgba(250, 204, 21, 0.25)",
                 hovertemplate="Solar Direct: <b>%{y:,.1f} kW</b><extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scattergl(
+                x=ts,
+                y=p_solar_gen,
+                mode="lines",
+                name="Solar Total Potential (kW)",
+                connectgaps=False,
+                line=dict(color="#F59E0B", width=1.2, dash="dash"),
+                visible="legendonly",
+                hovertemplate="Solar Total Potential: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
             col=1,

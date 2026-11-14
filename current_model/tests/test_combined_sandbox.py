@@ -33,6 +33,7 @@ from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeli
 from current_model.ui_sandbox.Currentsituation_sandbox.engine.config_and_models import LoadSeries2025
 from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
     ENGINE_VERSION,
+    MIX_STRATEGY_OPTIONS,
     CombinedSystemConfig,
     InteractionRulesConfig,
     CombinedFinancialConfig,
@@ -40,10 +41,12 @@ from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
     compute_dual_battery_sizing,
     refresh_bottleneck_table_configured_status,
     compute_dual_generator_sizing,
+    compute_coordinated_mix_sizing,
     simulate_combined_system_dispatch,
     evaluate_combined_financials,
 )
 from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
+    _mask_gap_for_webgl_fill,
     create_consumption_baseline_figure,
     create_combined_dispatch_soc_figure,
     create_financial_cost_comparison_figure,
@@ -981,6 +984,121 @@ class TestCombinedSandbox(unittest.TestCase):
         for mode in ["Combined System Bill", "Current Situation Bill", "Monthly Bill Comparison"]:
             fig_m = create_monthly_grid_bill_progression_figure(sim_res, view_mode=mode)
             self.assertGreaterEqual(len(fig_m.data), 2)
+
+    def test_battery_quick_size_preserves_power_and_coupled_calibration(self):
+        rules_default = InteractionRulesConfig()
+        self.assertEqual(rules_default.rule3_charging_sources, "solar_and_grid")
+
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_sizing_method="target_share_pct",
+            target_consumption_share_pct=60.0,
+            enable_battery=True,
+            enable_generator=False,
+        )
+        dual = compute_dual_battery_sizing(self.load_kw, cfg, rules_default)
+        self.assertGreater(dual.standalone_100_kw, 0.0)
+        self.assertEqual(dual.standalone_80_kw, dual.standalone_100_kw)
+        self.assertEqual(dual.standalone_50_kw, dual.standalone_100_kw)
+        self.assertEqual(dual.coupled_80_kw, dual.coupled_100_kw)
+        self.assertEqual(dual.coupled_50_kw, dual.coupled_100_kw)
+        self.assertLess(dual.standalone_80_kwh, dual.standalone_100_kwh)
+
+        cfg.battery_power_kw = dual.coupled_100_kw
+        cfg.battery_capacity_kwh = dual.coupled_100_kwh
+        sim_zero = simulate_combined_system_dispatch(
+            self.load_kw, self.timestamps, cfg, rules_default
+        )
+        self.assertTrue(sim_zero.kpis.grid_limit_met)
+        self.assertAlmostEqual(sim_zero.kpis.remaining_overload_kwh, 0.0, places=1)
+
+    def test_coordinated_mix_sizing_hybrid_and_strategies(self):
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            target_consumption_share_pct=60.0,
+        )
+        rules = InteractionRulesConfig()
+
+        pure_bess = compute_coordinated_mix_sizing(
+            load_kw=self.load_kw,
+            system_cfg=cfg,
+            rules_cfg=rules,
+            strategy_key="pure_battery_100",
+            target_grid_limit_kw=180.0,
+            solar_share_pct=60.0,
+        )
+        hybrid_2h = compute_coordinated_mix_sizing(
+            load_kw=self.load_kw,
+            system_cfg=cfg,
+            rules_cfg=rules,
+            strategy_key="hybrid_2h",
+            target_grid_limit_kw=180.0,
+            solar_share_pct=60.0,
+            bess_duration_hours=2.0,
+            gen_cover_remaining_peaks=True,
+        )
+        pure_gen = compute_coordinated_mix_sizing(
+            load_kw=self.load_kw,
+            system_cfg=cfg,
+            rules_cfg=rules,
+            strategy_key="pure_generator_100",
+            target_grid_limit_kw=180.0,
+            solar_share_pct=60.0,
+        )
+
+        self.assertTrue(pure_bess.battery_enabled)
+        self.assertFalse(pure_bess.generator_enabled)
+        self.assertLessEqual(pure_bess.est_unmet_overload_hrs, 0.1)
+
+        self.assertTrue(hybrid_2h.battery_enabled)
+        self.assertLessEqual(hybrid_2h.est_unmet_overload_hrs, 0.1)
+        self.assertLessEqual(hybrid_2h.battery_capacity_kwh, pure_bess.battery_capacity_kwh)
+
+        self.assertFalse(pure_gen.battery_enabled)
+        self.assertTrue(pure_gen.generator_enabled)
+        self.assertLessEqual(pure_gen.est_unmet_overload_hrs, 0.1)
+        self.assertIn("hybrid_2h", MIX_STRATEGY_OPTIONS)
+
+    def test_solar_potential_trace_and_webgl_gap_masking(self):
+        arr = np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0], dtype=float)
+        gap_b = np.array([False, True, True, True, True, True, False, False], dtype=bool)
+        masked = _mask_gap_for_webgl_fill(arr, gap_b)
+        self.assertEqual(float(masked[0]), 10.0)
+        self.assertEqual(float(masked[1]), 0.0)
+        self.assertTrue(np.all(np.isnan(masked[2:5])))
+        self.assertEqual(float(masked[5]), 0.0)
+        self.assertEqual(float(masked[6]), 70.0)
+
+        cfg = CombinedSystemConfig(enable_grid=True, grid_limit_kw=180.0, enable_solar=True)
+        sim_res = simulate_combined_system_dispatch(
+            self.load_kw, self.timestamps, cfg, InteractionRulesConfig()
+        )
+        fig = create_combined_dispatch_soc_figure(sim_res)
+        trace_by_name = {t.name: t for t in fig.data}
+        self.assertIn("Solar Total Potential (kW)", trace_by_name)
+        self.assertEqual(trace_by_name["Solar Total Potential (kW)"].visible, "legendonly")
+
+    def test_solar_explanation_and_system_mix_form_present(self):
+        app_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "ui_sandbox",
+            "Combined_sandbox",
+            "app.py",
+        )
+        with open(app_path, "r", encoding="utf-8") as f:
+            app_src = f.read()
+
+        self.assertIn('st.form("comb_system_mix_form")', app_src)
+        self.assertIn('st.form("comb_rules_form")', app_src)
+        self.assertIn("How Solar Sizing & Weather Data Work", app_src)
+        self.assertIn("Location Map & Pin Selection", app_src)
+        self.assertIn("Latitude (°N)", app_src)
+        self.assertIn("Longitude (°E)", app_src)
+        self.assertIn("5. System Mix & Rules", app_src)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ battery augmentation, 15-year cashflow table, and 15-year NPV.
 ========================================================================================
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Any, Optional, Tuple
 import math
 import numpy as np
@@ -248,7 +248,7 @@ class InteractionRulesConfig:
     rule1_peak_priority: str = "battery_first"                # "battery_first" | "generator_first"
     rule2_battery_strategy: str = "self_consumption_reserve"  # "peak_shaving_only" | "self_consumption_reserve"
     peak_reserve_soc_pct: float = 30.0                        # Reserved SoC (%) for peaks when rule2 == "self_consumption_reserve"
-    rule3_charging_sources: str = "solar_only"                # "solar_only" | "solar_and_grid" | "solar_and_generator" | "all_sources"
+    rule3_charging_sources: str = "solar_and_grid"            # "solar_only" | "solar_and_grid" | "solar_and_generator" | "all_sources"
 
 
 @dataclass
@@ -816,6 +816,38 @@ class DualGeneratorSizingResult:
     coupled_fuel_tank_liters: float = 0.0
 
 
+MIX_STRATEGY_OPTIONS: Dict[str, str] = {
+    "hybrid_2h": "Hybrid Peak Split: 2h Compact Battery + Generator Backup",
+    "hybrid_4h": "Hybrid Peak Split: 4h Peak Battery + Generator Backup",
+    "solar_buffer_gen_peak": "Solar Surplus Buffer Battery + Generator Winter Peaks",
+    "pure_battery_100": "100% Battery Zero-Overload (No Generator)",
+    "pure_generator_100": "100% Generator Zero-Overload (No Battery)",
+    "custom": "Custom Manual Mix (Fine-Tune All 4 Sources)",
+}
+
+
+@dataclass
+class CoordinatedMixRecommendation:
+    """Coordinated 4-source physical sizing plan across Grid, Solar, Battery, and Generator."""
+    strategy_key: str
+    strategy_label: str
+    grid_limit_kw: float
+    solar_enabled: bool
+    solar_share_pct: float
+    solar_kwp: float
+    battery_enabled: bool
+    battery_capacity_kwh: float
+    battery_power_kw: float
+    generator_enabled: bool
+    generator_rated_kw: float
+    est_battery_min_soc_pct: float
+    est_battery_cycles: float
+    est_generator_runtime_hrs: float
+    est_generator_energy_mwh: float
+    est_unmet_overload_hrs: float
+    rationale_text: str
+
+
 def _longest_true_run_steps(mask: np.ndarray) -> int:
     """Vectorized O(N) helper returning the length in steps of the longest continuous True run."""
     if mask.size == 0 or not np.any(mask):
@@ -1219,6 +1251,37 @@ def compute_dual_battery_sizing(
     cp_100_kw = round(math.ceil(cp_peak_kw * 10.0) / 10.0, 1) if cp_peak_kw > 0.05 else 0.0
     cp_100_kwh = float(math.ceil(cp_cluster_kwh))
 
+    if cp_100_kw > 0.05 and n_steps > 0:
+        gap_b = (
+            np.asarray(is_gap, dtype=bool)
+            if is_gap is not None and len(is_gap) == n_steps
+            else np.zeros(n_steps, dtype=bool)
+        )
+        cal_kwh, feasible = _calibrate_coupled_bess_capacity_kwh(
+            p_load=p_load,
+            p_solar=p_solar,
+            grid_limit_kw=grid_limit,
+            bess_p_max_kw=cp_100_kw,
+            system_cfg=system_cfg,
+            rules_cfg=rules_cfg,
+            hi_hint_kwh=max(100.0, sa_100_kwh * 2.0, cp_100_kwh * 1.25),
+            step_hours=dt,
+            gap_mask=gap_b,
+        )
+        if feasible and cal_kwh > 0.0:
+            cp_100_kwh = float(math.ceil(cal_kwh))
+            cp_cluster_kwh = cp_100_kwh
+            cp_single_kwh = round(min(cp_single_kwh, cp_100_kwh), 1)
+            cp_usable_kwh = round(cp_100_kwh * full_dod, 1)
+            if cp_driver == "Available Recharge Headroom":
+                cp_driver = (
+                    "Multi-Day Cluster Energy"
+                    if cp_100_kwh > cp_single_kwh * 1.05
+                    else "Single Peak Event Energy"
+                )
+        elif not feasible:
+            cp_driver = "Available Recharge Headroom"
+
     # Build the 4-Criterion Bottleneck Diagnostic Table
     cfg_kw = float(system_cfg.battery_power_kw) if system_cfg.enable_battery else 0.0
     cfg_kwh = float(system_cfg.battery_capacity_kwh) if system_cfg.enable_battery else 0.0
@@ -1242,17 +1305,17 @@ def compute_dual_battery_sizing(
     return DualBatterySizingResult(
         standalone_100_kw=sa_100_kw,
         standalone_100_kwh=sa_100_kwh,
-        standalone_80_kw=round(sa_100_kw * 0.80, 1),
+        standalone_80_kw=sa_100_kw,
         standalone_80_kwh=round(sa_100_kwh * 0.80, 1),
-        standalone_50_kw=round(sa_100_kw * 0.50, 1),
+        standalone_50_kw=sa_100_kw,
         standalone_50_kwh=round(sa_100_kwh * 0.50, 1),
         standalone_usable_kwh=sa_usable_kwh,
         standalone_cluster_duration_hrs=sa_cluster_duration_hrs,
         coupled_100_kw=cp_100_kw,
         coupled_100_kwh=cp_100_kwh,
-        coupled_80_kw=round(cp_100_kw * 0.80, 1),
+        coupled_80_kw=cp_100_kw,
         coupled_80_kwh=round(cp_100_kwh * 0.80, 1),
-        coupled_50_kw=round(cp_100_kw * 0.50, 1),
+        coupled_50_kw=cp_100_kw,
         coupled_50_kwh=round(cp_100_kwh * 0.50, 1),
         coupled_usable_kwh=cp_usable_kwh,
         coupled_cluster_duration_hrs=cp_cluster_duration_hrs,
@@ -1453,7 +1516,7 @@ def derive_quick_sizing(
 
     rule2 = getattr(rules_cfg, "rule2_battery_strategy", "self_consumption_reserve") if rules_cfg else "self_consumption_reserve"
     peak_reserve = float(getattr(rules_cfg, "peak_reserve_soc_pct", 30.0)) if rules_cfg else 30.0
-    rule3 = getattr(rules_cfg, "rule3_charging_sources", "solar_only") if rules_cfg else "solar_only"
+    rule3 = getattr(rules_cfg, "rule3_charging_sources", "solar_and_grid") if rules_cfg else "solar_and_grid"
 
     if rule2 == "self_consumption_reserve" and sol_share > 0.0:
         usable_dod = max(0.05, (peak_reserve - min_soc) / 100.0)
@@ -1858,6 +1921,504 @@ def _fast_combined_dispatch_kernel(
     )
 
 
+def _execute_coupled_dispatch_arrays(
+    rem_load_after_solar_kw: np.ndarray,
+    solar_surplus_kw: np.ndarray,
+    grid_limit_kw: float,
+    system_cfg: CombinedSystemConfig,
+    rules_cfg: InteractionRulesConfig,
+    step_hours: float = 0.25,
+    gap_mask: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
+    """
+    Executes the stateful dispatch kernel for given residual load and solar surplus arrays
+    and returns full physical time-series arrays (no Excel/KPI overhead).
+    """
+    n_steps = len(rem_load_after_solar_kw)
+    dt = float(step_hours)
+    gaps = (
+        np.asarray(gap_mask, dtype=bool)
+        if gap_mask is not None and len(gap_mask) == n_steps
+        else np.zeros(n_steps, dtype=bool)
+    )
+
+    enable_bess = bool(
+        system_cfg.enable_battery
+        and system_cfg.battery_capacity_kwh > 0.0
+        and system_cfg.battery_power_kw > 0.0
+    )
+    bess_cap_kwh = max(0.0, float(system_cfg.battery_capacity_kwh)) if enable_bess else 0.0
+    bess_p_max_kw = max(0.0, float(system_cfg.battery_power_kw)) if enable_bess else 0.0
+
+    min_soc_pct = float(np.clip(system_cfg.min_soc_pct, 0.0, 50.0))
+    max_soc_pct = float(np.clip(system_cfg.max_soc_pct, min_soc_pct + 5.0, 100.0))
+    e_min_kwh = bess_cap_kwh * (min_soc_pct / 100.0)
+    e_max_kwh = bess_cap_kwh * (max_soc_pct / 100.0)
+
+    rte = float(np.clip(system_cfg.round_trip_efficiency_pct, 50.0, 100.0)) / 100.0
+    eta_chg = math.sqrt(rte)
+    eta_dis = math.sqrt(rte)
+
+    res_soc_pct = float(np.clip(rules_cfg.peak_reserve_soc_pct, min_soc_pct, max_soc_pct))
+    effective_rule2_self_cons = (
+        rules_cfg.rule2_battery_strategy == "self_consumption_reserve"
+        and bool(system_cfg.enable_solar)
+    )
+    e_reserve_kwh = bess_cap_kwh * (res_soc_pct / 100.0) if effective_rule2_self_cons else e_max_kwh
+
+    allow_grid_chg = (
+        rules_cfg.rule3_charging_sources in ("solar_and_grid", "all_sources")
+        or not bool(system_cfg.enable_solar)
+    )
+    allow_gen_chg = rules_cfg.rule3_charging_sources in ("solar_and_generator", "all_sources")
+    target_grid_e_kwh = e_reserve_kwh if effective_rule2_self_cons else e_max_kwh
+
+    enable_gen = bool(system_cfg.enable_generator and system_cfg.generator_rated_kw > 0.0)
+    gen_rated_kw = max(0.0, float(system_cfg.generator_rated_kw)) if enable_gen else 0.0
+    gen_min_kw = gen_rated_kw * (
+        float(np.clip(system_cfg.generator_min_load_pct, 0.0, 100.0)) / 100.0
+    )
+    min_run_steps = max(
+        1,
+        int(round(max(0, int(system_cfg.gen_min_runtime_minutes)) / max(1.0, dt * 60.0))),
+    )
+    rule1_battery_first = rules_cfg.rule1_peak_priority == "battery_first"
+
+    init_e_kwh = e_max_kwh if enable_bess else 0.0
+    init_solar_e_kwh = 0.0
+
+    (
+        solar_export_kw,
+        bess_charge_solar_kw,
+        bess_charge_grid_kw,
+        bess_charge_gen_kw,
+        bess_discharge_kw,
+        bess_energy_kwh,
+        gen_output_kw,
+        gen_to_load_kw,
+        gen_to_bess_kw,
+        bess_discharge_from_solar_kwh_acc,
+    ) = _fast_combined_dispatch_kernel(
+        rem_load_after_solar_kw=np.ascontiguousarray(rem_load_after_solar_kw, dtype=np.float64),
+        solar_surplus_kw=np.ascontiguousarray(solar_surplus_kw, dtype=np.float64),
+        grid_limit_kw=float(grid_limit_kw),
+        enable_bess=enable_bess,
+        bess_p_max_kw=bess_p_max_kw,
+        e_min_kwh=e_min_kwh,
+        e_max_kwh=e_max_kwh,
+        e_reserve_kwh=e_reserve_kwh,
+        eta_chg=eta_chg,
+        eta_dis=eta_dis,
+        enable_gen=enable_gen,
+        gen_rated_kw=gen_rated_kw,
+        gen_min_kw=gen_min_kw,
+        min_run_steps=min_run_steps,
+        rule1_battery_first=rule1_battery_first,
+        effective_rule2_self_cons=effective_rule2_self_cons,
+        allow_grid_chg=allow_grid_chg,
+        allow_gen_chg=allow_gen_chg,
+        target_grid_e_kwh=target_grid_e_kwh,
+        init_e_kwh=init_e_kwh,
+        init_solar_e_kwh=init_solar_e_kwh,
+        dt=dt,
+        is_gap=gaps,
+    )
+
+    if enable_bess and bess_cap_kwh > 0.0:
+        bess_soc_pct = (bess_energy_kwh / bess_cap_kwh) * 100.0
+    else:
+        bess_soc_pct = np.zeros(n_steps, dtype=np.float64)
+
+    gen_running_mask = gen_output_kw > 0.001
+    slope = float(system_cfg.gen_slope_per_kwh)
+    intercept = float(system_cfg.gen_intercept_per_kw_rated)
+    gen_fuel_step = np.where(
+        gen_running_mask,
+        (gen_output_kw * slope + gen_rated_kw * intercept) * dt,
+        0.0,
+    )
+
+    net_load_served_by_grid = np.maximum(
+        0.0, rem_load_after_solar_kw - bess_discharge_kw - gen_to_load_kw
+    )
+    grid_import_kw = np.where(gaps, 0.0, net_load_served_by_grid + bess_charge_grid_kw)
+    unmet_overload_kw = np.where(gaps, 0.0, np.maximum(0.0, grid_import_kw - grid_limit_kw))
+
+    return {
+        "solar_export_kw": solar_export_kw,
+        "bess_charge_solar_kw": bess_charge_solar_kw,
+        "bess_charge_grid_kw": bess_charge_grid_kw,
+        "bess_charge_gen_kw": bess_charge_gen_kw,
+        "bess_discharge_kw": bess_discharge_kw,
+        "bess_energy_kwh": bess_energy_kwh,
+        "bess_soc_pct": bess_soc_pct,
+        "bess_discharge_from_solar_kwh_acc": float(bess_discharge_from_solar_kwh_acc),
+        "gen_output_kw": gen_output_kw,
+        "gen_to_load_kw": gen_to_load_kw,
+        "gen_to_bess_kw": gen_to_bess_kw,
+        "gen_fuel_step": gen_fuel_step,
+        "gen_running_mask": gen_running_mask,
+        "grid_import_kw": grid_import_kw,
+        "unmet_overload_kw": unmet_overload_kw,
+    }
+
+
+def _calibrate_coupled_bess_capacity_kwh(
+    p_load: np.ndarray,
+    p_solar: np.ndarray,
+    grid_limit_kw: float,
+    bess_p_max_kw: float,
+    system_cfg: CombinedSystemConfig,
+    rules_cfg: InteractionRulesConfig,
+    hi_hint_kwh: float = 2000.0,
+    step_hours: float = 0.25,
+    gap_mask: Optional[np.ndarray] = None,
+) -> Tuple[float, bool]:
+    """
+    Binary-searches the exact minimum battery nameplate capacity (kWh) required to reach
+    zero grid overload under active Solar, Generator, and Rules 1-3 using the real
+    35,040-step dispatch kernel.
+    """
+    n_steps = len(p_load)
+    if n_steps == 0 or bess_p_max_kw <= 0.05:
+        return 0.0, True
+
+    solar_direct = np.minimum(p_load, p_solar)
+    solar_surplus = np.maximum(0.0, p_solar - solar_direct)
+    rem_load_after_solar = np.maximum(0.0, p_load - solar_direct)
+
+    def _is_zero_overload(cap_kwh: float) -> bool:
+        probe_cfg = replace(
+            system_cfg,
+            enable_battery=True,
+            battery_capacity_kwh=float(cap_kwh),
+            battery_power_kw=float(bess_p_max_kw),
+        )
+        out = _execute_coupled_dispatch_arrays(
+            rem_load_after_solar_kw=rem_load_after_solar,
+            solar_surplus_kw=solar_surplus,
+            grid_limit_kw=grid_limit_kw,
+            system_cfg=probe_cfg,
+            rules_cfg=rules_cfg,
+            step_hours=step_hours,
+            gap_mask=gap_mask,
+        )
+        return float(np.max(out["unmet_overload_kw"])) <= 0.05
+
+    lo = 1.0
+    if _is_zero_overload(lo):
+        return 1.0, True
+
+    max_cap_bound = max(500_000.0, float(hi_hint_kwh) * 16.0)
+    hi = max(10.0, float(hi_hint_kwh))
+    while not _is_zero_overload(hi):
+        if hi >= max_cap_bound:
+            return float(hi_hint_kwh), False
+        lo = hi
+        hi *= 2.0
+
+    best_kwh = hi
+    for _ in range(16):
+        if (hi - lo) < 1.0:
+            break
+        mid = 0.5 * (lo + hi)
+        if _is_zero_overload(mid):
+            best_kwh = mid
+            hi = mid
+        else:
+            lo = mid
+
+    return float(math.ceil(best_kwh)), True
+
+
+def compute_coordinated_mix_sizing(
+    load_kw: np.ndarray,
+    system_cfg: CombinedSystemConfig,
+    rules_cfg: InteractionRulesConfig,
+    strategy_key: str,
+    target_grid_limit_kw: float,
+    solar_share_pct: float = 60.0,
+    solar_enabled: bool = True,
+    bess_duration_hours: float = 2.0,
+    gen_cover_remaining_peaks: bool = True,
+    step_hours: float = 0.25,
+    is_gap: Optional[np.ndarray] = None,
+) -> CoordinatedMixRecommendation:
+    """
+    Computes a coordinated 4-source sizing recommendation across Grid, Solar, Battery,
+    and Generator, evaluating all KPIs over the full 35,040-step coupled dispatch kernel.
+    """
+    p_load = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
+    n_steps = len(p_load)
+    dt = float(step_hours)
+    gap_mask = (
+        np.asarray(is_gap, dtype=bool)
+        if is_gap is not None and len(is_gap) == n_steps
+        else np.zeros(n_steps, dtype=bool)
+    )
+    grid_limit = max(0.0, float(target_grid_limit_kw))
+
+    eff_solar_enabled = bool(solar_enabled and float(solar_share_pct) > 0.0)
+    eff_solar_share = float(np.clip(solar_share_pct, 0.0, 200.0)) if eff_solar_enabled else 0.0
+
+    azim = 180.0 if system_cfg.latitude >= 0.0 else 0.0
+    unit_solar_kw, spec_yield, _ = get_unit_solar_generation_profile(
+        latitude=system_cfg.latitude,
+        longitude=system_cfg.longitude,
+        tilt_deg=system_cfg.tilt_deg,
+        azimuth_deg=azim,
+        dc_ac_ratio=system_cfg.dc_ac_ratio,
+    )
+    if len(unit_solar_kw) != n_steps:
+        reps = int(math.ceil(n_steps / max(1, len(unit_solar_kw))))
+        unit_solar_kw = np.tile(unit_solar_kw, reps)[:n_steps]
+
+    ann_kwh = float(np.sum(p_load) * dt)
+    solar_deriv = derive_solar_sizing_and_formula(
+        annual_consumption_kwh=ann_kwh,
+        specific_yield_kwh_per_kwp=spec_yield,
+        sizing_method="target_share_pct",
+        direct_kwp=system_cfg.solar_kwp,
+        target_share_pct=eff_solar_share,
+        panel_wp=system_cfg.panel_wp,
+        dc_ac_ratio=system_cfg.dc_ac_ratio,
+        enable_solar=eff_solar_enabled,
+        inverter_ac_limit_kw=system_cfg.inverter_ac_limit_kw,
+        inverter_efficiency_pct=system_cfg.inverter_efficiency_pct,
+    )
+    if eff_solar_enabled and solar_deriv.installed_kwp > 0.0:
+        eff_scale = solar_deriv.inverter_efficiency_pct / 98.0
+        p_solar = unit_solar_kw * solar_deriv.installed_kwp * eff_scale
+        if solar_deriv.inverter_ac_kw > 0.0:
+            p_solar = np.minimum(p_solar, solar_deriv.inverter_ac_kw)
+    else:
+        p_solar = np.zeros(n_steps, dtype=float)
+
+    solar_direct = np.minimum(p_load, p_solar)
+    p_after_solar = np.maximum(0.0, p_load - solar_direct)
+    p_surplus = np.maximum(0.0, p_solar - solar_direct)
+    over_after_solar = np.maximum(0.0, p_after_solar - grid_limit)
+    peak_overload_kw = float(np.max(over_after_solar)) if n_steps > 0 else 0.0
+
+    min_soc = float(np.clip(system_cfg.min_soc_pct, 0.0, 50.0))
+    max_soc = float(np.clip(system_cfg.max_soc_pct, min_soc + 5.0, 100.0))
+    full_dod = max(0.05, (max_soc - min_soc) / 100.0)
+
+    strategy_key_clean = strategy_key if strategy_key in MIX_STRATEGY_OPTIONS else "hybrid_2h"
+    strategy_label = MIX_STRATEGY_OPTIONS[strategy_key_clean]
+
+    bat_en = False
+    bat_kw = 0.0
+    bat_kwh = 0.0
+    gen_en = False
+    gen_kw = 0.0
+    rationale = ""
+
+    base_solar_cfg = replace(
+        system_cfg,
+        enable_grid=True,
+        grid_limit_kw=grid_limit,
+        enable_solar=eff_solar_enabled,
+        solar_sizing_method="target_share_pct",
+        target_consumption_share_pct=eff_solar_share,
+        solar_kwp=solar_deriv.installed_kwp,
+    )
+
+    if strategy_key_clean == "pure_generator_100":
+        gen_en = peak_overload_kw > 0.05
+        gen_kw = round(math.ceil(peak_overload_kw * 10.0) / 10.0, 1) if gen_en else 0.0
+        rationale = (
+            f"Generator-only peak shaving ({gen_kw:.1f} kW) covers 100% of net overload above "
+            f"{grid_limit:.0f} kW; no battery installed."
+        )
+    elif strategy_key_clean == "pure_battery_100":
+        bat_en = peak_overload_kw > 0.05
+        if bat_en:
+            bat_kw = round(math.ceil(peak_overload_kw * 10.0) / 10.0, 1)
+            no_gen_cfg = replace(base_solar_cfg, enable_generator=False, generator_rated_kw=0.0)
+            cal_kwh, _ = _calibrate_coupled_bess_capacity_kwh(
+                p_load=p_load,
+                p_solar=p_solar,
+                grid_limit_kw=grid_limit,
+                bess_p_max_kw=bat_kw,
+                system_cfg=no_gen_cfg,
+                rules_cfg=rules_cfg,
+                hi_hint_kwh=max(500.0, bat_kw * 6.0),
+                step_hours=dt,
+                gap_mask=gap_mask,
+            )
+            bat_kwh = float(math.ceil(cal_kwh))
+        rationale = (
+            f"Battery-only zero-overload sizing ({bat_kw:.1f} kW / {bat_kwh:,.0f} kWh) covers "
+            "every single and multi-day peak cluster without a generator."
+        )
+    else:
+        if strategy_key_clean == "hybrid_2h":
+            eff_dur_hrs = 2.0
+        elif strategy_key_clean == "hybrid_4h":
+            eff_dur_hrs = 4.0
+        else:
+            eff_dur_hrs = max(0.5, float(bess_duration_hours))
+
+        if strategy_key_clean == "custom" and not gen_cover_remaining_peaks:
+            bat_en = bool(system_cfg.enable_battery and system_cfg.battery_capacity_kwh > 0.0)
+            bat_kw = float(system_cfg.battery_power_kw) if bat_en else 0.0
+            bat_kwh = float(system_cfg.battery_capacity_kwh) if bat_en else 0.0
+            gen_en = bool(system_cfg.enable_generator and system_cfg.generator_rated_kw > 0.0)
+            gen_kw = float(system_cfg.generator_rated_kw) if gen_en else 0.0
+        elif strategy_key_clean == "solar_buffer_gen_peak":
+            pos_surplus = p_surplus[p_surplus > 0.1]
+            p95_surplus = float(np.percentile(pos_surplus, 95)) if pos_surplus.size > 0 else 0.0
+            if peak_overload_kw > 0.05:
+                bat_kw = round(
+                    max(min(peak_overload_kw, max(p95_surplus, peak_overload_kw * 0.40)), 1.0),
+                    1,
+                )
+            elif p95_surplus > 0.5:
+                bat_kw = round(p95_surplus, 1)
+            else:
+                bat_kw = 0.0
+            bat_en = bat_kw > 0.05
+            bat_kwh = float(math.ceil((bat_kw * eff_dur_hrs) / full_dod)) if bat_en else 0.0
+        else:
+            # hybrid_2h, hybrid_4h, or custom with manual battery + auto generator
+            if strategy_key_clean == "custom":
+                bat_en = bool(
+                    system_cfg.enable_battery
+                    and system_cfg.battery_capacity_kwh > 0.0
+                    and system_cfg.battery_power_kw > 0.0
+                )
+                bat_kw = float(system_cfg.battery_power_kw) if bat_en else 0.0
+                bat_kwh = float(system_cfg.battery_capacity_kwh) if bat_en else 0.0
+            else:
+                bat_en = peak_overload_kw > 0.05
+                if bat_en:
+                    bat_kw = round(math.ceil(peak_overload_kw * 10.0) / 10.0, 1)
+                    bat_kwh = float(math.ceil((bat_kw * eff_dur_hrs) / full_dod))
+
+        # Auto-size Generator to eliminate any residual overload left by the compact Battery
+        should_auto_gen = (
+            gen_cover_remaining_peaks and peak_overload_kw > 0.05
+        )
+        if should_auto_gen:
+            probe_no_gen = replace(
+                base_solar_cfg,
+                enable_battery=bat_en,
+                battery_power_kw=bat_kw,
+                battery_capacity_kwh=bat_kwh,
+                enable_generator=False,
+                generator_rated_kw=0.0,
+            )
+            out_no_gen = _execute_coupled_dispatch_arrays(
+                rem_load_after_solar_kw=p_after_solar,
+                solar_surplus_kw=p_surplus,
+                grid_limit_kw=grid_limit,
+                system_cfg=probe_no_gen,
+                rules_cfg=rules_cfg,
+                step_hours=dt,
+                gap_mask=gap_mask,
+            )
+            max_rem_ov = float(np.max(out_no_gen["unmet_overload_kw"])) if n_steps > 0 else 0.0
+            if max_rem_ov > 0.05:
+                gen_en = True
+                gen_kw = round(math.ceil(max_rem_ov * 10.0) / 10.0, 1)
+                # Verify zero overload under Generator min-load / min-runtime interaction
+                probe_with_gen = replace(probe_no_gen, enable_generator=True, generator_rated_kw=gen_kw)
+                out_chk = _execute_coupled_dispatch_arrays(
+                    rem_load_after_solar_kw=p_after_solar,
+                    solar_surplus_kw=p_surplus,
+                    grid_limit_kw=grid_limit,
+                    system_cfg=probe_with_gen,
+                    rules_cfg=rules_cfg,
+                    step_hours=dt,
+                    gap_mask=gap_mask,
+                )
+                rem2 = float(np.max(out_chk["unmet_overload_kw"])) if n_steps > 0 else 0.0
+                if rem2 > 0.05:
+                    gen_kw = round(
+                        math.ceil(max(peak_overload_kw, gen_kw + rem2) * 10.0) / 10.0,
+                        1,
+                    )
+            else:
+                gen_en = False
+                gen_kw = 0.0
+
+    final_cfg = replace(
+        base_solar_cfg,
+        enable_battery=bat_en,
+        battery_power_kw=bat_kw,
+        battery_capacity_kwh=bat_kwh,
+        enable_generator=gen_en,
+        generator_rated_kw=gen_kw,
+    )
+    out_final = _execute_coupled_dispatch_arrays(
+        rem_load_after_solar_kw=p_after_solar,
+        solar_surplus_kw=p_surplus,
+        grid_limit_kw=grid_limit,
+        system_cfg=final_cfg,
+        rules_cfg=rules_cfg,
+        step_hours=dt,
+        gap_mask=gap_mask,
+    )
+
+    if bat_en and bat_kwh > 0.0 and np.any(~gap_mask):
+        est_min_soc = round(float(np.min(out_final["bess_soc_pct"][~gap_mask])), 1)
+    else:
+        est_min_soc = 0.0
+    est_cycles = round(
+        float(np.sum(out_final["bess_discharge_kw"]) * dt / max(1e-6, bat_kwh))
+        if (bat_en and bat_kwh > 0.0)
+        else 0.0,
+        1,
+    )
+    est_gen_hrs = round(float(np.sum(out_final["gen_running_mask"]) * dt), 1)
+    est_gen_mwh = round(float(np.sum(out_final["gen_output_kw"]) * dt / 1000.0), 2)
+    est_unmet_hrs = round(float(np.sum(out_final["unmet_overload_kw"] > 0.05) * dt), 1)
+
+    if not rationale:
+        if bat_en and gen_en:
+            rationale = (
+                f"Compact {bat_kw:.1f} kW / {bat_kwh:,.0f} kWh Battery ({est_cycles:.1f} cyc/yr) "
+                f"covers short daily peaks and Solar surplus, while the {gen_kw:.1f} kW Generator "
+                f"covers extended peak clusters ({est_gen_hrs:.1f} hrs/yr) for {est_unmet_hrs:.1f}h overload."
+            )
+        elif bat_en:
+            rationale = (
+                f"Battery ({bat_kw:.1f} kW / {bat_kwh:,.0f} kWh, {est_cycles:.1f} cyc/yr) "
+                f"covers all peaks without starting a generator ({est_unmet_hrs:.1f}h overload)."
+            )
+        elif gen_en:
+            rationale = (
+                f"Generator ({gen_kw:.1f} kW, {est_gen_hrs:.1f} hrs/yr) handles peaks above "
+                f"{grid_limit:.0f} kW ({est_unmet_hrs:.1f}h overload)."
+            )
+        else:
+            rationale = (
+                f"Grid Limit ({grid_limit:.0f} kW) plus Solar ({eff_solar_share:.0f}%) already "
+                "covers peak demand with zero overload."
+            )
+
+    return CoordinatedMixRecommendation(
+        strategy_key=strategy_key_clean,
+        strategy_label=strategy_label,
+        grid_limit_kw=round(grid_limit, 1),
+        solar_enabled=eff_solar_enabled,
+        solar_share_pct=round(eff_solar_share, 1),
+        solar_kwp=round(solar_deriv.installed_kwp, 1) if eff_solar_enabled else 0.0,
+        battery_enabled=bat_en,
+        battery_capacity_kwh=round(bat_kwh, 0),
+        battery_power_kw=round(bat_kw, 1),
+        generator_enabled=gen_en,
+        generator_rated_kw=round(gen_kw, 1),
+        est_battery_min_soc_pct=est_min_soc,
+        est_battery_cycles=est_cycles,
+        est_generator_runtime_hrs=est_gen_hrs,
+        est_generator_energy_mwh=est_gen_mwh,
+        est_unmet_overload_hrs=est_unmet_hrs,
+        rationale_text=rationale,
+    )
+
+
 def simulate_combined_system_dispatch(
     load_kw: np.ndarray,
     timestamps: pd.DatetimeIndex,
@@ -1922,157 +2483,44 @@ def simulate_combined_system_dispatch(
     else:
         solar_gen_kw = np.zeros(n_steps, dtype=float)
 
-    # 2. Battery Parameters
+    fuel_spec = FUEL_SPECS.get(system_cfg.fuel_type, FUEL_SPECS["Diesel"])
+    fuel_unit = str(fuel_spec["unit"])
     enable_bess = bool(
         system_cfg.enable_battery
         and system_cfg.battery_capacity_kwh > 0.0
         and system_cfg.battery_power_kw > 0.0
     )
     bess_cap_kwh = max(0.0, float(system_cfg.battery_capacity_kwh)) if enable_bess else 0.0
-    bess_p_max_kw = max(0.0, float(system_cfg.battery_power_kw)) if enable_bess else 0.0
-    min_soc_pct = float(np.clip(system_cfg.min_soc_pct, 0.0, 95.0))
-    max_soc_pct = float(np.clip(system_cfg.max_soc_pct, min_soc_pct + 5.0, 100.0))
-    rte = float(np.clip(system_cfg.round_trip_efficiency_pct, 50.0, 100.0)) / 100.0
-    eta_chg = math.sqrt(rte)
-    eta_dis = math.sqrt(rte)
 
-    e_min_kwh = bess_cap_kwh * (min_soc_pct / 100.0)
-    e_max_kwh = bess_cap_kwh * (max_soc_pct / 100.0)
-
-    reserve_soc_pct = float(np.clip(rules_cfg.peak_reserve_soc_pct, min_soc_pct, max_soc_pct))
-    e_reserve_kwh = bess_cap_kwh * (reserve_soc_pct / 100.0)
-
-    # 3. Generator Parameters
-    enable_gen = bool(system_cfg.enable_generator and system_cfg.generator_rated_kw > 0.0)
-    gen_rated_kw = max(0.0, float(system_cfg.generator_rated_kw)) if enable_gen else 0.0
-    gen_min_pct = float(np.clip(system_cfg.generator_min_load_pct, 0.0, 100.0))
-    gen_min_kw = gen_rated_kw * (gen_min_pct / 100.0)
-    fuel_spec = FUEL_SPECS.get(system_cfg.fuel_type, FUEL_SPECS["Diesel"])
-    fuel_unit = str(fuel_spec["unit"])
-
-    slope_val = float(system_cfg.gen_slope_per_kwh) if system_cfg.gen_slope_per_kwh > 0 else float(fuel_spec["slope_per_kwh"])
-    intercept_val = float(system_cfg.gen_intercept_per_kw_rated) if system_cfg.gen_intercept_per_kw_rated >= 0 else float(fuel_spec["intercept_per_kw_rated"])
-    min_run_steps = max(1, int(round(float(system_cfg.gen_min_runtime_minutes) / (dt * 60.0))))
-
-    # 4. Pre-allocate 35,040-step Arrays
+    # Pre-allocate Solar Split Arrays & Run Dispatch Arrays Helper
     solar_direct_kw = np.minimum(p_load, solar_gen_kw)
     solar_surplus_kw = np.maximum(0.0, solar_gen_kw - solar_direct_kw)
     rem_load_after_solar_kw = np.maximum(0.0, p_load - solar_direct_kw)
 
-    rule1 = rules_cfg.rule1_peak_priority
-    rule2 = rules_cfg.rule2_battery_strategy
-    rule3 = rules_cfg.rule3_charging_sources
-
-    effective_rule2 = "peak_shaving_only" if not system_cfg.enable_solar else rule2
-
-    allow_grid_chg = (
-        rule3 in ("solar_and_grid", "all_sources")
-        or not system_cfg.enable_solar
+    dispatch_out = _execute_coupled_dispatch_arrays(
+        rem_load_after_solar_kw=rem_load_after_solar_kw,
+        solar_surplus_kw=solar_surplus_kw,
+        grid_limit_kw=grid_limit_kw,
+        system_cfg=system_cfg,
+        rules_cfg=rules_cfg,
+        step_hours=dt,
+        gap_mask=gap_mask,
     )
-    allow_gen_chg = rule3 in ("solar_and_generator", "all_sources")
-
-    if enable_bess:
-        if effective_rule2 == "peak_shaving_only":
-            cur_e_kwh = (
-                e_max_kwh
-                if allow_grid_chg
-                else (0.5 * (e_min_kwh + e_max_kwh))
-            )
-        else:
-            cur_e_kwh = max(e_min_kwh, e_reserve_kwh)
-    else:
-        cur_e_kwh = 0.0
-
-    solar_energy_in_bess_kwh = (
-        cur_e_kwh
-        if (system_cfg.enable_solar and rule3 == "solar_only")
-        else 0.0
-    )
-
-    target_grid_e_kwh = (
-        e_max_kwh
-        if (effective_rule2 == "peak_shaving_only" or not system_cfg.enable_solar)
-        else e_reserve_kwh
-    )
-
-    # 5. Execute 15-Minute Simulation (Vectorized fast-path if neither Battery nor Generator is active)
-    if not enable_bess and not enable_gen:
-        solar_export_kw = solar_surplus_kw.copy()
-        solar_export_kw[gap_mask] = 0.0
-        bess_charge_solar_kw = np.zeros(n_steps, dtype=float)
-        bess_charge_grid_kw = np.zeros(n_steps, dtype=float)
-        bess_charge_gen_kw = np.zeros(n_steps, dtype=float)
-        bess_discharge_kw = np.zeros(n_steps, dtype=float)
-        bess_energy_kwh = np.zeros(n_steps, dtype=float)
-        bess_soc_pct = np.zeros(n_steps, dtype=float)
-        bess_discharge_from_solar_kwh_acc = 0.0
-        gen_output_kw = np.zeros(n_steps, dtype=float)
-        gen_to_load_kw = np.zeros(n_steps, dtype=float)
-        gen_to_bess_kw = np.zeros(n_steps, dtype=float)
-        gen_fuel_step = np.zeros(n_steps, dtype=float)
-        gen_running_mask = np.zeros(n_steps, dtype=bool)
-        grid_import_kw = rem_load_after_solar_kw.copy()
-        grid_import_kw[gap_mask] = 0.0
-        unmet_overload_kw = np.maximum(0.0, grid_import_kw - grid_limit_kw)
-        unmet_overload_kw[gap_mask] = 0.0
-    else:
-        (
-            solar_export_kw,
-            bess_charge_solar_kw,
-            bess_charge_grid_kw,
-            bess_charge_gen_kw,
-            bess_discharge_kw,
-            bess_energy_kwh,
-            gen_output_kw,
-            gen_to_load_kw,
-            gen_to_bess_kw,
-            bess_discharge_from_solar_kwh_acc,
-        ) = _fast_combined_dispatch_kernel(
-            rem_load_after_solar_kw=rem_load_after_solar_kw,
-            solar_surplus_kw=solar_surplus_kw,
-            grid_limit_kw=grid_limit_kw,
-            enable_bess=enable_bess,
-            bess_p_max_kw=bess_p_max_kw,
-            e_min_kwh=e_min_kwh,
-            e_max_kwh=e_max_kwh,
-            e_reserve_kwh=e_reserve_kwh,
-            eta_chg=eta_chg,
-            eta_dis=eta_dis,
-            enable_gen=enable_gen,
-            gen_rated_kw=gen_rated_kw,
-            gen_min_kw=gen_min_kw,
-            min_run_steps=min_run_steps,
-            rule1_battery_first=(rule1 == "battery_first"),
-            effective_rule2_self_cons=(effective_rule2 == "self_consumption_reserve"),
-            allow_grid_chg=allow_grid_chg,
-            allow_gen_chg=allow_gen_chg,
-            target_grid_e_kwh=target_grid_e_kwh,
-            init_e_kwh=cur_e_kwh,
-            init_solar_e_kwh=solar_energy_in_bess_kwh,
-            dt=dt,
-            is_gap=gap_mask,
-        )
-        bess_soc_pct = (
-            bess_energy_kwh * (100.0 / bess_cap_kwh)
-            if bess_cap_kwh > 0.0
-            else np.zeros(n_steps, dtype=float)
-        )
-        gen_running_mask = gen_output_kw > 0.0
-        gen_fuel_step = np.zeros(n_steps, dtype=float)
-        if enable_gen and np.any(gen_running_mask):
-            rates = np.round(
-                (slope_val * gen_output_kw[gen_running_mask]) + (intercept_val * gen_rated_kw),
-                3,
-            )
-            gen_fuel_step[gen_running_mask] = np.round(np.maximum(0.0, rates) * dt, 4)
-
-        grid_import_kw = np.maximum(
-            0.0,
-            rem_load_after_solar_kw - bess_discharge_kw - gen_to_load_kw + bess_charge_grid_kw,
-        )
-        grid_import_kw[gap_mask] = 0.0
-        unmet_overload_kw = np.maximum(0.0, grid_import_kw - grid_limit_kw)
-        unmet_overload_kw[gap_mask] = 0.0
+    solar_export_kw = dispatch_out["solar_export_kw"]
+    bess_charge_solar_kw = dispatch_out["bess_charge_solar_kw"]
+    bess_charge_grid_kw = dispatch_out["bess_charge_grid_kw"]
+    bess_charge_gen_kw = dispatch_out["bess_charge_gen_kw"]
+    bess_discharge_kw = dispatch_out["bess_discharge_kw"]
+    bess_energy_kwh = dispatch_out["bess_energy_kwh"]
+    bess_soc_pct = dispatch_out["bess_soc_pct"]
+    bess_discharge_from_solar_kwh_acc = dispatch_out["bess_discharge_from_solar_kwh_acc"]
+    gen_output_kw = dispatch_out["gen_output_kw"]
+    gen_to_load_kw = dispatch_out["gen_to_load_kw"]
+    gen_to_bess_kw = dispatch_out["gen_to_bess_kw"]
+    gen_fuel_step = dispatch_out["gen_fuel_step"]
+    gen_running_mask = dispatch_out["gen_running_mask"]
+    grid_import_kw = dispatch_out["grid_import_kw"]
+    unmet_overload_kw = dispatch_out["unmet_overload_kw"]
 
     # 6. Compute Technical KPIs
     diag_before = analyze_grid_violations(p_load, grid_limit_kw, step_hours=dt)
