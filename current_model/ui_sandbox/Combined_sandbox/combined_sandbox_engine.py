@@ -848,6 +848,67 @@ class CoordinatedMixRecommendation:
     rationale_text: str
 
 
+@dataclass
+class SystemUtilizationDiagnostics:
+    """Reusable physical supply-mix and component utilization summary (Technical & Financials)."""
+    # Supply Mix Breakdown (summing to Annual Consumption)
+    annual_consumption_kwh: float
+    grid_direct_kwh: float
+    grid_direct_pct: float
+    solar_direct_kwh: float
+    solar_direct_pct: float
+    battery_discharge_kwh: float
+    battery_discharge_pct: float
+    solar_via_battery_kwh: float
+    grid_or_gen_via_battery_kwh: float
+    generator_direct_kwh: float
+    generator_direct_pct: float
+    unmet_overload_kwh: float
+    grid_peak_shaved_kw: float
+    solar_peak_contribution_kw: float
+    bess_peak_discharged_kw: float
+    gen_peak_used_kw: float
+
+    # Battery Storage Utilization (kWh)
+    bess_enabled: bool
+    bess_installed_kwh: float
+    bess_usable_window_kwh: float
+    bess_min_soc_reached_pct: float
+    bess_max_soc_reached_pct: float
+    bess_max_depth_used_kwh: float
+    bess_unused_usable_kwh: float
+    bess_capacity_utilization_pct: float
+    bess_right_sized_kwh: float
+    bess_cycles_per_yr: float
+
+    # Battery Inverter Utilization (kW)
+    bess_installed_kw: float
+    bess_peak_charged_kw: float
+    bess_power_utilization_pct: float
+
+    # Solar Yield Utilization
+    solar_enabled: bool
+    solar_installed_kwp: float
+    solar_total_potential_kwh: float
+    solar_used_direct_kwh: float
+    solar_used_via_battery_kwh: float
+    solar_exported_unused_kwh: float
+    solar_utilization_pct: float
+
+    # Generator Utilization
+    gen_enabled: bool
+    gen_rated_kw: float
+    gen_power_utilization_pct: float
+    gen_runtime_hours: float
+    gen_starts_count: int
+    gen_energy_kwh: float
+
+    # Grid Connection Utilization
+    grid_limit_kw: float
+    grid_peak_import_kw: float
+    grid_utilization_pct: float
+
+
 def _longest_true_run_steps(mask: np.ndarray) -> int:
     """Vectorized O(N) helper returning the length in steps of the longest continuous True run."""
     if mask.size == 0 or not np.any(mask):
@@ -2680,6 +2741,204 @@ def simulate_combined_system_dispatch(
         is_gap=gap_mask,
         summary_table_df=summary_df,
         monthly_balance_df=monthly_df,
+    )
+
+
+def compute_system_utilization_diagnostics(
+    sim_res: CombinedSimulationResult,
+) -> SystemUtilizationDiagnostics:
+    """
+    Computes exact annual supply shares (kWh / %) and physical utilization rates (0-100%)
+    for Solar, Battery storage (kWh), Battery inverter (kW), Generator, and Grid connection.
+    """
+    cfg = sim_res.system_config
+    kpis = sim_res.kpis
+    solar_deriv = sim_res.solar_derivation
+
+    ann_load = max(0.0, float(kpis.annual_consumption_kwh))
+    solar_direct_kwh = max(0.0, float(kpis.solar_direct_kwh))
+    battery_discharge_kwh = max(0.0, float(kpis.battery_total_discharged_kwh))
+    generator_direct_kwh = max(0.0, float(kpis.generator_to_load_kwh))
+    grid_direct_kwh = max(
+        0.0,
+        ann_load - solar_direct_kwh - battery_discharge_kwh - generator_direct_kwh,
+    )
+
+    denom = max(1.0, grid_direct_kwh + solar_direct_kwh + battery_discharge_kwh + generator_direct_kwh)
+    grid_direct_pct = (grid_direct_kwh / denom) * 100.0 if ann_load > 0 else 0.0
+    solar_direct_pct = (solar_direct_kwh / denom) * 100.0 if ann_load > 0 else 0.0
+    battery_discharge_pct = (battery_discharge_kwh / denom) * 100.0 if ann_load > 0 else 0.0
+    generator_direct_pct = (generator_direct_kwh / denom) * 100.0 if ann_load > 0 else 0.0
+
+    solar_via_battery_kwh = min(battery_discharge_kwh, max(0.0, float(kpis.solar_via_battery_kwh)))
+    grid_or_gen_via_battery_kwh = max(0.0, battery_discharge_kwh - solar_via_battery_kwh)
+
+    gaps = getattr(sim_res, "is_gap", None)
+    p_load = np.asarray(sim_res.load_kw, dtype=float)
+    p_solar_dir = np.asarray(sim_res.solar_direct_kw, dtype=float)
+    p_bess_dis = np.asarray(sim_res.bess_discharge_kw, dtype=float)
+    p_bess_chg = (
+        np.asarray(sim_res.bess_charge_solar_kw, dtype=float)
+        + np.asarray(sim_res.bess_charge_grid_kw, dtype=float)
+        + np.asarray(sim_res.bess_charge_gen_kw, dtype=float)
+    )
+    p_gen = np.asarray(sim_res.gen_output_kw, dtype=float)
+
+    grid_lim = float(cfg.grid_limit_kw) if cfg.enable_grid else 0.0
+    peak_mask = p_load > grid_lim
+    if np.any(peak_mask) and p_solar_dir.size == peak_mask.size:
+        solar_peak_contrib_kw = float(np.max(p_solar_dir[peak_mask]))
+    elif p_solar_dir.size > 0:
+        solar_peak_contrib_kw = float(np.max(p_solar_dir))
+    else:
+        solar_peak_contrib_kw = 0.0
+
+    bess_peak_discharged_kw = float(np.max(p_bess_dis)) if p_bess_dis.size > 0 else 0.0
+    bess_peak_charged_kw = float(np.max(p_bess_chg)) if p_bess_chg.size > 0 else 0.0
+    gen_peak_used_kw = float(np.max(p_gen)) if p_gen.size > 0 else 0.0
+
+    # Battery storage utilization
+    bess_enabled = bool(cfg.enable_battery and cfg.battery_capacity_kwh > 0.0 and cfg.battery_power_kw > 0.0)
+    if bess_enabled:
+        bess_installed_kwh = float(cfg.battery_capacity_kwh)
+        min_soc_cfg = float(np.clip(cfg.min_soc_pct, 0.0, 50.0))
+        max_soc_cfg = float(np.clip(cfg.max_soc_pct, min_soc_cfg + 5.0, 100.0))
+        usable_dod = max(0.05, (max_soc_cfg - min_soc_cfg) / 100.0)
+        bess_usable_window_kwh = bess_installed_kwh * usable_dod
+
+        soc_arr = np.asarray(sim_res.bess_soc_pct, dtype=float)
+        valid_soc = (
+            soc_arr[~np.asarray(gaps, dtype=bool)]
+            if gaps is not None and len(gaps) == len(soc_arr) and np.any(~np.asarray(gaps, dtype=bool))
+            else soc_arr
+        )
+        if valid_soc.size > 0:
+            raw_min_soc = float(np.min(valid_soc))
+            raw_max_soc = float(np.max(valid_soc))
+        else:
+            raw_min_soc = max_soc_cfg
+            raw_max_soc = max_soc_cfg
+
+        bess_min_soc_reached_pct = round(raw_min_soc, 1)
+        bess_max_soc_reached_pct = round(raw_max_soc, 1)
+        depth_pct = max(0.0, raw_max_soc - raw_min_soc)
+        usable_win_round = round(bess_usable_window_kwh, 1)
+        used_depth_round = round(
+            min(bess_usable_window_kwh, bess_installed_kwh * (depth_pct / 100.0)),
+            1,
+        )
+        bess_max_depth_used_kwh = min(usable_win_round, used_depth_round)
+        bess_unused_usable_kwh = round(max(0.0, usable_win_round - bess_max_depth_used_kwh), 1)
+        bess_usable_window_kwh = usable_win_round
+        bess_capacity_utilization_pct = (
+            min(100.0, (bess_max_depth_used_kwh / bess_usable_window_kwh) * 100.0)
+            if bess_usable_window_kwh > 0.0
+            else 0.0
+        )
+        if bess_max_depth_used_kwh > 0.1:
+            right_raw = float(math.ceil((bess_max_depth_used_kwh * 1.10) / usable_dod))
+            bess_right_sized_kwh = min(bess_installed_kwh, max(10.0, right_raw))
+        else:
+            bess_right_sized_kwh = 0.0
+
+        bess_installed_kw = float(cfg.battery_power_kw)
+        bess_peak_active_kw = max(bess_peak_discharged_kw, bess_peak_charged_kw)
+        bess_power_utilization_pct = (
+            min(100.0, (bess_peak_active_kw / bess_installed_kw) * 100.0)
+            if bess_installed_kw > 0.0
+            else 0.0
+        )
+    else:
+        bess_installed_kwh = 0.0
+        bess_usable_window_kwh = 0.0
+        bess_min_soc_reached_pct = 0.0
+        bess_max_soc_reached_pct = 0.0
+        bess_max_depth_used_kwh = 0.0
+        bess_unused_usable_kwh = 0.0
+        bess_capacity_utilization_pct = 0.0
+        bess_right_sized_kwh = 0.0
+        bess_installed_kw = 0.0
+        bess_power_utilization_pct = 0.0
+
+    # Solar utilization
+    solar_enabled = bool(cfg.enable_solar and solar_deriv.installed_kwp > 0.0)
+    solar_installed_kwp = float(solar_deriv.installed_kwp) if solar_enabled else 0.0
+    solar_total_potential_kwh = float(kpis.solar_total_generation_kwh) if solar_enabled else 0.0
+    solar_used_direct_kwh = float(kpis.solar_direct_kwh) if solar_enabled else 0.0
+    solar_used_via_battery_kwh = float(kpis.solar_via_battery_kwh) if solar_enabled else 0.0
+    solar_exported_unused_kwh = float(kpis.solar_export_kwh) if solar_enabled else 0.0
+    solar_utilization_pct = (
+        min(
+            100.0,
+            ((solar_used_direct_kwh + solar_used_via_battery_kwh) / solar_total_potential_kwh) * 100.0,
+        )
+        if solar_enabled and solar_total_potential_kwh > 0.0
+        else 0.0
+    )
+
+    # Generator utilization
+    gen_enabled = bool(cfg.enable_generator and cfg.generator_rated_kw > 0.0)
+    gen_rated_kw = float(cfg.generator_rated_kw) if gen_enabled else 0.0
+    gen_power_utilization_pct = (
+        min(100.0, (gen_peak_used_kw / gen_rated_kw) * 100.0)
+        if gen_enabled and gen_rated_kw > 0.0
+        else 0.0
+    )
+
+    # Grid connection utilization
+    grid_peak_import_kw = float(kpis.new_grid_peak_kw)
+    grid_utilization_pct = (
+        min(100.0, (grid_peak_import_kw / grid_lim) * 100.0)
+        if grid_lim > 0.0
+        else 0.0
+    )
+
+    return SystemUtilizationDiagnostics(
+        annual_consumption_kwh=round(ann_load, 1),
+        grid_direct_kwh=round(grid_direct_kwh, 1),
+        grid_direct_pct=round(grid_direct_pct, 1),
+        solar_direct_kwh=round(solar_direct_kwh, 1),
+        solar_direct_pct=round(solar_direct_pct, 1),
+        battery_discharge_kwh=round(battery_discharge_kwh, 1),
+        battery_discharge_pct=round(battery_discharge_pct, 1),
+        solar_via_battery_kwh=round(solar_via_battery_kwh, 1),
+        grid_or_gen_via_battery_kwh=round(grid_or_gen_via_battery_kwh, 1),
+        generator_direct_kwh=round(generator_direct_kwh, 1),
+        generator_direct_pct=round(generator_direct_pct, 1),
+        unmet_overload_kwh=round(float(kpis.remaining_overload_kwh), 1),
+        grid_peak_shaved_kw=round(float(kpis.peak_reduction_kw), 1),
+        solar_peak_contribution_kw=round(solar_peak_contrib_kw, 1),
+        bess_peak_discharged_kw=round(bess_peak_discharged_kw, 1),
+        gen_peak_used_kw=round(gen_peak_used_kw, 1),
+        bess_enabled=bess_enabled,
+        bess_installed_kwh=round(bess_installed_kwh, 1),
+        bess_usable_window_kwh=round(bess_usable_window_kwh, 1),
+        bess_min_soc_reached_pct=bess_min_soc_reached_pct,
+        bess_max_soc_reached_pct=bess_max_soc_reached_pct,
+        bess_max_depth_used_kwh=round(bess_max_depth_used_kwh, 1),
+        bess_unused_usable_kwh=round(bess_unused_usable_kwh, 1),
+        bess_capacity_utilization_pct=round(bess_capacity_utilization_pct, 1),
+        bess_right_sized_kwh=min(round(bess_installed_kwh, 1), round(bess_right_sized_kwh, 0)),
+        bess_cycles_per_yr=round(float(kpis.battery_equivalent_cycles), 1),
+        bess_installed_kw=round(bess_installed_kw, 1),
+        bess_peak_charged_kw=round(bess_peak_charged_kw, 1),
+        bess_power_utilization_pct=round(bess_power_utilization_pct, 1),
+        solar_enabled=solar_enabled,
+        solar_installed_kwp=round(solar_installed_kwp, 1),
+        solar_total_potential_kwh=round(solar_total_potential_kwh, 1),
+        solar_used_direct_kwh=round(solar_used_direct_kwh, 1),
+        solar_used_via_battery_kwh=round(solar_used_via_battery_kwh, 1),
+        solar_exported_unused_kwh=round(solar_exported_unused_kwh, 1),
+        solar_utilization_pct=round(solar_utilization_pct, 1),
+        gen_enabled=gen_enabled,
+        gen_rated_kw=round(gen_rated_kw, 1),
+        gen_power_utilization_pct=round(gen_power_utilization_pct, 1),
+        gen_runtime_hours=round(float(kpis.generator_runtime_hours), 1),
+        gen_starts_count=int(kpis.generator_starts_count),
+        gen_energy_kwh=round(float(kpis.generator_total_generation_kwh), 1),
+        grid_limit_kw=round(grid_lim, 1),
+        grid_peak_import_kw=round(grid_peak_import_kw, 1),
+        grid_utilization_pct=round(grid_utilization_pct, 1),
     )
 
 

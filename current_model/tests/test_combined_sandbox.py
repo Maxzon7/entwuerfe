@@ -37,12 +37,14 @@ from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
     CombinedSystemConfig,
     InteractionRulesConfig,
     CombinedFinancialConfig,
+    SystemUtilizationDiagnostics,
     derive_solar_sizing_and_formula,
     compute_dual_battery_sizing,
     refresh_bottleneck_table_configured_status,
     compute_dual_generator_sizing,
     compute_coordinated_mix_sizing,
     simulate_combined_system_dispatch,
+    compute_system_utilization_diagnostics,
     evaluate_combined_financials,
 )
 from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
@@ -54,6 +56,8 @@ from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
     create_financial_waterfall_bridge_figure,
     create_financial_monthly_cashflow_figure,
     create_monthly_grid_bill_progression_figure,
+    create_supply_mix_pie_figure,
+    create_component_utilization_bars_figure,
 )
 from current_model.ui_sandbox.Combined_sandbox.combined_excel_exporter import (
     build_combined_verification_excel_bytes,
@@ -1099,6 +1103,68 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("Latitude (°N)", app_src)
         self.assertIn("Longitude (°E)", app_src)
         self.assertIn("5. System Mix & Rules", app_src)
+
+    def test_supply_mix_utilization_diagnostics_and_charts(self):
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_sizing_method="target_share_pct",
+            target_consumption_share_pct=60.0,
+            enable_battery=True,
+            battery_capacity_kwh=5000.0,
+            battery_power_kw=300.0,
+            enable_generator=True,
+            generator_rated_kw=200.0,
+        )
+        rules = InteractionRulesConfig()
+        sim_res = simulate_combined_system_dispatch(
+            self.load_kw, self.timestamps, cfg, rules
+        )
+        diag = compute_system_utilization_diagnostics(sim_res)
+        self.assertIsInstance(diag, SystemUtilizationDiagnostics)
+
+        share_sum = (
+            diag.grid_direct_pct
+            + diag.solar_direct_pct
+            + diag.battery_discharge_pct
+            + diag.generator_direct_pct
+        )
+        self.assertAlmostEqual(share_sum, 100.0, delta=0.5)
+        self.assertAlmostEqual(
+            diag.bess_max_depth_used_kwh + diag.bess_unused_usable_kwh,
+            diag.bess_usable_window_kwh,
+            delta=0.2,
+        )
+        self.assertGreaterEqual(diag.bess_capacity_utilization_pct, 0.0)
+        self.assertLessEqual(diag.bess_capacity_utilization_pct, 100.0)
+        self.assertGreater(diag.bess_right_sized_kwh, 0.0)
+        self.assertLessEqual(diag.bess_right_sized_kwh, diag.bess_installed_kwh)
+        self.assertLess(diag.bess_right_sized_kwh, diag.bess_installed_kwh)
+
+        fig_pie = create_supply_mix_pie_figure(diag)
+        self.assertGreaterEqual(len(fig_pie.data), 1)
+        fig_bars = create_component_utilization_bars_figure(diag)
+        self.assertEqual(len(fig_bars.data), 2)
+        bar_labels = list(fig_bars.data[0].y)
+        self.assertIn("Battery Capacity (kWh)", bar_labels)
+        self.assertNotIn("Battery Power (kW)", bar_labels)
+
+        app_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "ui_sandbox",
+            "Combined_sandbox",
+            "app.py",
+        )
+        with open(app_path, "r", encoding="utf-8") as f:
+            app_src = f.read()
+
+        self.assertIn("def render_supply_mix_and_utilization_overview(", app_src)
+        self.assertIn("create_supply_mix_pie_figure", app_src)
+        self.assertIn("create_component_utilization_bars_figure", app_src)
+        self.assertIn("Trim Unused Battery Capacity", app_src)
+        self.assertIn('st.form("comb_system_mix_form")', app_src)
+        self.assertIn('st.form("comb_rules_form")', app_src)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,10 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from .combined_sandbox_engine import CombinedSimulationResult
+from .combined_sandbox_engine import (
+    CombinedSimulationResult,
+    SystemUtilizationDiagnostics,
+)
 
 
 def _resolve_window_slice(
@@ -1224,4 +1227,187 @@ def create_monthly_grid_bill_progression_figure(
         hovermode="x unified",
     )
 
+    return fig
+
+
+def create_supply_mix_pie_figure(
+    diag: SystemUtilizationDiagnostics,
+    height: int = 340,
+) -> go.Figure:
+    """
+    Creates a Donut/Pie chart showing how annual facility electricity consumption (MWh & %)
+    is supplied across Grid Direct, Solar Direct, Battery Discharge, and Generator Output.
+    """
+    raw_items = [
+        ("Grid Direct", max(0.0, diag.grid_direct_kwh) / 1000.0, "#3B82F6"),
+        ("Solar Direct", max(0.0, diag.solar_direct_kwh) / 1000.0, "#FACC15"),
+        ("Battery Discharge", max(0.0, diag.battery_discharge_kwh) / 1000.0, "#22C55E"),
+        ("Generator Output", max(0.0, diag.generator_direct_kwh) / 1000.0, "#F97316"),
+    ]
+    active_items = [(lbl, mwh, clr) for lbl, mwh, clr in raw_items if mwh > 0.001]
+    if not active_items:
+        active_items = [("Grid Direct", 1.0, "#3B82F6")]
+
+    labels = [x[0] for x in active_items]
+    values = [round(x[1], 2) for x in active_items]
+    colors = [x[2] for x in active_items]
+
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.54,
+                sort=False,
+                direction="clockwise",
+                marker=dict(colors=colors, line=dict(color="#0F172A", width=2)),
+                textinfo="label+percent",
+                textposition="inside",
+                insidetextorientation="horizontal",
+                hovertemplate="<b>%{label}</b><br>%{value:,.1f} MWh/yr (%{percent})<extra></extra>",
+            )
+        ]
+    )
+
+    ann_mwh = diag.annual_consumption_kwh / 1000.0
+    fig.update_layout(
+        template="plotly_dark",
+        height=height,
+        margin=dict(l=15, r=15, t=42, b=15),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.0)",
+        title=dict(
+            text="Annual Electricity Coverage by Source (%)",
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.0,
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.12,
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+        annotations=[
+            dict(
+                text=f"<b>{ann_mwh:,.0f} MWh</b><br><span style='font-size:11px;color:#94A3B8;'>Annual Load</span>",
+                x=0.5,
+                y=0.5,
+                font=dict(size=14, color="#F8FAFC"),
+                showarrow=False,
+            )
+        ],
+    )
+    return fig
+
+
+def create_component_utilization_bars_figure(
+    diag: SystemUtilizationDiagnostics,
+    height: int = 340,
+) -> go.Figure:
+    """
+    Creates a 0-100% stacked horizontal bar chart showing how much of each installed
+    asset's capability is actively used vs. sitting unused/idle across the full year.
+    """
+    rows: List[Tuple[str, float, float, str, str]] = []
+
+    if diag.gen_enabled and diag.gen_rated_kw > 0:
+        gen_used = min(100.0, max(0.0, diag.gen_power_utilization_pct))
+        gen_idle = round(100.0 - gen_used, 1)
+        gen_txt = f"{gen_used:.0f}% ({diag.gen_peak_used_kw:,.0f} / {diag.gen_rated_kw:,.0f} kW)"
+        gen_idle_txt = f"Unused peak headroom: {max(0.0, diag.gen_rated_kw - diag.gen_peak_used_kw):,.0f} kW | {diag.gen_runtime_hours:,.1f} hrs/yr"
+    else:
+        gen_used, gen_idle = 0.0, 0.0
+        gen_txt = "Inactive"
+        gen_idle_txt = "Generator inactive"
+    rows.append(("Generator Power (kW)", gen_used, gen_idle, gen_txt, gen_idle_txt))
+
+    if diag.bess_enabled and diag.bess_usable_window_kwh > 0:
+        bc_used = min(100.0, max(0.0, diag.bess_capacity_utilization_pct))
+        bc_idle = round(100.0 - bc_used, 1)
+        bc_txt = f"{bc_used:.0f}% ({diag.bess_max_depth_used_kwh:,.0f} / {diag.bess_usable_window_kwh:,.0f} kWh)"
+        bc_idle_txt = f"Untouched usable capacity: {diag.bess_unused_usable_kwh:,.0f} kWh (Installed: {diag.bess_installed_kwh:,.0f} kWh)"
+    else:
+        bc_used, bc_idle = 0.0, 0.0
+        bc_txt = "Inactive"
+        bc_idle_txt = "Battery storage inactive"
+    rows.append(("Battery Capacity (kWh)", bc_used, bc_idle, bc_txt, bc_idle_txt))
+
+    if diag.solar_enabled and diag.solar_total_potential_kwh > 0:
+        sol_used = min(100.0, max(0.0, diag.solar_utilization_pct))
+        sol_idle = round(100.0 - sol_used, 1)
+        sol_used_mwh = (diag.solar_used_direct_kwh + diag.solar_used_via_battery_kwh) / 1000.0
+        sol_tot_mwh = diag.solar_total_potential_kwh / 1000.0
+        sol_txt = f"{sol_used:.0f}% ({sol_used_mwh:,.0f} / {sol_tot_mwh:,.0f} MWh)"
+        sol_idle_txt = f"Exported / unused surplus: {diag.solar_exported_unused_kwh / 1000.0:,.0f} MWh/yr"
+    else:
+        sol_used, sol_idle = 0.0, 0.0
+        sol_txt = "Inactive"
+        sol_idle_txt = "Solar array inactive"
+    rows.append(("Solar Yield (MWh)", sol_used, sol_idle, sol_txt, sol_idle_txt))
+
+    y_labels = [r[0] for r in rows]
+    used_vals = [round(r[1], 1) for r in rows]
+    idle_vals = [round(r[2], 1) for r in rows]
+    used_texts = [r[3] for r in rows]
+    idle_hovers = [r[4] for r in rows]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            y=y_labels,
+            x=used_vals,
+            orientation="h",
+            name="Actively Used (%)",
+            marker_color="#22C55E",
+            text=used_texts,
+            textposition="auto",
+            customdata=used_texts,
+            hovertemplate="<b>%{y}</b><br>Used: %{customdata}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            y=y_labels,
+            x=idle_vals,
+            orientation="h",
+            name="Unused / Idle Reserve (%)",
+            marker_color="rgba(148, 163, 184, 0.25)",
+            customdata=idle_hovers,
+            hovertemplate="<b>%{y}</b><br>%{customdata} (%{x:.1f}%)<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        barmode="stack",
+        template="plotly_dark",
+        height=height,
+        margin=dict(l=15, r=20, t=58, b=42),
+        paper_bgcolor="rgba(15, 23, 42, 0.0)",
+        plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        title=dict(
+            text="Component Utilization (Used % vs. Unused Reserve)",
+            font=dict(size=14, color="#F8FAFC"),
+            x=0.0,
+        ),
+        xaxis=dict(
+            range=[0, 100],
+            title="Share of Installed / Usable Capacity (%)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+        ),
+        yaxis=dict(
+            gridcolor="rgba(148, 163, 184, 0.08)",
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+        ),
+    )
     return fig
