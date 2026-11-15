@@ -385,23 +385,35 @@ class TestCombinedSandbox(unittest.TestCase):
             "4-pillar reconciliation",
             "4-pillar equation bar",
         ]
+        import ast
+
         sandbox_dir = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox")
         )
-        for fname in (
-            "app.py",
-            "combined_sandbox_engine.py",
-            "combined_charts.py",
-            "combined_excel_exporter.py",
-        ):
-            fpath = os.path.join(sandbox_dir, fname)
+        py_files = []
+        for dirpath, _, filenames in os.walk(sandbox_dir):
+            if "__pycache__" in dirpath:
+                continue
+            for fn in sorted(filenames):
+                if fn.endswith(".py"):
+                    py_files.append(os.path.join(dirpath, fn))
+        self.assertGreaterEqual(len(py_files), 20)
+        for fpath in sorted(py_files):
+            rel_name = os.path.relpath(fpath, sandbox_dir)
             with open(fpath, "r", encoding="utf-8") as f:
-                content_lower = f.read().lower()
+                src = f.read()
+            ast.parse(src, filename=rel_name)
+            self.assertLessEqual(
+                len(src.splitlines()),
+                960,
+                f"Module {rel_name} exceeds 960 lines",
+            )
+            content_lower = src.lower()
             for term in forbidden_terms:
                 self.assertNotIn(
                     term,
                     content_lower,
-                    f"Forbidden marketing term '{term}' found in {fname}",
+                    f"Forbidden marketing term '{term}' found in {rel_name}",
                 )
 
     def test_csv_upload_parsing(self):
@@ -548,13 +560,27 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIsInstance(norm_series, LoadSeries2025)
         self.assertEqual(len(norm_series.power_kw), 35040)
 
+    @staticmethod
+    def _read_combined_ui_source() -> str:
+        """Returns concatenated source of app.py and all views/*.py modules for UI contract tests."""
+        sandbox_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox")
+        )
+        parts = []
+        app_path = os.path.join(sandbox_dir, "app.py")
+        with open(app_path, "r", encoding="utf-8") as f:
+            parts.append(f.read())
+        views_dir = os.path.join(sandbox_dir, "views")
+        if os.path.isdir(views_dir):
+            for fn in sorted(os.listdir(views_dir)):
+                if fn.endswith(".py"):
+                    with open(os.path.join(views_dir, fn), "r", encoding="utf-8") as f:
+                        parts.append(f.read())
+        return "\n".join(parts)
+
     def test_all_subtab_forms_encapsulated(self):
         """Verifies that all heavy input sections are encapsulated in st.form or st.fragment to eliminate intermediate reruns."""
-        app_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "app.py")
-        )
-        with open(app_path, "r", encoding="utf-8") as f:
-            code = f.read()
+        code = self._read_combined_ui_source()
 
         required_forms = [
             'st.form("comb_grid_limit_form")',
@@ -750,12 +776,8 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(units_mega, 506)
         self.assertAlmostEqual(units_mega * kwh_mega, 1265500.0, delta=1000.0)
 
-        # 6. Verify that hardcoded max_value=200 is gone from Combined_sandbox/app.py
-        app_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "app.py")
-        )
-        with open(app_path, "r", encoding="utf-8") as f:
-            app_code = f.read()
+        # 6. Verify that hardcoded max_value=200 is gone from Combined_sandbox views/app
+        app_code = self._read_combined_ui_source()
 
         self.assertNotIn(
             'max_value=200,',
@@ -1093,14 +1115,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(trace_by_name["Solar Total Potential (kW)"].visible, "legendonly")
 
     def test_solar_explanation_and_system_mix_form_present(self):
-        app_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "ui_sandbox",
-            "Combined_sandbox",
-            "app.py",
-        )
-        with open(app_path, "r", encoding="utf-8") as f:
-            app_src = f.read()
+        app_src = self._read_combined_ui_source()
 
         self.assertIn('st.form("comb_system_mix_form")', app_src)
         self.assertIn('st.form("comb_rules_form")', app_src)
@@ -1156,14 +1171,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("Battery Capacity (kWh)", bar_labels)
         self.assertNotIn("Battery Power (kW)", bar_labels)
 
-        app_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "ui_sandbox",
-            "Combined_sandbox",
-            "app.py",
-        )
-        with open(app_path, "r", encoding="utf-8") as f:
-            app_src = f.read()
+        app_src = self._read_combined_ui_source()
 
         self.assertIn("def render_supply_mix_and_utilization_overview(", app_src)
         self.assertIn("create_supply_mix_pie_figure", app_src)
@@ -1262,14 +1270,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertTrue(res_ok.financial_kpis.grid_congestion_compliant)
         self.assertEqual(res_ok.financial_kpis.grid_congestion_breach_kw, 0.0)
 
-        app_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "ui_sandbox",
-            "Combined_sandbox",
-            "app.py",
-        )
-        with open(app_path, "r", encoding="utf-8") as fh:
-            app_src = fh.read()
+        app_src = self._read_combined_ui_source()
         for expected in (
             "def _render_isolated_pillar_deep_dive_fragment(",
             "def _render_isolated_component_economics_fragment(",
