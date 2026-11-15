@@ -3824,7 +3824,7 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
                 render_kpi_card(
                     title="Annual Fuel, Service & Rental",
                     value=f"€{fk.generator_total_opex_eur:,.0f} / yr",
-                    subtext=f"Fuel: €{fk.generator_fuel_cost_eur:,.0f} | O&M: €{fk.generator_maint_cost_eur:,.0f} | Rent: €{fk.generator_rental_cost_eur:,.0f}",
+                    subtext=f"Fuel: €{fk.generator_fuel_cost_eur:,.0f} | O&M: €{fk.generator_maintenance_cost_eur:,.0f} | Rent: €{fk.generator_rental_cost_eur:,.0f}",
                     status="default",
                 )
             with gc4:
@@ -4146,6 +4146,10 @@ def render_subtab6_financials(sim_res) -> None:
     """
     cur_sys: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cur_fin: CombinedFinancialConfig = st.session_state["comb_fin_cfg"]
+    # Upgrade in-memory CombinedFinancialConfig after hot reloads so new fields exist cleanly.
+    for _k, _v in CombinedFinancialConfig().__dict__.items():
+        if not hasattr(cur_fin, _k):
+            setattr(cur_fin, _k, _v)
     is_fin_active = bool(cur_sys.enable_financials)
 
     if not is_fin_active:
@@ -4169,7 +4173,13 @@ def render_subtab6_financials(sim_res) -> None:
                 )
         return
 
-    if sim_res.financial_kpis is None:
+    _needs_fin_eval = (
+        sim_res.financial_kpis is None
+        or not hasattr(sim_res.financial_kpis, "dso_savings_eur")
+        or getattr(sim_res, "dso_monthly_df", None) is None
+        or sim_res.dso_monthly_df.empty
+    )
+    if _needs_fin_eval:
         evaluate_combined_financials(sim_res, cur_fin)
 
     # Top: Live Master Cost & Savings Equation Bar

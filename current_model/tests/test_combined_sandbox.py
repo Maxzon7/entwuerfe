@@ -1291,6 +1291,18 @@ class TestCombinedSandbox(unittest.TestCase):
         ):
             self.assertNotIn(dutch_term, app_src)
 
+        self.assertNotIn("generator_maint_cost_eur", app_src)
+        self.assertIn("fk.generator_maintenance_cost_eur", app_src)
+
+        import re
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import CombinedFinancialKPIs
+
+        valid_fk_fields = set(CombinedFinancialKPIs().__dict__.keys())
+        referenced_fk_fields = set(re.findall(r"\b(?:fk|fin_kpis)\.([a-zA-Z_][a-zA-Z0-9_]*)", app_src))
+        self.assertTrue(len(referenced_fk_fields) > 0)
+        missing_fk_fields = sorted(referenced_fk_fields - valid_fk_fields)
+        self.assertEqual(missing_fk_fields, [], f"Unknown CombinedFinancialKPIs fields referenced in app.py: {missing_fk_fields}")
+
 
 if __name__ == "__main__":
     unittest.main()
