@@ -2572,7 +2572,7 @@ def _render_master_cost_equation_bar(sim_res) -> str:
         )
         + f'<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-top:9px; padding-top:8px; border-top:1px solid #1e293b; font-size:0.80rem; color:#cbd5e1;">\n'
         f'<div><b>Net Investment (CAPEX):</b> Solar &euro;{fk.solar_capex_eur:,.0f} + Battery &euro;{fk.battery_capex_eur:,.0f} + Generator &euro;{fk.generator_capex_eur:,.0f} &minus; Avoided Grid Upgrade &euro;{fk.avoided_grid_upgrade_capex_eur:,.0f} = <b style="color:#ffffff;">&euro;{fk.total_capex_eur:,.0f}</b></div>\n'
-        f'<div><b>Simple Payback:</b> <span style="color:#f8fafc; font-weight:700;">{pb_str}</span> &nbsp;|&nbsp; <b>15-Year NPV:</b> <span style="color:{npv_color}; font-weight:700;">&euro;{fk.npv_15y_eur:+,.0f}</span> &nbsp;|&nbsp; <b>15Y BCR:</b> <span style="color:#38BDF8; font-weight:700;">{fk.benefit_cost_ratio_15y:.2f}x</span></div>\n'
+        f'<div><b>Simple Payback:</b> <span style="color:#f8fafc; font-weight:700;">{pb_str}</span> &nbsp;|&nbsp; <b>15-Year NPV:</b> <span style="color:{npv_color}; font-weight:700;">&euro;{fk.npv_15y_eur:+,.0f}</span></div>\n'
         f'</div>\n'
         f'</div>'
     )
@@ -3913,8 +3913,11 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
 
     st.markdown("##### :material/account_balance: Financial Summary")
 
-    # Row 1: Year-1 Operations & Turnkey Investment
+    # Single Clear 4-Card Headline Overview
     fk1, fk2, fk3, fk4 = st.columns(4)
+    pb_str = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
+    disc_pb_str = f"{fin_kpis.discounted_payback_years:.1f} yrs" if fin_kpis.discounted_payback_years is not None else "N/A"
+    irr_str = f"{fin_kpis.irr_15y_pct:.1f}%" if fin_kpis.irr_15y_pct is not None else "N/A"
     with fk1:
         capex_subtext = (
             f"Gross: €{fin_kpis.gross_capex_eur:,.0f} | Avoided: -€{fin_kpis.avoided_grid_upgrade_capex_eur:,.0f}"
@@ -3922,105 +3925,32 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
             else f"Solar: €{fin_kpis.solar_capex_eur:,.0f} | Battery: €{fin_kpis.battery_capex_eur:,.0f} | Gen: €{fin_kpis.generator_capex_eur:,.0f}"
         )
         render_kpi_card(
-            title="Net Turnkey Investment (CAPEX)",
+            title="Total Investment",
             value=f"€{fin_kpis.total_capex_eur:,.0f}",
             subtext=capex_subtext,
             status="default",
         )
     with fk2:
         render_kpi_card(
-            title="Year-1 Operating Cost (OPEX)",
-            value=f"€{fin_kpis.total_annual_opex_eur:,.0f} / yr",
-            subtext=f"Grid: €{fin_kpis.combined_grid_total_eur:,.0f} | O&M + Fuel: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
-            status="default",
+            title="Annual Savings (Year 1)",
+            value=f"€{fin_kpis.annual_savings_eur:+,.0f} / yr",
+            subtext=f"New annual cost: €{fin_kpis.total_annual_opex_eur:,.0f} vs. €{fin_kpis.baseline_total_opex_eur:,.0f} current",
+            status="ok" if fin_kpis.annual_savings_eur > 0 else "alert",
         )
     with fk3:
         render_kpi_card(
-            title="Year-1 Net Cash Savings",
-            value=f"€{fin_kpis.annual_savings_eur:,.0f} / yr",
-            subtext=f"Gross Bill Savings: €{fin_kpis.gross_bill_savings_y1_eur:,.0f} - O&M: €{fin_kpis.system_om_and_fuel_y1_eur:,.0f}",
-            status="ok" if fin_kpis.annual_savings_eur > 0 else "alert",
-        )
-    with fk4:
-        pb_str = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
-        disc_pb_str = f"{fin_kpis.discounted_payback_years:.1f} yrs" if fin_kpis.discounted_payback_years is not None else "N/A"
-        render_kpi_card(
-            title="Payback (Simple & Discounted)",
-            value=f"{pb_str} | {disc_pb_str}",
-            subtext="Simple Payback vs. Discounted Break-Even",
+            title="Payback Period",
+            value=pb_str,
+            subtext="Years until investment is paid back",
             status="ok" if fin_kpis.payback_years is not None else "alert",
         )
-
-    # Row 2: 15-Year Lifecycle & Unit Economics
-    fk5, fk6, fk7, fk8 = st.columns(4)
-    with fk5:
+    with fk4:
         render_kpi_card(
-            title="15-Year Cumulative TCO",
-            value=f"€{fin_kpis.tco_15y_combined_eur:,.0f}",
-            subtext=f"Current situation: €{fin_kpis.tco_15y_baseline_eur:,.0f} (Net: €{fin_kpis.tco_15y_savings_eur:+,.0f})",
-            status="ok" if fin_kpis.tco_15y_savings_eur > 0 else "default",
+            title="15-Year Net Profit",
+            value=f"€{fin_kpis.tco_15y_savings_eur:+,.0f}",
+            subtext=f"15Y total cost: €{fin_kpis.tco_15y_combined_eur:,.0f} vs. €{fin_kpis.tco_15y_baseline_eur:,.0f} current",
+            status="ok" if fin_kpis.tco_15y_savings_eur > 0 else "alert",
         )
-    with fk6:
-        irr_str = f"IRR: {fin_kpis.irr_15y_pct:.1f}%" if fin_kpis.irr_15y_pct is not None else "IRR: N/A"
-        render_kpi_card(
-            title="15-Year Net Profit (NPV) & IRR",
-            value=f"€{fin_kpis.npv_15y_eur:,.0f} | {irr_str}",
-            subtext=f"15-Year NPV at {cur_fin.discount_rate_pct:.1f}% discount rate",
-            status="ok" if fin_kpis.npv_15y_eur > 0 else "default",
-        )
-    with fk7:
-        render_kpi_card(
-            title="On-Site Energy Cost vs. Grid",
-            value=f"€{fin_kpis.system_lcoe_eur_kwh:.3f} / kWh",
-            subtext=f"Effective Grid Rate: €{fin_kpis.effective_blended_grid_rate_eur_kwh:.3f} / kWh",
-            status="ok" if (0.0 < fin_kpis.system_lcoe_eur_kwh < fin_kpis.effective_blended_grid_rate_eur_kwh) else "default",
-        )
-    with fk8:
-        render_kpi_card(
-            title="Peak Shaving Cost Efficiency",
-            value=f"€{fin_kpis.annualized_cost_per_shaved_kw_eur:,.0f} / kW/yr",
-            subtext=f"Peak Reduction: {sim_res.kpis.peak_reduction_kw:,.1f} kW shaved",
-            status="default",
-        )
-
-    # Row 3: Isolated Contract Indicators, Benefit-Cost Ratio & Grid Congestion Compliance
-    fk9, fk10, fk11, fk12 = st.columns(4)
-    with fk9:
-        render_kpi_card(
-            title="DSO Contract Savings",
-            value=f"€{fin_kpis.dso_savings_eur:+,.0f} / yr",
-            subtext=f"{fin_kpis.dso_savings_pct:+.1f}% vs. current grid contract (€{fin_kpis.combined_pillar2_dso_eur:,.0f}/yr)",
-            status="ok" if fin_kpis.dso_savings_eur > 0 else ("alert" if fin_kpis.dso_savings_eur < 0 else "default"),
-        )
-    with fk10:
-        render_kpi_card(
-            title="Supplier Commodity Savings",
-            value=f"€{fin_kpis.supplier_savings_eur:+,.0f} / yr",
-            subtext=f"{fin_kpis.supplier_savings_pct:+.1f}% vs. current energy bill (€{fin_kpis.combined_pillar1_supply_eur:,.0f}/yr)",
-            status="ok" if fin_kpis.supplier_savings_eur > 0 else "default",
-        )
-    with fk11:
-        render_kpi_card(
-            title="15-Year Benefit-Cost Ratio (BCR)",
-            value=f"{fin_kpis.benefit_cost_ratio_15y:.2f}x",
-            subtext="Discounted 15Y savings divided by Net CAPEX",
-            status="ok" if fin_kpis.benefit_cost_ratio_15y >= 1.0 else "alert",
-        )
-    with fk12:
-        if fin_kpis.grid_congestion_compliant:
-            render_kpi_card(
-                title="Grid Congestion Compliance",
-                value="Compliant",
-                subtext=f"0 breach months (Peak {sim_res.kpis.new_grid_peak_kw:,.1f} <= {cur_sys.grid_limit_kw:,.0f} kW)",
-                status="ok",
-            )
-        else:
-            render_kpi_card(
-                title="Grid Congestion Compliance",
-                value=f"Breach (+{fin_kpis.grid_congestion_breach_kw:,.1f} kW)",
-                subtext=f"{fin_kpis.grid_congestion_breach_months} breach month(s) above grid limit",
-                status="alert",
-            )
 
     if cur_fin.strict_grid_congestion_mode:
         if fin_kpis.grid_congestion_compliant:
@@ -4064,6 +3994,25 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
             ),
             unsafe_allow_html=True,
         )
+
+    # Secondary Technical & Contract Indicators (collapsed by default for clean screen clarity)
+    with st.expander(":material/analytics: Additional Financial & Contract Indicators (NPV, IRR, LCOE & Contract Split)", expanded=False):
+        cong_val = (
+            f"Compliant (0 breach mos, Peak {sim_res.kpis.new_grid_peak_kw:,.1f} <= {cur_sys.grid_limit_kw:,.0f} kW)"
+            if fin_kpis.grid_congestion_compliant
+            else f"Breach (+{fin_kpis.grid_congestion_breach_kw:,.1f} kW across {fin_kpis.grid_congestion_breach_months} mos)"
+        )
+        ind_df = pd.DataFrame([
+            {"Indicator": "Discounted Payback", "Value": disc_pb_str, "Notes": f"Break-even discounted at {cur_fin.discount_rate_pct:.1f}% p.a."},
+            {"Indicator": "15-Year NPV & IRR", "Value": f"€{fin_kpis.npv_15y_eur:+,.0f} | IRR: {irr_str}", "Notes": f"Discounted net present value at {cur_fin.discount_rate_pct:.1f}%"},
+            {"Indicator": "15-Year Benefit-Cost Ratio (BCR)", "Value": f"{fin_kpis.benefit_cost_ratio_15y:.2f}x", "Notes": "Discounted 15-year savings divided by Net CAPEX"},
+            {"Indicator": "On-Site Energy Cost vs. Grid", "Value": f"€{fin_kpis.system_lcoe_eur_kwh:.3f} / kWh", "Notes": f"Effective grid rate: €{fin_kpis.effective_blended_grid_rate_eur_kwh:.3f} / kWh"},
+            {"Indicator": "Peak Shaving Cost Efficiency", "Value": f"€{fin_kpis.annualized_cost_per_shaved_kw_eur:,.0f} / kW/yr", "Notes": f"Peak demand reduced by {sim_res.kpis.peak_reduction_kw:,.1f} kW"},
+            {"Indicator": "DSO Contract Savings (Isolated)", "Value": f"€{fin_kpis.dso_savings_eur:+,.0f} / yr ({fin_kpis.dso_savings_pct:+.1f}%)", "Notes": f"New DSO grid bill: €{fin_kpis.combined_pillar2_dso_eur:,.0f}/yr"},
+            {"Indicator": "Supplier Commodity Savings (Isolated)", "Value": f"€{fin_kpis.supplier_savings_eur:+,.0f} / yr ({fin_kpis.supplier_savings_pct:+.1f}%)", "Notes": f"New energy bill: €{fin_kpis.combined_pillar1_supply_eur:,.0f}/yr"},
+            {"Indicator": "Grid Congestion Compliance", "Value": cong_val, "Notes": "Checks whether all 12 monthly peaks stay within contracted grid limit"},
+        ])
+        st.dataframe(ind_df, use_container_width=True, hide_index=True)
 
     # Supply Mix, Asset Utilization & Financial Cost Share Bridge (collapsible fragment)
     _render_subtab6_supply_mix_bridge_fragment(sim_res)
