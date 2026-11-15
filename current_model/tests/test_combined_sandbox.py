@@ -56,6 +56,12 @@ from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
     create_financial_waterfall_bridge_figure,
     create_financial_monthly_cashflow_figure,
     create_monthly_grid_bill_progression_figure,
+    create_dso_isolated_breakdown_figure,
+    create_supplier_isolated_breakdown_figure,
+    create_tax_isolated_breakdown_figure,
+    create_solar_isolated_financial_figure,
+    create_battery_isolated_financial_figure,
+    create_generator_isolated_financial_figure,
     create_supply_mix_pie_figure,
     create_component_utilization_bars_figure,
 )
@@ -1165,6 +1171,125 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("Trim Unused Battery Capacity", app_src)
         self.assertIn('st.form("comb_system_mix_form")', app_src)
         self.assertIn('st.form("comb_rules_form")', app_src)
+
+    def test_classic_4pillar_bill_congestion_and_isolated_deep_dives(self):
+        """Verifies TOU HT/NT, DSO connection split & breach step-up, tax credit, VAT, congestion lock, and isolated charts."""
+        sys_cfg = CombinedSystemConfig(
+            grid_limit_kw=160.0,
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=200.0,
+            enable_battery=True,
+            battery_capacity_kwh=250.0,
+            battery_power_kw=100.0,
+            enable_generator=True,
+            generator_rated_kw=100.0,
+            enable_financials=True,
+        )
+        rules_cfg = InteractionRulesConfig()
+        res = simulate_combined_system_dispatch(
+            self.load_kw, self.timestamps, sys_cfg, rules_cfg
+        )
+
+        fin_tou = CombinedFinancialConfig(
+            supplier_pricing_mode="dual_tou",
+            supplier_peak_ht_eur_kwh=0.16,
+            supplier_offpeak_nt_eur_kwh=0.10,
+            supplier_gvo_surcharge_eur_kwh=0.005,
+            dso_connection_fee_eur_month=120.0,
+            dso_fixed_fee_eur_month=90.0,
+            dso_adjust_capacity_on_breach=True,
+            annual_tax_reduction_credit_eur=600.0,
+            vat_rate_pct=21.0,
+            avoided_grid_upgrade_capex_eur=50000.0,
+            strict_grid_congestion_mode=False,
+        )
+        evaluate_combined_financials(res, fin_tou)
+        fk = res.financial_kpis
+        self.assertIsNotNone(fk)
+        self.assertGreater(fk.baseline_supply_peak_ht_eur, 0.0)
+        self.assertGreater(fk.baseline_supply_offpeak_nt_eur, 0.0)
+        self.assertGreater(fk.combined_supply_gvo_eur, 0.0)
+        self.assertAlmostEqual(fk.baseline_dso_connection_eur, 1440.0, places=2)
+        self.assertAlmostEqual(fk.baseline_dso_transport_fixed_eur, 1080.0, places=2)
+        self.assertGreater(fk.baseline_dso_breach_months, 0)
+        self.assertAlmostEqual(fk.baseline_tax_credit_eur, 600.0, places=2)
+        self.assertLess(res.tax_monthly_df["Tax Credit (-€)"].sum(), 0.0)
+        self.assertGreater(fk.baseline_total_gross_eur, fk.baseline_total_opex_eur)
+        self.assertEqual(fk.avoided_grid_upgrade_capex_eur, 50000.0)
+        self.assertGreater(fk.dso_savings_eur, 0.0)
+
+        for df_attr in (
+            "dso_monthly_df",
+            "supplier_monthly_df",
+            "tax_monthly_df",
+            "solar_fin_monthly_df",
+            "battery_fin_monthly_df",
+            "generator_fin_monthly_df",
+        ):
+            df_iso = getattr(res, df_attr)
+            self.assertEqual(len(df_iso), 12, f"Expected 12 rows in {df_attr}")
+
+        for fig_builder in (
+            create_dso_isolated_breakdown_figure,
+            create_supplier_isolated_breakdown_figure,
+            create_tax_isolated_breakdown_figure,
+            create_solar_isolated_financial_figure,
+            create_battery_isolated_financial_figure,
+            create_generator_isolated_financial_figure,
+        ):
+            fig = fig_builder(res)
+            self.assertGreaterEqual(len(fig.data), 2)
+
+        # Strict Grid Congestion Lock zeroes avoided upgrade credit
+        fin_strict = CombinedFinancialConfig(
+            strict_grid_congestion_mode=True,
+            avoided_grid_upgrade_capex_eur=50000.0,
+        )
+        evaluate_combined_financials(res, fin_strict)
+        self.assertEqual(res.financial_kpis.avoided_grid_upgrade_capex_eur, 0.0)
+
+        # Verify compliant vs non-compliant congestion states
+        breach_cfg = CombinedSystemConfig(grid_limit_kw=120.0, enable_financials=True)
+        res_breach = simulate_combined_system_dispatch(self.load_kw, self.timestamps, breach_cfg, rules_cfg)
+        evaluate_combined_financials(res_breach, fin_strict)
+        self.assertFalse(res_breach.financial_kpis.grid_congestion_compliant)
+        self.assertGreater(res_breach.financial_kpis.grid_congestion_breach_kw, 0.0)
+
+        ok_cfg = CombinedSystemConfig(grid_limit_kw=300.0, enable_financials=True)
+        res_ok = simulate_combined_system_dispatch(self.load_kw, self.timestamps, ok_cfg, rules_cfg)
+        evaluate_combined_financials(res_ok, fin_strict)
+        self.assertTrue(res_ok.financial_kpis.grid_congestion_compliant)
+        self.assertEqual(res_ok.financial_kpis.grid_congestion_breach_kw, 0.0)
+
+        app_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "ui_sandbox",
+            "Combined_sandbox",
+            "app.py",
+        )
+        with open(app_path, "r", encoding="utf-8") as fh:
+            app_src = fh.read()
+        for expected in (
+            "def _render_isolated_pillar_deep_dive_fragment(",
+            "def _render_isolated_component_economics_fragment(",
+            "def _render_subtab6_supply_mix_bridge_fragment(",
+            "Strict Grid Congestion Lock: No Grid Upgrade or Contract Breach Allowed",
+            "Grid Operator Contract Only (DSO)",
+            "Dual TOU Rate (Peak HT / Off-Peak NT)",
+            "Annual Tax Credit",
+        ):
+            self.assertIn(expected, app_src)
+        for dutch_term in (
+            "Aansluitdienst",
+            "Vastrecht",
+            "Heffingskorting",
+            "Vermindering",
+            "Dubbeltarief",
+            "Grootverbruik",
+            "Garantie van Oorsprong",
+        ):
+            self.assertNotIn(dutch_term, app_src)
 
 
 if __name__ == "__main__":
