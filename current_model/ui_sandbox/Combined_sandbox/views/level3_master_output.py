@@ -218,9 +218,11 @@ def render_level3_permanent_master_output(sim_res) -> None:
     with mk4:
         if cfg.enable_financials and fin_kpis is not None:
             pb_txt = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
+            c_code = str(getattr(fin_kpis, "currency_code", "EUR") or "EUR")
+            c_sym = "€" if c_code == "EUR" else (f"{c_code} " if c_code == "ARS" else "$")
             render_kpi_card(
                 title="System Operation & Financials",
-                value=f"€{fin_kpis.annual_savings_eur:,.0f}/yr | {pb_txt}",
+                value=f"{c_sym}{fin_kpis.annual_savings_eur:,.0f}/yr | {pb_txt}",
                 subtext=(
                     f"BESS: {kpis.battery_equivalent_cycles:.1f} cyc | "
                     f"Gen: {kpis.generator_runtime_hours:,.1f} hrs ({kpis.generator_fuel_total:,.0f} {kpis.generator_fuel_unit})"

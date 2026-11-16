@@ -99,13 +99,23 @@ def build_combined_verification_excel_bytes(
     ]
 
     if fin_kpis is not None:
+        curr = str(getattr(fin_kpis, "currency_code", "EUR") or "EUR")
+        fin_cfg = sim_res.financial_config
         summary_rows.extend([
-            {"Category": "Financial KPIs", "Parameter / Metric": "Total Investment / CAPEX (€)", "Value": fin_kpis.total_capex_eur},
-            {"Category": "Financial KPIs", "Parameter / Metric": "Current situation Annual Bill (€/year)", "Value": fin_kpis.baseline_total_opex_eur},
-            {"Category": "Financial KPIs", "Parameter / Metric": "Combined System Annual OPEX (€/year)", "Value": fin_kpis.total_annual_opex_eur},
-            {"Category": "Financial KPIs", "Parameter / Metric": "Annual Savings vs. Current situation (€/year)", "Value": fin_kpis.annual_savings_eur},
+            {"Category": "Financial KPIs", "Parameter / Metric": "Contract Currency", "Value": curr},
+            {"Category": "Financial KPIs", "Parameter / Metric": f"Total Investment / CAPEX ({curr})", "Value": fin_kpis.total_capex_eur},
+            {"Category": "Financial KPIs", "Parameter / Metric": f"Current situation Annual Bill ({curr}/year)", "Value": fin_kpis.baseline_total_opex_eur},
+            {"Category": "Financial KPIs", "Parameter / Metric": f"Combined System Annual OPEX ({curr}/year)", "Value": fin_kpis.total_annual_opex_eur},
+            {"Category": "Financial KPIs", "Parameter / Metric": f"Annual Savings vs. Current situation ({curr}/year)", "Value": fin_kpis.annual_savings_eur},
             {"Category": "Financial KPIs", "Parameter / Metric": "Payback Period (Years)", "Value": fin_kpis.payback_years if fin_kpis.payback_years is not None else "N/A"},
-            {"Category": "Financial KPIs", "Parameter / Metric": "15-Year NPV (€)", "Value": fin_kpis.npv_15y_eur},
+            {"Category": "Financial KPIs", "Parameter / Metric": f"15-Year NPV ({curr})", "Value": fin_kpis.npv_15y_eur},
+            {"Category": "Hardware Cost Basis", "Parameter / Metric": "Solar CAPEX / O&M Mode", "Value": f"{fin_kpis.solar_pricing_mode} / {fin_kpis.solar_opex_pricing_mode}"},
+            {"Category": "Hardware Cost Basis", "Parameter / Metric": f"Solar Implied Unit Cost ({curr}/kWp)", "Value": fin_kpis.solar_implied_eur_kwp},
+            {"Category": "Hardware Cost Basis", "Parameter / Metric": "Battery CAPEX / O&M Mode", "Value": f"{fin_kpis.battery_pricing_mode} / {fin_kpis.battery_opex_pricing_mode}"},
+            {"Category": "Hardware Cost Basis", "Parameter / Metric": f"Battery Implied Unit Cost ({curr}/kWh | {curr}/kW)", "Value": f"{fin_kpis.battery_implied_eur_kwh:,.2f} / kWh | {fin_kpis.battery_implied_eur_kw:,.2f} / kW"},
+            {"Category": "Hardware Cost Basis", "Parameter / Metric": f"Battery Repowering Basis (Yr {getattr(fin_cfg, 'battery_augmentation_year', 11)})", "Value": f"{fin_kpis.battery_repowering_mode} ({fin_kpis.battery_augmentation_eur:,.0f} {curr})"},
+            {"Category": "Hardware Cost Basis", "Parameter / Metric": "Generator CAPEX / OPEX Mode", "Value": f"{fin_kpis.generator_pricing_mode} / {fin_kpis.generator_opex_pricing_mode}"},
+            {"Category": "Hardware Cost Basis", "Parameter / Metric": f"Generator Implied Unit Cost ({curr}/kW)", "Value": fin_kpis.generator_implied_eur_kw},
         ])
 
     df_sheet1_meta = pd.DataFrame(summary_rows)

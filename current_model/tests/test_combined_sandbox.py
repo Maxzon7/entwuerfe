@@ -1428,6 +1428,106 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("With Generator Backup", ui_src)
         self.assertIn("Include Generator Backup in Limit Check", ui_src)
 
+    def test_hardware_lump_sum_overrides_repowering_split_degradation_and_excel(self):
+        """Verifies >0 lump-sum CAPEX/OPEX overrides, repowering override, split degradation, and Excel transparency."""
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=160.0,
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=200.0,
+            enable_battery=True,
+            battery_capacity_kwh=400.0,
+            battery_power_kw=100.0,
+            enable_generator=True,
+            generator_rated_kw=100.0,
+            enable_financials=True,
+        )
+        rules = InteractionRulesConfig()
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg, rules)
+
+        # 1. Lump-sum overrides (>0) replace unit rates without losing underlying unit rate fields
+        fin_ov = CombinedFinancialConfig(
+            currency_code="USD",
+            solar_turnkey_eur_kwp=900.0,
+            solar_lump_sum_capex_eur=150000.0,
+            solar_lump_sum_om_eur_year=2100.0,
+            battery_capex_eur_kwh=280.0,
+            battery_lump_sum_capex_eur=120000.0,
+            battery_lump_sum_om_eur_year=1800.0,
+            enable_battery_augmentation=True,
+            battery_augmentation_year=10,
+            battery_augmentation_pct_of_racks=50.0,
+            generator_lump_sum_capex_eur=35000.0,
+            generator_lump_sum_service_opex_eur_year=1200.0,
+        )
+        evaluate_combined_financials(sim_res, fin_ov)
+        fk = sim_res.financial_kpis
+        self.assertEqual(fk.solar_capex_eur, 150000.0)
+        self.assertEqual(fk.solar_om_eur, 2100.0)
+        self.assertEqual(fk.solar_pricing_mode, "Lump-Sum Override")
+        self.assertAlmostEqual(fk.solar_implied_eur_kwp, 750.0, delta=5.0)
+        self.assertEqual(fk.battery_capex_eur, 120000.0)
+        self.assertEqual(fk.battery_om_eur, 1800.0)
+        self.assertEqual(fk.battery_pricing_mode, "Lump-Sum Override")
+        self.assertAlmostEqual(fk.battery_implied_eur_kwh, 300.0, places=1)
+        self.assertAlmostEqual(fk.battery_implied_eur_kw, 1200.0, places=1)
+        # Repowering scales on lump-sum BESS (50% of 120,000 = 60,000) and hits Year 10 cashflow
+        self.assertEqual(fk.battery_repowering_mode, "% of Lump-Sum CAPEX")
+        self.assertAlmostEqual(fk.battery_augmentation_eur, 60000.0, places=1)
+        cf10 = sim_res.cashflow_15y_df.loc[sim_res.cashflow_15y_df["Year"] == 10, "Investment & Augmentation (€)"].iloc[0]
+        self.assertAlmostEqual(float(cf10), -60000.0, places=1)
+        self.assertEqual(fk.generator_capex_eur, 35000.0)
+        self.assertAlmostEqual(fk.generator_implied_eur_kw, 350.0, places=1)
+        self.assertAlmostEqual(fk.generator_maintenance_cost_eur, 1200.0, places=1)
+
+        # Reset overrides to 0 -> reverts cleanly to preserved unit rates & explicit repowering override works
+        fin_ov.solar_lump_sum_capex_eur = 0.0
+        fin_ov.battery_lump_sum_capex_eur = 0.0
+        fin_ov.battery_augmentation_lump_sum_eur = 45000.0
+        evaluate_combined_financials(sim_res, fin_ov)
+        self.assertAlmostEqual(sim_res.financial_kpis.solar_capex_eur, 200.0 * 900.0, delta=5000.0)
+        self.assertEqual(sim_res.financial_kpis.solar_pricing_mode, "Turnkey Unit Rate")
+        self.assertEqual(sim_res.financial_kpis.battery_repowering_mode, "Lump-Sum Override")
+        self.assertEqual(sim_res.financial_kpis.battery_augmentation_eur, 45000.0)
+
+        # 2. Split 15-Year Degradation: pure Peak-Shaving scenario (no Solar) degrades far less than full tariff
+        cfg_bess_only = CombinedSystemConfig(
+            enable_grid=True, grid_limit_kw=160.0, enable_solar=False,
+            enable_battery=True, battery_capacity_kwh=500.0, battery_power_kw=150.0,
+            enable_financials=True,
+        )
+        sim_bess = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg_bess_only, rules)
+        fin_deg = CombinedFinancialConfig(tariff_escalation_pct_pa=0.0, om_inflation_pct_pa=0.0, system_degradation_pct_pa=2.0)
+        evaluate_combined_financials(sim_bess, fin_deg)
+        yr1_bill = float(sim_bess.cashflow_15y_df.loc[sim_bess.cashflow_15y_df["Year"] == 1, "Combined Grid Bill (€)"].iloc[0])
+        yr15_bill = float(sim_bess.cashflow_15y_df.loc[sim_bess.cashflow_15y_df["Year"] == 15, "Combined Grid Bill (€)"].iloc[0])
+        # With 0% escalation and stable peak shaving, Combined Grid Bill stays almost unchanged across 15 yrs
+        self.assertAlmostEqual(yr15_bill, yr1_bill, delta=max(500.0, yr1_bill * 0.02))
+
+        # 3. Excel Sheet 1 includes Hardware Cost Basis & Implied Unit Benchmarks
+        excel_bytes = build_combined_verification_excel_bytes(sim_res)
+        wb = openpyxl.load_workbook(io.BytesIO(excel_bytes), read_only=True)
+        ws1_rows = list(wb["Summary & KPIs"].iter_rows(values_only=True))
+        wb.close()
+        ws1_text = "\n".join(str(c) for row in ws1_rows for c in row if c is not None)
+        self.assertIn("Hardware Cost Basis", ws1_text)
+        self.assertIn("Solar Implied Unit Cost", ws1_text)
+        self.assertIn("Battery Repowering Basis", ws1_text)
+
+        # 4. UI Sub-Tab 6.2 structural contracts & dynamic currency (zero hardcoded EUR in Sub-Tab 6.2)
+        hw_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "views", "subtab6_hardware_costs.py")
+        )
+        with open(hw_path, "r", encoding="utf-8") as f:
+            hw_src = f.read()
+        self.assertIn("Technical Profile:", hw_src)
+        self.assertIn("Lump-Sum CAPEX Override", hw_src)
+        self.assertIn("Plan Cell Repowering", hw_src)
+        self.assertNotIn("€", hw_src)
+        self.assertNotIn("Direct Electricity Saved", hw_src)
+        self.assertNotIn("Peak Shaving &amp; Penalty Savings", hw_src)
+
 
 if __name__ == "__main__":
     unittest.main()

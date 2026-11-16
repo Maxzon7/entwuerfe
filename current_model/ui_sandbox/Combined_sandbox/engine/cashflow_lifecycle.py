@@ -111,6 +111,167 @@ def _calculate_irr(cashflows: List[float], max_iter: int = 200, tol: float = 1e-
     return round(((low + high) / 2.0) * 100.0, 1)
 
 
+def compute_hardware_capex_and_opex(cfg: Any, solar_deriv: Any, fin_cfg: Any) -> Dict[str, Any]:
+    """
+    Computes Solar, Battery (incl. Repowering), and Generator CAPEX, annual fixed/O&M baselines,
+    pricing mode flags (Unit Rates vs. >0 Lump-Sum Override), and implied unit benchmarks.
+    """
+    # Solar CAPEX & O&M
+    sol_lump_cap = max(0.0, float(getattr(fin_cfg, "solar_lump_sum_capex_eur", 0.0) or 0.0))
+    sol_lump_om = max(0.0, float(getattr(fin_cfg, "solar_lump_sum_om_eur_year", 0.0) or 0.0))
+    if not cfg.enable_solar:
+        solar_capex = solar_modules_capex = solar_inverter_capex = solar_mounting_capex = 0.0
+        solar_pricing_mode = "Inactive"
+        solar_implied_kwp = 0.0
+        solar_om_annual = 0.0
+        solar_opex_mode = "Inactive"
+    else:
+        kwp = float(solar_deriv.installed_kwp)
+        if sol_lump_cap > 0.0:
+            solar_capex = sol_lump_cap
+            solar_modules_capex = solar_capex
+            solar_inverter_capex = 0.0
+            solar_mounting_capex = 0.0
+            solar_pricing_mode = "Lump-Sum Override"
+        elif fin_cfg.solar_capex_eur_kwp is not None:
+            solar_capex = kwp * float(fin_cfg.solar_capex_eur_kwp)
+            solar_modules_capex = solar_capex
+            solar_inverter_capex = 0.0
+            solar_mounting_capex = 0.0
+            solar_pricing_mode = "Lump-Sum Override"
+        elif bool(getattr(fin_cfg, "solar_use_detailed_breakdown", False)):
+            solar_modules_capex = kwp * 1000.0 * float(fin_cfg.solar_modules_eur_wp)
+            solar_inverter_capex = kwp * 1000.0 * float(fin_cfg.solar_inverter_eur_w)
+            solar_mounting_capex = kwp * 1000.0 * float(fin_cfg.solar_mounting_eur_wp)
+            solar_capex = solar_modules_capex + solar_inverter_capex + solar_mounting_capex
+            solar_pricing_mode = "Detailed Breakdown"
+        else:
+            turnkey_rate = float(getattr(fin_cfg, "solar_turnkey_eur_kwp", 850.0))
+            solar_capex = kwp * turnkey_rate
+            w_mod = max(0.0, float(fin_cfg.solar_modules_eur_wp))
+            w_inv = max(0.0, float(fin_cfg.solar_inverter_eur_w))
+            w_mnt = max(0.0, float(fin_cfg.solar_mounting_eur_wp))
+            w_sum = w_mod + w_inv + w_mnt
+            if w_sum > 1e-6:
+                solar_modules_capex = solar_capex * (w_mod / w_sum)
+                solar_inverter_capex = solar_capex * (w_inv / w_sum)
+                solar_mounting_capex = solar_capex - solar_modules_capex - solar_inverter_capex
+            else:
+                solar_modules_capex = solar_capex
+                solar_inverter_capex = 0.0
+                solar_mounting_capex = 0.0
+            solar_pricing_mode = "Turnkey Unit Rate"
+
+        solar_implied_kwp = (solar_capex / kwp) if kwp > 0.01 else 0.0
+        if sol_lump_om > 0.0:
+            solar_om_annual = sol_lump_om
+            solar_opex_mode = "Lump-Sum Override"
+        else:
+            solar_om_annual = solar_capex * (fin_cfg.solar_om_pct_of_capex / 100.0)
+            solar_opex_mode = "% of CAPEX"
+
+    # Battery CAPEX, Repowering & O&M
+    bat_lump_cap = max(0.0, float(getattr(fin_cfg, "battery_lump_sum_capex_eur", 0.0) or 0.0))
+    bat_lump_om = max(0.0, float(getattr(fin_cfg, "battery_lump_sum_om_eur_year", 0.0) or 0.0))
+    bat_lump_aug = max(0.0, float(getattr(fin_cfg, "battery_augmentation_lump_sum_eur", 0.0) or 0.0))
+    if not cfg.enable_battery:
+        battery_rack_capex = battery_inv_capex = battery_bop_capex = battery_capex = 0.0
+        battery_pricing_mode = "Inactive"
+        battery_implied_kwh = battery_implied_kw = 0.0
+        battery_aug_eur = 0.0
+        battery_repowering_mode = "Inactive"
+        battery_om_annual = 0.0
+        battery_opex_mode = "Inactive"
+    else:
+        if bat_lump_cap > 0.0:
+            battery_capex = bat_lump_cap
+            battery_rack_capex = battery_capex
+            battery_inv_capex = 0.0
+            battery_bop_capex = 0.0
+            battery_pricing_mode = "Lump-Sum Override"
+        else:
+            battery_rack_capex = cfg.battery_capacity_kwh * fin_cfg.battery_capex_eur_kwh
+            battery_inv_capex = cfg.battery_power_kw * fin_cfg.battery_capex_eur_kw
+            battery_bop_capex = fin_cfg.battery_fixed_bop_eur if cfg.battery_capacity_kwh > 0 else 0.0
+            battery_capex = battery_rack_capex + battery_inv_capex + battery_bop_capex
+            battery_pricing_mode = "Unit Rates"
+
+        battery_implied_kwh = (battery_capex / cfg.battery_capacity_kwh) if cfg.battery_capacity_kwh > 0.0 else 0.0
+        battery_implied_kw = (battery_capex / cfg.battery_power_kw) if cfg.battery_power_kw > 0.0 else 0.0
+
+        if fin_cfg.enable_battery_augmentation:
+            if bat_lump_aug > 0.0:
+                battery_aug_eur = bat_lump_aug
+                battery_repowering_mode = "Lump-Sum Override"
+            elif bat_lump_cap > 0.0:
+                battery_aug_eur = battery_capex * (fin_cfg.battery_augmentation_pct_of_racks / 100.0)
+                battery_repowering_mode = "% of Lump-Sum CAPEX"
+            else:
+                battery_aug_eur = battery_rack_capex * (fin_cfg.battery_augmentation_pct_of_racks / 100.0)
+                battery_repowering_mode = "% of Racks"
+        else:
+            battery_aug_eur = 0.0
+            battery_repowering_mode = "Disabled"
+
+        if bat_lump_om > 0.0:
+            battery_om_annual = bat_lump_om
+            battery_opex_mode = "Lump-Sum Override"
+        else:
+            battery_om_annual = battery_capex * (fin_cfg.battery_om_pct_of_capex / 100.0)
+            battery_opex_mode = "% of CAPEX"
+
+    # Generator CAPEX & Service Override
+    gen_is_purchase = fin_cfg.generator_cost_model == "Purchase (CAPEX)"
+    gen_lump_cap = max(0.0, float(getattr(fin_cfg, "generator_lump_sum_capex_eur", 0.0) or 0.0))
+    gen_lump_svc = max(0.0, float(getattr(fin_cfg, "generator_lump_sum_service_opex_eur_year", 0.0) or 0.0))
+    if not cfg.enable_generator:
+        generator_capex = 0.0
+        generator_pricing_mode = "Inactive"
+        generator_opex_mode = "Inactive"
+        generator_implied_kw = 0.0
+    else:
+        if gen_is_purchase:
+            if gen_lump_cap > 0.0:
+                generator_capex = gen_lump_cap
+                generator_pricing_mode = "Lump-Sum Override"
+            else:
+                generator_capex = float(fin_cfg.generator_capex_eur)
+                generator_pricing_mode = "Purchase (CAPEX)"
+        else:
+            generator_capex = 0.0
+            generator_pricing_mode = "Monthly Rental (OPEX)"
+        generator_implied_kw = (generator_capex / cfg.generator_rated_kw) if (generator_capex > 0.0 and cfg.generator_rated_kw > 0.0) else 0.0
+        generator_opex_mode = "Lump-Sum Service Override + Fuel" if gen_lump_svc > 0.0 else "Runtime & Fuel"
+
+    return {
+        "solar_capex": solar_capex,
+        "solar_modules_capex": solar_modules_capex,
+        "solar_inverter_capex": solar_inverter_capex,
+        "solar_mounting_capex": solar_mounting_capex,
+        "solar_om_annual": solar_om_annual,
+        "solar_pricing_mode": solar_pricing_mode,
+        "solar_opex_mode": solar_opex_mode,
+        "solar_implied_kwp": solar_implied_kwp,
+        "battery_capex": battery_capex,
+        "battery_rack_capex": battery_rack_capex,
+        "battery_inv_capex": battery_inv_capex,
+        "battery_bop_capex": battery_bop_capex,
+        "battery_aug_eur": battery_aug_eur,
+        "battery_om_annual": battery_om_annual,
+        "battery_pricing_mode": battery_pricing_mode,
+        "battery_opex_mode": battery_opex_mode,
+        "battery_repowering_mode": battery_repowering_mode,
+        "battery_implied_kwh": battery_implied_kwh,
+        "battery_implied_kw": battery_implied_kw,
+        "gen_is_purchase": gen_is_purchase,
+        "generator_capex": generator_capex,
+        "generator_pricing_mode": generator_pricing_mode,
+        "generator_opex_mode": generator_opex_mode,
+        "generator_implied_kw": generator_implied_kw,
+        "gen_lump_svc_annual": gen_lump_svc,
+    }
+
+
 def compute_15y_lifecycle_projection(
     total_capex: float,
     battery_aug_eur: float,
@@ -129,6 +290,8 @@ def compute_15y_lifecycle_projection(
     tariff_escalation_pct_pa: float,
     om_inflation_pct_pa: float,
     system_degradation_pct_pa: float,
+    bill_volume_avoided_y1: Optional[float] = None,
+    bill_peak_avoided_y1: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Evaluates the 15-year escalated/degraded cashflow schedule, cumulative TCO curves,
@@ -170,13 +333,26 @@ def compute_15y_lifecycle_projection(
     disc_sys_energy_acc = 0.0
     disc_sys_cost_acc = total_capex
 
+    use_split_deg = (
+        bill_volume_avoided_y1 is not None
+        and bill_peak_avoided_y1 is not None
+        and bill_avoided_y1 > 0.0
+    )
+    vol_sav_y1 = float(bill_volume_avoided_y1) if use_split_deg else bill_avoided_y1
+    pk_sav_y1 = float(bill_peak_avoided_y1) if use_split_deg else 0.0
+
     for yr in range(1, 16):
         esc_tariff = (1.0 + r_tariff) ** (yr - 1)
         esc_om = (1.0 + r_om) ** (yr - 1)
         deg_factor = max(0.0, (1.0 - d_sys) ** (yr - 1))
 
         b_bill_yr = baseline_total_opex * esc_tariff
-        avoided_bill_yr = bill_avoided_y1 * deg_factor * esc_tariff
+        if use_split_deg:
+            # Volumetric PV & shifted-energy savings degrade with system_degradation_pct_pa;
+            # Peak-shaving & penalty savings remain stable as capacity keeps peaks below limit.
+            avoided_bill_yr = max(0.0, (vol_sav_y1 * deg_factor + pk_sav_y1) * esc_tariff)
+        else:
+            avoided_bill_yr = bill_avoided_y1 * deg_factor * esc_tariff
         c_grid_yr = max(0.0, b_bill_yr - avoided_bill_yr)
 
         om_sys_yr = system_om_and_fuel_y1 * esc_om
@@ -246,10 +422,16 @@ def compute_15y_lifecycle_projection(
     else:
         solar_iso_lcoe = 0.0
 
-    disc_gross_benefits_15y = sum(
-        ((bill_avoided_y1 + solar_export_rev_y1) * max(0.0, (1.0 - d_sys) ** (yr - 1)) * ((1.0 + r_tariff) ** (yr - 1))) / ((1.0 + r_disc) ** yr)
-        for yr in range(1, 16)
-    )
+    if use_split_deg:
+        disc_gross_benefits_15y = sum(
+            (max(0.0, (vol_sav_y1 + solar_export_rev_y1) * max(0.0, (1.0 - d_sys) ** (yr - 1)) + pk_sav_y1) * ((1.0 + r_tariff) ** (yr - 1))) / ((1.0 + r_disc) ** yr)
+            for yr in range(1, 16)
+        )
+    else:
+        disc_gross_benefits_15y = sum(
+            ((bill_avoided_y1 + solar_export_rev_y1) * max(0.0, (1.0 - d_sys) ** (yr - 1)) * ((1.0 + r_tariff) ** (yr - 1))) / ((1.0 + r_disc) ** yr)
+            for yr in range(1, 16)
+        )
     bcr_15y = (disc_gross_benefits_15y / max(1.0, disc_sys_cost_acc)) if disc_sys_cost_acc > 1.0 else 0.0
 
     return {
@@ -264,3 +446,82 @@ def compute_15y_lifecycle_projection(
         "solar_iso_lcoe": solar_iso_lcoe,
         "bcr_15y": bcr_15y,
     }
+
+
+def append_isolated_hardware_monthly_rows(
+    m_name: str,
+    cfg: Any,
+    kpis: Any,
+    var_grid_rate: float,
+    feed_in_rate: float,
+    sol_om_monthly: float,
+    bat_om_monthly: float,
+    sol_gen_m_kwh: float,
+    sol_dir_m_kwh: float,
+    sol_bat_m_kwh: float,
+    sol_exp_m_kwh: float,
+    b_dis_m_kwh: float,
+    pv_chg_b_kwh: float,
+    grd_chg_b_kwh: float,
+    b_shv_kw: float,
+    m_bat_peak_sav: float,
+    m_bat_grid_chg_cost: float,
+    gen_hrs: float,
+    g_out_m_kwh: float,
+    gen_fuel: float,
+    g_shv_kw: float,
+    m_gen_peak_sav: float,
+    c_fuel: float,
+    c_maint: float,
+    c_rent: float,
+    solar_fin_rows: List[dict],
+    battery_fin_rows: List[dict],
+    generator_fin_rows: List[dict],
+) -> None:
+    """Appends one month's isolated Solar, Battery, and Generator financial rows for chart/table verification."""
+    m_sol_dir_val = sol_dir_m_kwh * var_grid_rate
+    m_sol_shift_val = sol_bat_m_kwh * var_grid_rate
+    m_sol_exp_rev = sol_exp_m_kwh * feed_in_rate
+    m_sol_om = sol_om_monthly if cfg.enable_solar else 0.0
+    m_sol_net = m_sol_dir_val + m_sol_shift_val + m_sol_exp_rev - m_sol_om
+    solar_fin_rows.append({
+        "Month": m_name,
+        "PV Total (kWh)": round(sol_gen_m_kwh, 0),
+        "Direct Used (kWh)": round(sol_dir_m_kwh, 0),
+        "Via Battery (kWh)": round(sol_bat_m_kwh, 0),
+        "Exported (kWh)": round(sol_exp_m_kwh, 0),
+        "Direct Savings (€)": round(m_sol_dir_val, 0),
+        "Battery-Shift Value (€)": round(m_sol_shift_val, 0),
+        "Export Revenue (€)": round(m_sol_exp_rev, 0),
+        "Solar O&M (€)": round(m_sol_om, 0),
+        "Net Solar Benefit (€)": round(m_sol_net, 0),
+    })
+
+    m_bat_om = bat_om_monthly if cfg.enable_battery else 0.0
+    m_bat_net = m_bat_peak_sav + m_sol_shift_val - m_bat_grid_chg_cost - m_bat_om
+    battery_fin_rows.append({
+        "Month": m_name,
+        "Discharged (kWh)": round(b_dis_m_kwh, 0),
+        "Solar Charged (kWh)": round(pv_chg_b_kwh if cfg.enable_battery else 0.0, 0),
+        "Grid Charged (kWh)": round(grd_chg_b_kwh if cfg.enable_battery else 0.0, 0),
+        "Peak Shaved (kW)": round(b_shv_kw, 1),
+        "DSO Peak & Penalty Savings (€)": round(m_bat_peak_sav, 0),
+        "Solar Shift Value (€)": round(m_sol_shift_val, 0),
+        "Grid Charging Cost (€)": round(m_bat_grid_chg_cost, 0),
+        "Battery O&M (€)": round(m_bat_om, 0),
+        "Net Battery Benefit (€)": round(m_bat_net, 0),
+    })
+
+    m_gen_opex = c_fuel + c_maint + c_rent
+    m_gen_net = m_gen_peak_sav - m_gen_opex
+    generator_fin_rows.append({
+        "Month": m_name,
+        "Runtime (hrs)": round(gen_hrs if cfg.enable_generator else 0.0, 1),
+        "Generated (kWh)": round(g_out_m_kwh, 0),
+        f"Fuel ({kpis.generator_fuel_unit})": round(gen_fuel if cfg.enable_generator else 0.0, 1),
+        "Peak Shaved (kW)": round(g_shv_kw, 1),
+        "Avoided DSO Value (€)": round(m_gen_peak_sav, 0),
+        "Fuel & Service (€)": round(c_fuel + c_maint, 0),
+        "Rental (€)": round(c_rent, 0),
+        "Net Generator Impact (€)": round(m_gen_net, 0),
+    })

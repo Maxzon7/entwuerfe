@@ -236,28 +236,37 @@ class CombinedFinancialConfig:
     grid_capacity_fee_eur_kw_month: Optional[float] = None
     grid_fixed_fee_eur_month: Optional[float] = None
 
-    # Block B: Solar Turnkey Costs
+    # Block B: Solar Turnkey Costs & Overrides
     solar_modules_eur_wp: float = 0.45
     solar_inverter_eur_w: float = 0.12
     solar_mounting_eur_wp: float = 0.28
+    solar_turnkey_eur_kwp: float = 850.0
+    solar_use_detailed_breakdown: bool = False
     solar_capex_eur_kwp: Optional[float] = None
+    solar_lump_sum_capex_eur: float = 0.0
     solar_om_pct_of_capex: float = 1.5
+    solar_lump_sum_om_eur_year: float = 0.0
 
-    # Block C: Battery Turnkey Costs, O&M & Mid-Life Augmentation
+    # Block C: Battery Turnkey Costs, O&M, Overrides & Mid-Life Augmentation
     battery_capex_eur_kwh: float = 280.0
     battery_capex_eur_kw: float = 150.0
     battery_fixed_bop_eur: float = 15000.0
+    battery_lump_sum_capex_eur: float = 0.0
     battery_om_pct_of_capex: float = 1.5
+    battery_lump_sum_om_eur_year: float = 0.0
     enable_battery_augmentation: bool = True
     battery_augmentation_year: int = 11
     battery_augmentation_pct_of_racks: float = 60.0
+    battery_augmentation_lump_sum_eur: float = 0.0
 
-    # Block D: Generator Purchase vs. Rental & Fuel OPEX
+    # Block D: Generator Purchase vs. Rental, Fuel OPEX & Overrides
     generator_cost_model: str = "Purchase (CAPEX)"  # "Purchase (CAPEX)" or "Monthly Rental (OPEX)"
     generator_capex_eur: float = 22000.0
+    generator_lump_sum_capex_eur: float = 0.0
     generator_rental_eur_month: float = 1200.0
     fuel_price_eur_per_unit: float = 1.45
     generator_maintenance_eur_per_hour: float = 4.50
+    generator_lump_sum_service_opex_eur_year: float = 0.0
 
     # Lifecycle Discount Rate
     discount_rate_pct: float = 6.0
@@ -272,7 +281,9 @@ class CombinedFinancialConfig:
     def effective_solar_capex_eur_kwp(self) -> float:
         if self.solar_capex_eur_kwp is not None:
             return float(self.solar_capex_eur_kwp)
-        return float((self.solar_modules_eur_wp + self.solar_inverter_eur_w + self.solar_mounting_eur_wp) * 1000.0)
+        if self.solar_use_detailed_breakdown:
+            return float((self.solar_modules_eur_wp + self.solar_inverter_eur_w + self.solar_mounting_eur_wp) * 1000.0)
+        return float(self.solar_turnkey_eur_kwp)
 
 
 @dataclass
@@ -436,6 +447,19 @@ class CombinedFinancialKPIs:
     combined_dso_billed_peak_avg_kw: float = 0.0
     baseline_dso_billed_cap_avg_kw: float = 0.0
     combined_dso_billed_cap_avg_kw: float = 0.0
+
+    # Hardware Pricing Mode & Implied Unit Benchmark Transparency
+    solar_pricing_mode: str = "Turnkey Unit Rate"
+    solar_opex_pricing_mode: str = "% of CAPEX"
+    solar_implied_eur_kwp: float = 0.0
+    battery_pricing_mode: str = "Unit Rates"
+    battery_opex_pricing_mode: str = "% of CAPEX"
+    battery_repowering_mode: str = "% of Racks"
+    battery_implied_eur_kwh: float = 0.0
+    battery_implied_eur_kw: float = 0.0
+    generator_pricing_mode: str = "Purchase (CAPEX)"
+    generator_opex_pricing_mode: str = "Runtime & Fuel"
+    generator_implied_eur_kw: float = 0.0
 
 
 @dataclass
