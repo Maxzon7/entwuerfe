@@ -28,6 +28,29 @@ from .state_and_helpers import (
 # LEVEL 2 — SUBTAB 3: Battery (Dual-Sizing & 4-Bottleneck Diagnostic Table)
 # ======================================================================================
 
+def _sync_bess_include_gen_from_b1() -> None:
+    """Syncs the shared Without/With Generator switch when toggled inside Block 1."""
+    use_gen = st.session_state.get("comb_bess_include_gen_radio_b1") == "With Generator Backup"
+    st.session_state["comb_bess_include_gen"] = use_gen
+    st.session_state["comb_bess_include_gen_toggle_b3"] = use_gen
+    st.session_state["_comb_bess_needs_full_rerun"] = True
+    pair = st.session_state.get("comb_cached_dual_bess_pair")
+    if isinstance(pair, tuple) and len(pair) == 2:
+        st.session_state["comb_cached_dual_bess"] = pair[1] if use_gen else pair[0]
+
+
+def _sync_bess_include_gen_from_b3() -> None:
+    """Syncs the shared Without/With Generator switch when toggled inside Block 3."""
+    use_gen = bool(st.session_state.get("comb_bess_include_gen_toggle_b3", False))
+    st.session_state["comb_bess_include_gen"] = use_gen
+    st.session_state["comb_bess_include_gen_radio_b1"] = (
+        "With Generator Backup" if use_gen else "Without Generator (Default)"
+    )
+    pair = st.session_state.get("comb_cached_dual_bess_pair")
+    if isinstance(pair, tuple) and len(pair) == 2:
+        st.session_state["comb_cached_dual_bess"] = pair[1] if use_gen else pair[0]
+
+
 @st.fragment
 def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_active: bool) -> None:
     """Renders the interactive Mode A / Mode B reference box inside an isolated fragment to prevent full app reruns."""
@@ -36,20 +59,49 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         "Minimum battery size needed to avoid exceeding the Grid Limit."
     )
 
+    include_gen = bool(st.session_state.get("comb_bess_include_gen", False))
     mode_options = [
         "Mode A – Standalone (Battery only)",
-        "Mode B – Coupled (With active Solar / Generator & Rules)",
+        (
+            "Mode B – Coupled (With active Solar + Generator & Rules)"
+            if include_gen
+            else "Mode B – Coupled (With active Solar & Rules — Without Generator)"
+        ),
     ]
-    cur_mode = st.session_state.get("comb_bess_ref_mode", "Mode B – Coupled (With active Solar / Generator & Rules)")
-    sel_idx = 0 if cur_mode.startswith("Mode A") else 1
-    selected_mode = st.radio(
-        "Quick-Sizing Reference Mode",
-        options=mode_options,
-        index=sel_idx,
-        horizontal=True,
-        disabled=not is_active,
-        key="comb_bess_ref_mode_radio",
-    )
+    cur_mode = st.session_state.get("comb_bess_ref_mode", "Mode B")
+    sel_idx = 0 if str(cur_mode).startswith("Mode A") else 1
+
+    r_col1, r_col2 = st.columns([1.3, 1.0])
+    with r_col1:
+        selected_mode = st.radio(
+            "Quick-Sizing Reference Mode",
+            options=mode_options,
+            index=sel_idx,
+            horizontal=True,
+            disabled=not is_active,
+            key="comb_bess_ref_mode_radio",
+        )
+    with r_col2:
+        gen_switch_options = ["Without Generator (Default)", "With Generator Backup"]
+        if "comb_bess_include_gen_radio_b1" not in st.session_state:
+            st.session_state["comb_bess_include_gen_radio_b1"] = (
+                "With Generator Backup" if include_gen else "Without Generator (Default)"
+            )
+        st.radio(
+            "Generator in Battery Calculation",
+            options=gen_switch_options,
+            horizontal=True,
+            key="comb_bess_include_gen_radio_b1",
+            on_change=_sync_bess_include_gen_from_b1,
+            help=(
+                "Without Generator (Default): Calculates the battery size needed without relying on a Generator "
+                "(recommended when adding/modifying a BESS or prioritizing Battery first). "
+                "With Generator Backup: Subtracts active Generator capacity from the battery requirement."
+            ),
+        )
+    if st.session_state.pop("_comb_bess_needs_full_rerun", False):
+        st.rerun()
+
     st.session_state["comb_bess_ref_mode"] = selected_mode
     is_sa = selected_mode.startswith("Mode A")
 
@@ -67,11 +119,16 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         active_partners: List[str] = []
         if cur_sys_ref.enable_solar:
             active_partners.append("Solar")
-        if cur_sys_ref.enable_generator and cur_sys_ref.generator_rated_kw > 0:
+        if include_gen and cur_sys_ref.enable_generator and cur_sys_ref.generator_rated_kw > 0:
             active_partners.append(f"Generator ({cur_sys_ref.generator_rated_kw:,.0f} kW)")
         partners_str = " + ".join(active_partners) if active_partners else "Grid Only"
+        gen_mode_note = (
+            " | Generator Backup Included"
+            if (include_gen and cur_sys_ref.enable_generator and cur_sys_ref.generator_rated_kw > 0)
+            else (" | Without Generator" if cur_sys_ref.enable_generator else "")
+        )
         st.info(
-            f"**Active Sizing Assumptions ({partners_str}):** "
+            f"**Active Sizing Assumptions ({partners_str}{gen_mode_note}):** "
             f"**Rule 1:** {r1_lbl} | **Rule 2:** {r2_lbl} "
             f"(Reserve {cur_rules_ref.peak_reserve_soc_pct:.0f}%) | **Rule 3:** {r3_lbl}",
             icon=":material/rule:",
@@ -105,8 +162,13 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         )
 
     # Quick Apply Buttons (100%, 80%, 50% capacity while keeping 100% required discharge power kW)
+    coupled_scope = (
+        "Coupled: With active Solar + Generator"
+        if include_gen
+        else "Coupled: With active Solar (Without Generator)"
+    )
     st.caption(
-        f"Apply Quick Size ({'Standalone: Battery alone' if is_sa else 'Coupled: With active Solar/Generator'} — "
+        f"Apply Quick Size ({'Standalone: Battery alone' if is_sa else coupled_scope} — "
         "80% / 50% scales kWh storage while preserving 100% peak power kW):"
     )
     q_col1, q_col2, q_col3 = st.columns(3)
@@ -199,17 +261,32 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
     )
     if (
         st.session_state.get("comb_bess_sizing_fp") != bess_sizing_fp
-        or "comb_cached_dual_bess" not in st.session_state
+        or "comb_cached_dual_bess_pair" not in st.session_state
     ):
-        st.session_state["comb_cached_dual_bess"] = compute_dual_battery_sizing(
+        dual_no_gen = compute_dual_battery_sizing(
             load_kw=load_series.power_kw,
             system_cfg=cur_sys,
             rules_cfg=cur_rules,
             is_gap=getattr(load_series, "is_gap", None),
+            include_generator_in_coupled=False,
         )
+        if cur_sys.enable_generator and cur_sys.generator_rated_kw > 0.0:
+            dual_with_gen = compute_dual_battery_sizing(
+                load_kw=load_series.power_kw,
+                system_cfg=cur_sys,
+                rules_cfg=cur_rules,
+                is_gap=getattr(load_series, "is_gap", None),
+                include_generator_in_coupled=True,
+            )
+        else:
+            dual_with_gen = dual_no_gen
+        st.session_state["comb_cached_dual_bess_pair"] = (dual_no_gen, dual_with_gen)
         st.session_state["comb_bess_sizing_fp"] = bess_sizing_fp
 
-    dual_bess = st.session_state["comb_cached_dual_bess"]
+    include_gen = bool(st.session_state.get("comb_bess_include_gen", False))
+    dual_no_gen, dual_with_gen = st.session_state["comb_cached_dual_bess_pair"]
+    dual_bess = dual_with_gen if include_gen else dual_no_gen
+    st.session_state["comb_cached_dual_bess"] = dual_bess
 
     # Block 1: Minimum Required Battery Sizing Reference Box
     with st.container(border=True):
@@ -335,11 +412,25 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
             cur_sys.max_soc_pct = float(max_soc_val)
             cur_sys.round_trip_efficiency_pct = float(rte_val)
             if so_c_changed:
-                dual_bess = compute_dual_battery_sizing(
+                dual_no_gen = compute_dual_battery_sizing(
                     load_kw=load_series.power_kw,
                     system_cfg=cur_sys,
                     rules_cfg=cur_rules,
+                    is_gap=getattr(load_series, "is_gap", None),
+                    include_generator_in_coupled=False,
                 )
+                if cur_sys.enable_generator and cur_sys.generator_rated_kw > 0.0:
+                    dual_with_gen = compute_dual_battery_sizing(
+                        load_kw=load_series.power_kw,
+                        system_cfg=cur_sys,
+                        rules_cfg=cur_rules,
+                        is_gap=getattr(load_series, "is_gap", None),
+                        include_generator_in_coupled=True,
+                    )
+                else:
+                    dual_with_gen = dual_no_gen
+                st.session_state["comb_cached_dual_bess_pair"] = (dual_no_gen, dual_with_gen)
+                dual_bess = dual_with_gen if include_gen else dual_no_gen
                 st.session_state["comb_cached_dual_bess"] = dual_bess
             st.session_state.pop("comb_cached_excel_bytes", None)
 
@@ -375,13 +466,32 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                 live_min_soc_pct = float(np.min(valid_soc))
             live_cycles = float(sim_cached.kpis.battery_equivalent_cycles)
 
-        st.markdown("##### :material/fact_check: 3. System Limit Check")
-        st.caption("Checks whether inverter discharge power, storage capacity, and recharge headroom cover every peak.")
+        hdr_c1, hdr_c2 = st.columns([2.4, 1.4])
+        with hdr_c1:
+            st.markdown("##### :material/fact_check: 3. System Limit Check")
+            st.caption("Checks whether inverter discharge power, storage capacity, and recharge headroom cover every peak.")
+        with hdr_c2:
+            st.write("")
+            if "comb_bess_include_gen_toggle_b3" not in st.session_state:
+                st.session_state["comb_bess_include_gen_toggle_b3"] = include_gen
+            st.toggle(
+                "Include Generator Backup in Limit Check",
+                key="comb_bess_include_gen_toggle_b3",
+                on_change=_sync_bess_include_gen_from_b3,
+                help=(
+                    "Default OFF: Checks whether the Battery (+ Solar) covers all peaks without Generator backup. "
+                    "Turn ON to include the active Generator when checking residual battery limits."
+                ),
+            )
 
         if pass_all:
+            limit_ok_msg = (
+                "Your Battery + active Generator cover every peak above the Grid Limit."
+                if (include_gen and cur_sys.enable_generator and cur_sys.generator_rated_kw > 0)
+                else "Your battery covers every peak above the Grid Limit."
+            )
             st.success(
-                ":material/check_circle: **Grid Limit Met (Zero Overload)**  \n"
-                "Your battery covers every peak above the Grid Limit."
+                f":material/check_circle: **Grid Limit Met (Zero Overload)**  \n{limit_ok_msg}"
             )
             if live_min_soc_pct is not None and live_min_soc_pct > max(50.0, float(cur_sys.min_soc_pct) + 35.0):
                 st.info(
@@ -410,9 +520,19 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                     "**Recharge Headroom Deficit:** Available below-limit periods cannot refill all consecutive peaks cleanly without Solar or Generator support."
                 )
             reason_body = "  \n".join(diag_reasons) if diag_reasons else "Check the 4 items below."
-            st.warning(
-                f":material/warning: **Remaining Overload Expected**  \n{reason_body}"
-            )
+            if not include_gen and cur_sys.enable_generator and cur_sys.generator_rated_kw > 0:
+                st.warning(
+                    f":material/warning: **Battery Alone Insufficient for All Peaks (Without Generator)**  \n{reason_body}"
+                )
+                st.info(
+                    f":material/electric_bolt: **Generator Backup Active in Combined Simulation ({cur_sys.generator_rated_kw:,.0f} kW):** "
+                    "Your active Generator covers the remaining multi-day peaks once the Battery reaches SoC Min. "
+                    "Turn ON **Include Generator Backup in Limit Check** above to check combined Battery + Generator compliance."
+                )
+            else:
+                st.warning(
+                    f":material/warning: **Remaining Overload Expected**  \n{reason_body}"
+                )
 
         # 4 Diagnostic Check Cards (1:1 visual match with BESS Sandbox layout)
         chk_col1, chk_col2, chk_col3, chk_col4 = st.columns(4)

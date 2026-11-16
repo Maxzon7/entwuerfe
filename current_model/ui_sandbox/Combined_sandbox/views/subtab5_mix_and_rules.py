@@ -143,6 +143,7 @@ def _apply_system_mix_to_state(
     st.session_state["comb_pending_mix_widget_sync"] = pending_widgets
     for cache_key in (
         "comb_cached_dual_bess",
+        "comb_cached_dual_bess_pair",
         "comb_bess_sizing_fp",
         "comb_cached_dual_gen",
         "comb_gen_sizing_fp",
@@ -629,6 +630,7 @@ def render_subtab5_interaction_rules(load_series: Optional[LoadSeries2025] = Non
             if mix_auto_gen:
                 gen_dual = compute_dual_generator_sizing(
                     load_kw=load_series.power_kw,
+                    timestamps=load_series.timestamps,
                     system_cfg=cand_cfg,
                     rules_cfg=cur_rules,
                     is_gap=getattr(load_series, "is_gap", None),

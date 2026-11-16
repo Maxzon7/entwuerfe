@@ -8,12 +8,15 @@ import streamlit as st
 from .state_and_helpers import (
     LoadSeries2025,
     CombinedSystemConfig,
+    CombinedFinancialConfig,
     render_kpi_card,
     synthesize_benchmark_load_profile_2025,
     synthesize_edemsa_salentein_load_profile_2025,
     render_tab1_consumption,
+    apply_utility_tariff_presets,
     _sync_shared_load_series,
 )
+from .subtab6_financials_bill_and_hardware import _queue_fin_cfg_widget_sync
 
 # ======================================================================================
 # LEVEL 2 — SUBTAB 1: Consumption (Always Active)
@@ -116,11 +119,41 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
             st.session_state["comb_grid_limit_num"] = cur_sys.grid_limit_kw
             if sc_info["type"] == "edemsa_salentein":
                 bench_profile = synthesize_edemsa_salentein_load_profile_2025()
+                dso_match, tier_match = "EDEMSA Mendoza (Single-Utility)", "T2 RMT (Bodegas Salentein 430 kW)"
+            elif "Stedin" in sel_sc:
+                bench_profile = synthesize_benchmark_load_profile_2025(
+                    profile_type=sc_info["type"],
+                    nominal_peak_kw=float(sc_info["peak_kw"]),
+                )
+                dso_match, tier_match = "Stedin Netbeheer B.V.", "Transformer MV/LV (> 50 to 125 kW)"
+            elif "Liander" in sel_sc:
+                bench_profile = synthesize_benchmark_load_profile_2025(
+                    profile_type=sc_info["type"],
+                    nominal_peak_kw=float(sc_info["peak_kw"]),
+                )
+                dso_match, tier_match = "Liander Netbeheer B.V.", "MV-D (125 to 1,500 kW)"
             else:
                 bench_profile = synthesize_benchmark_load_profile_2025(
                     profile_type=sc_info["type"],
                     nominal_peak_kw=float(sc_info["peak_kw"]),
                 )
+                dso_match, tier_match = "Enexis Netbeheer B.V.", "MV-D (125 to 1,500 kW)"
+
+            fin_cfg = st.session_state.get("comb_fin_cfg")
+            if isinstance(fin_cfg, CombinedFinancialConfig):
+                apply_utility_tariff_presets(
+                    dso_choice=dso_match,
+                    tier_choice=tier_match,
+                    supp_choice="Vattenfall Business",
+                    supp_plan="Fixed 1-Year (Dual TOU HT/NT)",
+                    meter_choice="Fudura B.V.",
+                    meter_tier="15-Min Interval Telemetry MV (Large Consumer)",
+                    fin_cfg=fin_cfg,
+                )
+                _queue_fin_cfg_widget_sync(fin_cfg)
+                st.session_state["comb_preset_dso_sel"] = dso_match
+                st.session_state["comb_preset_tier_sel"] = tier_match
+
             st.session_state["active_load_series_2025"] = bench_profile
             st.session_state["comb_active_load_series"] = bench_profile
             st.session_state["active_csv_filename"] = sel_sc

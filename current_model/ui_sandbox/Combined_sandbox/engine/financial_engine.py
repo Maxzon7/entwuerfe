@@ -13,41 +13,12 @@ from .models_and_presets import (
     CombinedFinancialKPIs,
     CombinedSimulationResult,
 )
-
-def _calculate_irr(cashflows: List[float], max_iter: int = 200, tol: float = 1e-5) -> Optional[float]:
-    """
-    Computes the Internal Rate of Return (IRR in %) for an investment cashflow stream.
-    cashflows[0] is initial negative investment (-CAPEX).
-    Returns None if cashflows never break even or do not cross zero.
-    """
-    if len(cashflows) < 2 or cashflows[0] >= 0.0 or sum(cashflows[1:]) <= 0.0:
-        return None
-
-    def npv_at_r(r: float) -> float:
-        val = 0.0
-        for t, cf in enumerate(cashflows):
-            val += cf / ((1.0 + r) ** t)
-        return val
-
-    # Test range -0.90 (-90%) to 5.0 (500%)
-    low, high = -0.90, 5.0
-    f_low, f_high = npv_at_r(low), npv_at_r(high)
-    if f_low * f_high > 0:
-        return None
-
-    for _ in range(max_iter):
-        mid = (low + high) / 2.0
-        f_mid = npv_at_r(mid)
-        if abs(f_mid) < tol or (high - low) / 2.0 < tol:
-            return round(mid * 100.0, 1)
-        if f_low * f_mid < 0:
-            high = mid
-            f_high = f_mid
-        else:
-            low = mid
-            f_low = f_mid
-
-    return round(((low + high) / 2.0) * 100.0, 1)
+from .tariff_presets import build_financial_summary_table_df
+from .cashflow_lifecycle import (
+    _calculate_irr,
+    compute_15y_lifecycle_projection,
+    extract_tou_and_dispatch_monthly_arrays,
+)
 
 def evaluate_combined_financials(
     sim_res: CombinedSimulationResult,
@@ -101,99 +72,95 @@ def evaluate_combined_financials(
     net_total_capex = max(0.0, gross_capex - avoided_upgrade_capex)
     total_capex = net_total_capex
 
-    # 2. Resolve 4-Pillar Rates
+    # 2. Resolve 4-Pillar & Single-Utility Market Structure Rates
     is_legacy_energy = fin_cfg.grid_energy_price_eur_kwh is not None
+    en_p1 = True if is_legacy_energy else bool(fin_cfg.enable_pillar_1_supplier)
+    en_p2 = True if fin_cfg.grid_capacity_fee_eur_kw_month is not None else bool(fin_cfg.enable_pillar_2_dso)
+    en_p3 = True if fin_cfg.grid_fixed_fee_eur_month is not None else bool(fin_cfg.enable_pillar_3_metering)
+    en_p4 = False if is_legacy_energy else bool(fin_cfg.enable_pillar_4_taxes)
+
     if is_legacy_energy:
         supp_kwh_rate = float(fin_cfg.grid_energy_price_eur_kwh)
         tax_kwh_rate = 0.0
         gvo_rate = 0.0
         is_dual_tou = False
     else:
-        supp_kwh_rate = float(fin_cfg.supplier_energy_price_eur_kwh)
-        tax_kwh_rate = float(fin_cfg.energy_tax_eur_kwh)
-        gvo_rate = max(0.0, float(fin_cfg.supplier_gvo_surcharge_eur_kwh))
-        is_dual_tou = str(fin_cfg.supplier_pricing_mode) == "dual_tou"
+        supp_kwh_rate = float(fin_cfg.supplier_energy_price_eur_kwh) if en_p1 else 0.0
+        tax_kwh_rate = float(fin_cfg.energy_tax_eur_kwh) if en_p4 else 0.0
+        gvo_rate = max(0.0, float(fin_cfg.supplier_gvo_surcharge_eur_kwh)) if en_p1 else 0.0
+        is_dual_tou = bool(en_p1 and str(fin_cfg.supplier_pricing_mode) == "dual_tou")
 
-    supp_ht_rate = float(fin_cfg.supplier_peak_ht_eur_kwh)
-    supp_nt_rate = float(fin_cfg.supplier_offpeak_nt_eur_kwh)
+    supp_ht_rate = float(fin_cfg.supplier_peak_ht_eur_kwh) if en_p1 else 0.0
+    supp_nt_rate = float(fin_cfg.supplier_offpeak_nt_eur_kwh) if en_p1 else 0.0
 
     if fin_cfg.grid_capacity_fee_eur_kw_month is not None:
         dso_cap_rate = float(fin_cfg.grid_capacity_fee_eur_kw_month)
         dso_peak_rate = 0.0
     else:
-        dso_cap_rate = float(fin_cfg.dso_capacity_fee_eur_kw_month)
-        dso_peak_rate = float(fin_cfg.dso_peak_demand_fee_eur_kw_month)
+        dso_cap_rate = float(fin_cfg.dso_capacity_fee_eur_kw_month) if en_p2 else 0.0
+        dso_peak_rate = float(fin_cfg.dso_peak_demand_fee_eur_kw_month) if en_p2 else 0.0
 
     if fin_cfg.grid_fixed_fee_eur_month is not None:
         supp_fixed_mo = 0.0
         dso_conn_mo = 0.0
-        dso_trans_fix_mo = float(fin_cfg.grid_fixed_fee_eur_month)
+        dso_trans_fix_mo = float(fin_cfg.grid_fixed_fee_eur_month) if en_p2 else 0.0
         dso_fixed_mo = dso_trans_fix_mo
         meter_fixed_mo = 0.0
     else:
-        supp_fixed_mo = float(fin_cfg.supplier_fixed_fee_eur_month)
-        dso_conn_mo = max(0.0, float(fin_cfg.dso_connection_fee_eur_month))
-        dso_trans_fix_mo = max(0.0, float(fin_cfg.dso_fixed_fee_eur_month))
+        supp_fixed_mo = float(fin_cfg.supplier_fixed_fee_eur_month) if en_p1 else 0.0
+        dso_conn_mo = max(0.0, float(fin_cfg.dso_connection_fee_eur_month)) if en_p2 else 0.0
+        dso_trans_fix_mo = max(0.0, float(fin_cfg.dso_fixed_fee_eur_month)) if en_p2 else 0.0
         dso_fixed_mo = dso_conn_mo + dso_trans_fix_mo
-        meter_fixed_mo = float(fin_cfg.metering_fixed_fee_eur_month)
+        meter_fixed_mo = float(fin_cfg.metering_fixed_fee_eur_month) if en_p3 else 0.0
 
-    pen_rate_kw = float(fin_cfg.grid_overload_penalty_eur_kw)
-    tax_pct = float(fin_cfg.tax_surcharge_pct) / 100.0
-    dso_vol_rate = float(fin_cfg.dso_transport_eur_kwh)
-    trafo_rent_mo = float(fin_cfg.avoided_transformer_rent_eur_month)
+    en_excess_pen = bool(fin_cfg.dso_enable_excess_capacity_penalty) and en_p2
+    pen_rate_kw = float(fin_cfg.grid_overload_penalty_eur_kw) if en_excess_pen else 0.0
+    tax_pct = (float(fin_cfg.tax_surcharge_pct) / 100.0) if en_p4 else 0.0
+    dso_vol_rate = float(fin_cfg.dso_transport_eur_kwh) if en_p2 else 0.0
+    dso_3win_tou = bool(fin_cfg.dso_enable_three_window_tou) and en_p2
+    dso_pk_vol_rate = (
+        float(fin_cfg.dso_transport_peak_eur_kwh)
+        if fin_cfg.dso_transport_peak_eur_kwh is not None
+        else dso_vol_rate
+    ) if en_p2 else 0.0
+    dso_off_vol_rate = (
+        float(fin_cfg.dso_transport_offpeak_eur_kwh)
+        if fin_cfg.dso_transport_offpeak_eur_kwh is not None
+        else dso_vol_rate
+    ) if en_p2 else 0.0
+    dso_sh_vol_rate = (
+        float(fin_cfg.dso_transport_shoulder_eur_kwh)
+        if fin_cfg.dso_transport_shoulder_eur_kwh > 0.0
+        else dso_vol_rate
+    ) if en_p2 else 0.0
+    dso_pico_peak_only = bool(fin_cfg.dso_bill_peak_on_pico_only) and en_p2
+    dso_reg_adj_mo = float(fin_cfg.dso_regulatory_adjustments_eur_month) if en_p2 else 0.0
+    trafo_rent_mo = float(fin_cfg.avoided_transformer_rent_eur_month) if en_p2 else 0.0
     vat_frac = max(0.0, float(fin_cfg.vat_rate_pct)) / 100.0
-    annual_tax_credit = 0.0 if is_legacy_energy else max(0.0, float(fin_cfg.annual_tax_reduction_credit_eur))
+    vat_on_levies = bool(fin_cfg.vat_applies_to_levies)
+    annual_tax_credit = 0.0 if (is_legacy_energy or not en_p4) else max(0.0, float(fin_cfg.annual_tax_reduction_credit_eur))
 
-    # 2b. Aggregate 15-Minute TOU Windows & Component Dispatches per Month
-    n_steps = len(sim_res.load_kw)
-    dt = 0.25
-    cons_ht_m = np.zeros(12, dtype=float)
-    cons_nt_m = np.zeros(12, dtype=float)
-    imp_ht_m = np.zeros(12, dtype=float)
-    imp_nt_m = np.zeros(12, dtype=float)
-    pv_chg_bess_m = np.zeros(12, dtype=float)
-    bess_chg_grid_m = np.zeros(12, dtype=float)
-    bess_chg_gen_m = np.zeros(12, dtype=float)
-    gen_to_load_m = np.zeros(12, dtype=float)
-    bess_shave_kw_m = np.zeros(12, dtype=float)
-    gen_shave_kw_m = np.zeros(12, dtype=float)
+    # 2b. Aggregate 15-Minute TOU Windows (2-Window HT/NT + 3-Window Pico/Valle/Resto) & Component Dispatches
+    _arrs = extract_tou_and_dispatch_monthly_arrays(sim_res, cfg, kpis)
+    cons_ht_m = _arrs["cons_ht_m"]
+    cons_nt_m = _arrs["cons_nt_m"]
+    imp_ht_m = _arrs["imp_ht_m"]
+    imp_nt_m = _arrs["imp_nt_m"]
+    cons_pico_m = _arrs["cons_pico_m"]
+    cons_valle_m = _arrs["cons_valle_m"]
+    cons_resto_m = _arrs["cons_resto_m"]
+    imp_pico_m = _arrs["imp_pico_m"]
+    imp_valle_m = _arrs["imp_valle_m"]
+    imp_resto_m = _arrs["imp_resto_m"]
+    base_pico_pk_m = _arrs["base_pico_pk_m"]
+    comb_pico_pk_m = _arrs["comb_pico_pk_m"]
+    pv_chg_bess_m = _arrs["pv_chg_bess_m"]
+    bess_chg_grid_m = _arrs["bess_chg_grid_m"]
+    bess_shave_kw_m = _arrs["bess_shave_kw_m"]
+    gen_shave_kw_m = _arrs["gen_shave_kw_m"]
+    sol_via_bess_m = _arrs["sol_via_bess_m"]
 
-    ts = sim_res.timestamps
-    if n_steps > 0 and isinstance(ts, pd.DatetimeIndex) and len(ts) == n_steps:
-        m_arr = ts.month.to_numpy(dtype=np.intp) - 1
-        is_peak_tou = (ts.dayofweek < 5) & (ts.hour >= 7) & (ts.hour < 23)
-        p_load_arr = np.maximum(0.0, np.asarray(sim_res.load_kw, dtype=float))
-        p_imp_arr = np.maximum(0.0, np.asarray(sim_res.grid_import_kw, dtype=float))
-        p_bess_dis_arr = np.maximum(0.0, np.asarray(sim_res.bess_discharge_kw, dtype=float))
-        p_bess_chg_sol_arr = np.maximum(0.0, np.asarray(sim_res.bess_charge_solar_kw, dtype=float))
-        p_bess_chg_grd_arr = np.maximum(0.0, np.asarray(sim_res.bess_charge_grid_kw, dtype=float))
-        p_bess_chg_gen_arr = np.maximum(0.0, np.asarray(sim_res.bess_charge_gen_kw, dtype=float))
-        p_gen_load_arr = np.maximum(0.0, np.asarray(sim_res.gen_to_load_kw, dtype=float))
-
-        cons_ht_m = np.bincount(m_arr, weights=p_load_arr * is_peak_tou, minlength=12) * dt
-        cons_nt_m = np.bincount(m_arr, weights=p_load_arr * (~is_peak_tou), minlength=12) * dt
-        imp_ht_m = np.bincount(m_arr, weights=p_imp_arr * is_peak_tou, minlength=12) * dt
-        imp_nt_m = np.bincount(m_arr, weights=p_imp_arr * (~is_peak_tou), minlength=12) * dt
-        pv_chg_bess_m = np.bincount(m_arr, weights=p_bess_chg_sol_arr, minlength=12) * dt
-        bess_chg_grid_m = np.bincount(m_arr, weights=p_bess_chg_grd_arr, minlength=12) * dt
-        bess_chg_gen_m = np.bincount(m_arr, weights=p_bess_chg_gen_arr, minlength=12) * dt
-        gen_to_load_m = np.bincount(m_arr, weights=p_gen_load_arr, minlength=12) * dt
-
-        over_mask = p_load_arr > cfg.grid_limit_kw
-        for m_i in range(12):
-            m_over = (m_arr == m_i) & over_mask
-            if np.any(m_over):
-                if cfg.enable_battery:
-                    bess_shave_kw_m[m_i] = float(np.max(p_bess_dis_arr[m_over]))
-                if cfg.enable_generator:
-                    gen_shave_kw_m[m_i] = float(np.max(p_gen_load_arr[m_over]))
-
-    if cfg.enable_solar and cfg.enable_battery and np.sum(pv_chg_bess_m) > 1e-6:
-        sol_via_bess_m = pv_chg_bess_m * (float(getattr(kpis, "solar_via_battery_kwh", 0.0)) / float(np.sum(pv_chg_bess_m)))
-    else:
-        sol_via_bess_m = np.zeros(12, dtype=float)
-
-    # 3. Monthly 4-Pillar Grid & Operational Costs (12 Months)
+    # 3. Monthly 4-Pillar / Single-Utility Grid & Operational Costs (12 Months)
     mb_df = sim_res.monthly_balance_df
     monthly_cost_rows = []
     dso_monthly_rows = []
@@ -222,10 +189,20 @@ def evaluate_combined_financials(
     base_dso_cap_sum = 0.0
     base_dso_peak_sum = 0.0
     base_dso_vol_sum = 0.0
+    base_dso_vol_pk_sum = 0.0
+    base_dso_vol_off_sum = 0.0
+    base_dso_vol_sh_sum = 0.0
+    base_dso_pk_kwh_sum = 0.0
+    base_dso_off_kwh_sum = 0.0
+    base_dso_sh_kwh_sum = 0.0
+    base_dso_reg_sum = 0.0
+    base_dso_billed_pk_sum = 0.0
+    base_dso_billed_cap_sum = 0.0
     base_tax_kwh_gross_sum = 0.0
     base_tax_credit_sum = 0.0
     base_tax_kwh_sum = 0.0
     base_tax_surcharge_sum = 0.0
+    base_vat_sum = 0.0
     base_breach_months = 0
 
     comb_p1_sum = 0.0
@@ -240,10 +217,20 @@ def evaluate_combined_financials(
     comb_dso_cap_sum = 0.0
     comb_dso_peak_sum = 0.0
     comb_dso_vol_sum = 0.0
+    comb_dso_vol_pk_sum = 0.0
+    comb_dso_vol_off_sum = 0.0
+    comb_dso_vol_sh_sum = 0.0
+    comb_dso_pk_kwh_sum = 0.0
+    comb_dso_off_kwh_sum = 0.0
+    comb_dso_sh_kwh_sum = 0.0
+    comb_dso_reg_sum = 0.0
+    comb_dso_billed_pk_sum = 0.0
+    comb_dso_billed_cap_sum = 0.0
     comb_tax_kwh_gross_sum = 0.0
     comb_tax_credit_sum = 0.0
     comb_tax_kwh_sum = 0.0
     comb_tax_surcharge_sum = 0.0
+    comb_vat_sum = 0.0
     comb_breach_months = 0
 
     gen_fuel_cost_sum = 0.0
@@ -258,14 +245,26 @@ def evaluate_combined_financials(
     feed_in_rate = max(0.0, float(fin_cfg.solar_export_feed_in_eur_kwh)) if cfg.enable_solar else 0.0
 
     # First estimate blended variable rate for monthly Solar & Battery value attribution
-    eff_supp_rate_base = supp_kwh_rate
-    if is_dual_tou:
+    eff_supp_rate_base = supp_kwh_rate if en_p1 else 0.0
+    if en_p1 and is_dual_tou:
         tot_ht_imp = float(np.sum(imp_ht_m))
         tot_nt_imp = float(np.sum(imp_nt_m))
         if tot_ht_imp + tot_nt_imp > 1.0:
             eff_supp_rate_base = (tot_ht_imp * supp_ht_rate + tot_nt_imp * supp_nt_rate) / (tot_ht_imp + tot_nt_imp)
+    if dso_3win_tou:
+        tot_3w = float(np.sum(imp_pico_m) + np.sum(imp_valle_m) + np.sum(imp_resto_m))
+        if tot_3w > 1.0:
+            eff_dso_vol_rate = (
+                float(np.sum(imp_pico_m)) * dso_pk_vol_rate
+                + float(np.sum(imp_valle_m)) * dso_off_vol_rate
+                + float(np.sum(imp_resto_m)) * dso_sh_vol_rate
+            ) / tot_3w
+        else:
+            eff_dso_vol_rate = dso_sh_vol_rate
+    else:
+        eff_dso_vol_rate = dso_vol_rate
     eff_tax_kwh_rate = tax_kwh_rate * (1.0 - comb_credit_ratio) if comb_gross_tax_tot > 1e-9 else tax_kwh_rate
-    var_grid_rate = (eff_supp_rate_base + gvo_rate + dso_vol_rate) * (1.0 + tax_pct) + eff_tax_kwh_rate
+    var_grid_rate = (eff_supp_rate_base + gvo_rate + eff_dso_vol_rate) * (1.0 + tax_pct) + eff_tax_kwh_rate
 
     bat_peak_sav_sum = 0.0
     bat_grid_chg_cost_sum = 0.0
@@ -290,8 +289,11 @@ def evaluate_combined_financials(
         gen_hrs = float(row["Generator Runtime (hrs)"])
         gen_fuel = float(row["Generator Fuel"])
 
-        # Resolve monthly HT/NT kWh preserving exact monthly balance sums
-        if is_dual_tou:
+        # Pillar 1: Energy Supply (Retailer)
+        if not en_p1:
+            b_supp_ht = b_supp_nt = b_supp_gvo = b_supp_en = b_p1 = 0.0
+            c_supp_ht = c_supp_nt = c_supp_gvo = c_supp_en = c_p1 = 0.0
+        elif is_dual_tou:
             raw_b_tot = float(cons_ht_m[m_idx_0] + cons_nt_m[m_idx_0])
             if raw_b_tot > 1e-6:
                 b_ht_kwh = cons_kwh * (float(cons_ht_m[m_idx_0]) / raw_b_tot)
@@ -310,23 +312,25 @@ def evaluate_combined_financials(
             b_supp_nt = b_nt_kwh * supp_nt_rate
             c_supp_ht = c_ht_kwh * supp_ht_rate
             c_supp_nt = c_nt_kwh * supp_nt_rate
+            b_supp_gvo = cons_kwh * gvo_rate
+            b_supp_en = b_supp_ht + b_supp_nt + b_supp_gvo
+            b_p1 = b_supp_en + supp_fixed_mo
+            c_supp_gvo = comb_imp_kwh * gvo_rate
+            c_supp_en = c_supp_ht + c_supp_nt + c_supp_gvo
+            c_p1 = c_supp_en + supp_fixed_mo
         else:
-            b_ht_kwh, b_nt_kwh = cons_kwh, 0.0
-            c_ht_kwh, c_nt_kwh = comb_imp_kwh, 0.0
             b_supp_ht = cons_kwh * supp_kwh_rate
             b_supp_nt = 0.0
             c_supp_ht = comb_imp_kwh * supp_kwh_rate
             c_supp_nt = 0.0
+            b_supp_gvo = cons_kwh * gvo_rate
+            b_supp_en = b_supp_ht + b_supp_nt + b_supp_gvo
+            b_p1 = b_supp_en + supp_fixed_mo
+            c_supp_gvo = comb_imp_kwh * gvo_rate
+            c_supp_en = c_supp_ht + c_supp_nt + c_supp_gvo
+            c_p1 = c_supp_en + supp_fixed_mo
 
-        b_supp_gvo = cons_kwh * gvo_rate
-        b_supp_en = b_supp_ht + b_supp_nt + b_supp_gvo
-        b_p1 = b_supp_en + supp_fixed_mo
-
-        c_supp_gvo = comb_imp_kwh * gvo_rate
-        c_supp_en = c_supp_ht + c_supp_nt + c_supp_gvo
-        c_p1 = c_supp_en + supp_fixed_mo
-
-        # Pillar 2: DSO (with optional breach capacity step-up)
+        # Pillar 2: Grid Network (DSO / Single-Utility)
         base_is_breach = bool(base_peak_kw > cfg.grid_limit_kw + 0.05)
         comb_is_breach = bool(comb_peak_kw > cfg.grid_limit_kw + 0.05)
         if base_is_breach:
@@ -334,38 +338,94 @@ def evaluate_combined_financials(
         if comb_is_breach:
             comb_breach_months += 1
 
-        b_billed_cap_kw = max(cfg.grid_limit_kw, base_peak_kw) if fin_cfg.dso_adjust_capacity_on_breach else cfg.grid_limit_kw
-        c_billed_cap_kw = max(cfg.grid_limit_kw, comb_peak_kw) if fin_cfg.dso_adjust_capacity_on_breach else cfg.grid_limit_kw
+        if en_p2:
+            b_billed_cap_kw = max(cfg.grid_limit_kw, base_peak_kw) if fin_cfg.dso_adjust_capacity_on_breach else cfg.grid_limit_kw
+            c_billed_cap_kw = max(cfg.grid_limit_kw, comb_peak_kw) if fin_cfg.dso_adjust_capacity_on_breach else cfg.grid_limit_kw
+            b_billed_pk_kw = float(base_pico_pk_m[m_idx_0]) if (dso_pico_peak_only and base_pico_pk_m[m_idx_0] > 0.0) else base_peak_kw
+            c_billed_pk_kw = float(comb_pico_pk_m[m_idx_0]) if (dso_pico_peak_only and comb_pico_pk_m[m_idx_0] > 0.0) else comb_peak_kw
 
-        b_pen = base_over_kw * pen_rate_kw
-        b_cap = b_billed_cap_kw * dso_cap_rate
-        b_pk = base_peak_kw * dso_peak_rate
-        b_vol = cons_kwh * dso_vol_rate
-        b_p2 = b_cap + b_pk + dso_fixed_mo + b_vol + trafo_rent_mo + b_pen
+            if dso_3win_tou:
+                b_3w_tot = float(cons_pico_m[m_idx_0] + cons_valle_m[m_idx_0] + cons_resto_m[m_idx_0])
+                b_scale = (cons_kwh / b_3w_tot) if b_3w_tot > 1e-6 else 0.0
+                b_pk_kwh = float(cons_pico_m[m_idx_0]) * b_scale if b_3w_tot > 1e-6 else cons_kwh * 0.21
+                b_off_kwh = float(cons_valle_m[m_idx_0]) * b_scale if b_3w_tot > 1e-6 else cons_kwh * 0.21
+                b_sh_kwh = max(0.0, cons_kwh - b_pk_kwh - b_off_kwh)
 
-        c_pen = comb_over_kw * pen_rate_kw
-        c_cap = c_billed_cap_kw * dso_cap_rate
-        c_pk = comb_peak_kw * dso_peak_rate
-        c_vol = comb_imp_kwh * dso_vol_rate
-        c_p2 = c_cap + c_pk + dso_fixed_mo + c_vol + c_pen
+                c_3w_tot = float(imp_pico_m[m_idx_0] + imp_valle_m[m_idx_0] + imp_resto_m[m_idx_0])
+                c_scale = (comb_imp_kwh / c_3w_tot) if c_3w_tot > 1e-6 else 0.0
+                c_pk_kwh = float(imp_pico_m[m_idx_0]) * c_scale if c_3w_tot > 1e-6 else comb_imp_kwh * 0.21
+                c_off_kwh = float(imp_valle_m[m_idx_0]) * c_scale if c_3w_tot > 1e-6 else comb_imp_kwh * 0.21
+                c_sh_kwh = max(0.0, comb_imp_kwh - c_pk_kwh - c_off_kwh)
+
+                b_vol_pk = b_pk_kwh * dso_pk_vol_rate
+                b_vol_off = b_off_kwh * dso_off_vol_rate
+                b_vol_sh = b_sh_kwh * dso_sh_vol_rate
+                c_vol_pk = c_pk_kwh * dso_pk_vol_rate
+                c_vol_off = c_off_kwh * dso_off_vol_rate
+                c_vol_sh = c_sh_kwh * dso_sh_vol_rate
+            else:
+                raw_b2_tot = float(cons_ht_m[m_idx_0] + cons_nt_m[m_idx_0])
+                b_pk_kwh = cons_kwh * (float(cons_ht_m[m_idx_0]) / raw_b2_tot) if raw_b2_tot > 1e-6 else cons_kwh * 0.55
+                b_off_kwh = max(0.0, cons_kwh - b_pk_kwh)
+                b_sh_kwh = 0.0
+
+                raw_c2_tot = float(imp_ht_m[m_idx_0] + imp_nt_m[m_idx_0])
+                c_pk_kwh = comb_imp_kwh * (float(imp_ht_m[m_idx_0]) / raw_c2_tot) if raw_c2_tot > 1e-6 else comb_imp_kwh * 0.55
+                c_off_kwh = max(0.0, comb_imp_kwh - c_pk_kwh)
+                c_sh_kwh = 0.0
+
+                b_vol_pk = b_pk_kwh * dso_pk_vol_rate
+                b_vol_off = b_off_kwh * dso_off_vol_rate
+                b_vol_sh = 0.0
+                c_vol_pk = c_pk_kwh * dso_pk_vol_rate
+                c_vol_off = c_off_kwh * dso_off_vol_rate
+                c_vol_sh = 0.0
+
+            b_pen = base_over_kw * pen_rate_kw
+            b_cap = b_billed_cap_kw * dso_cap_rate
+            b_pk = b_billed_pk_kw * dso_peak_rate
+            b_vol = b_vol_pk + b_vol_off + b_vol_sh
+            b_p2 = b_cap + b_pk + dso_fixed_mo + b_vol + trafo_rent_mo + b_pen + dso_reg_adj_mo
+
+            c_pen = comb_over_kw * pen_rate_kw
+            c_cap = c_billed_cap_kw * dso_cap_rate
+            c_pk = c_billed_pk_kw * dso_peak_rate
+            c_vol = c_vol_pk + c_vol_off + c_vol_sh
+            c_p2 = c_cap + c_pk + dso_fixed_mo + c_vol + c_pen + dso_reg_adj_mo
+        else:
+            b_billed_cap_kw = c_billed_cap_kw = 0.0
+            b_billed_pk_kw = c_billed_pk_kw = 0.0
+            b_pk_kwh = b_off_kwh = b_sh_kwh = c_pk_kwh = c_off_kwh = c_sh_kwh = 0.0
+            b_vol_pk = b_vol_off = b_vol_sh = c_vol_pk = c_vol_off = c_vol_sh = 0.0
+            b_pen = b_cap = b_pk = b_vol = b_p2 = 0.0
+            c_pen = c_cap = c_pk = c_vol = c_p2 = 0.0
 
         # Pillar 3: Metering
-        b_p3 = meter_fixed_mo
-        c_p3 = meter_fixed_mo
+        b_p3 = meter_fixed_mo if en_p3 else 0.0
+        c_p3 = meter_fixed_mo if en_p3 else 0.0
 
-        # Pillar 4: Taxes & Tax Credit
-        b_tax_kwh_gross = cons_kwh * tax_kwh_rate
-        b_tax_credit = b_tax_kwh_gross * base_credit_ratio
-        b_tax_kwh = b_tax_kwh_gross - b_tax_credit
-        b_tax_sur = (b_p1 + b_p2 + b_p3) * tax_pct
-        b_p4 = b_tax_kwh + b_tax_sur
-        b_tot = b_p1 + b_p2 + b_p3 + b_p4
+        # Pillar 4: Taxes, Levies & VAT
+        b_electric_net = b_p1 + b_p2 + b_p3
+        c_electric_net = c_p1 + c_p2 + c_p3
+        if en_p4:
+            b_tax_kwh_gross = cons_kwh * tax_kwh_rate
+            b_tax_credit = b_tax_kwh_gross * base_credit_ratio
+            b_tax_kwh = b_tax_kwh_gross - b_tax_credit
+            b_tax_sur = b_electric_net * tax_pct
+            b_p4 = b_tax_kwh + b_tax_sur
 
-        c_tax_kwh_gross = comb_imp_kwh * tax_kwh_rate
-        c_tax_credit = c_tax_kwh_gross * comb_credit_ratio
-        c_tax_kwh = c_tax_kwh_gross - c_tax_credit
-        c_tax_sur = (c_p1 + c_p2 + c_p3) * tax_pct
-        c_p4 = c_tax_kwh + c_tax_sur
+            c_tax_kwh_gross = comb_imp_kwh * tax_kwh_rate
+            c_tax_credit = c_tax_kwh_gross * comb_credit_ratio
+            c_tax_kwh = c_tax_kwh_gross - c_tax_credit
+            c_tax_sur = c_electric_net * tax_pct
+            c_p4 = c_tax_kwh + c_tax_sur
+        else:
+            b_tax_kwh_gross = b_tax_credit = b_tax_kwh = b_tax_sur = b_p4 = 0.0
+            c_tax_kwh_gross = c_tax_credit = c_tax_kwh = c_tax_sur = c_p4 = 0.0
+
+        b_tot = b_electric_net + b_p4
+        b_vat_m = ((b_tot) if vat_on_levies else b_electric_net) * vat_frac
+        c_vat_m = ((c_electric_net + c_p4) if vat_on_levies else c_electric_net) * vat_frac
 
         c_fuel = (gen_fuel * fin_cfg.fuel_price_eur_per_unit) if cfg.enable_generator else 0.0
         c_maint = (gen_hrs * fin_cfg.generator_maintenance_eur_per_hour) if cfg.enable_generator else 0.0
@@ -384,10 +444,20 @@ def evaluate_combined_financials(
         base_dso_cap_sum += b_cap
         base_dso_peak_sum += b_pk
         base_dso_vol_sum += b_vol
+        base_dso_vol_pk_sum += b_vol_pk
+        base_dso_vol_off_sum += b_vol_off
+        base_dso_vol_sh_sum += b_vol_sh
+        base_dso_pk_kwh_sum += b_pk_kwh
+        base_dso_off_kwh_sum += b_off_kwh
+        base_dso_sh_kwh_sum += b_sh_kwh
+        base_dso_reg_sum += dso_reg_adj_mo
+        base_dso_billed_pk_sum += b_billed_pk_kw
+        base_dso_billed_cap_sum += b_billed_cap_kw
         base_tax_kwh_gross_sum += b_tax_kwh_gross
         base_tax_credit_sum += b_tax_credit
         base_tax_kwh_sum += b_tax_kwh
         base_tax_surcharge_sum += b_tax_sur
+        base_vat_sum += b_vat_m
 
         comb_p1_sum += c_p1
         comb_p2_sum += c_p2
@@ -401,10 +471,20 @@ def evaluate_combined_financials(
         comb_dso_cap_sum += c_cap
         comb_dso_peak_sum += c_pk
         comb_dso_vol_sum += c_vol
+        comb_dso_vol_pk_sum += c_vol_pk
+        comb_dso_vol_off_sum += c_vol_off
+        comb_dso_vol_sh_sum += c_vol_sh
+        comb_dso_pk_kwh_sum += c_pk_kwh
+        comb_dso_off_kwh_sum += c_off_kwh
+        comb_dso_sh_kwh_sum += c_sh_kwh
+        comb_dso_reg_sum += dso_reg_adj_mo
+        comb_dso_billed_pk_sum += c_billed_pk_kw
+        comb_dso_billed_cap_sum += c_billed_cap_kw
         comb_tax_kwh_gross_sum += c_tax_kwh_gross
         comb_tax_credit_sum += c_tax_credit
         comb_tax_kwh_sum += c_tax_kwh
         comb_tax_surcharge_sum += c_tax_sur
+        comb_vat_sum += c_vat_m
 
         gen_fuel_cost_sum += c_fuel
         gen_maint_cost_sum += c_maint
@@ -518,7 +598,7 @@ def evaluate_combined_financials(
             "Energy Tax Gross (€)": round(c_tax_kwh_gross, 0),
             "Tax Credit (-€)": round(-c_tax_credit, 0),
             "Tax Surcharge (€)": round(c_tax_sur, 0),
-            "VAT With System (€)": round((c_p1 + c_p2 + c_p3 + c_p4) * vat_frac, 0),
+            "VAT With System (€)": round(c_vat_m, 0),
             "Tax & Metering Current (€)": round(b_p3 + b_p4, 0),
             "Tax & Metering System (€)": round(c_p3 + c_p4, 0),
             "Savings (€)": round((b_p3 + b_p4) - (c_p3 + c_p4), 0),
@@ -554,9 +634,9 @@ def evaluate_combined_financials(
     combined_grid_total = comb_p1_sum + comb_p2_sum + comb_p3_sum + comb_p4_sum
     gen_total_opex = gen_fuel_cost_sum + gen_maint_cost_sum + gen_rental_cost_sum
 
-    baseline_vat_eur = baseline_total_opex * vat_frac
+    baseline_vat_eur = base_vat_sum
     baseline_total_gross_eur = baseline_total_opex + baseline_vat_eur
-    combined_grid_vat_eur = combined_grid_total * vat_frac
+    combined_grid_vat_eur = comb_vat_sum
     combined_grid_gross_eur = combined_grid_total + combined_grid_vat_eur
 
     solar_export_kwh = float(getattr(kpis, "solar_export_kwh", 0.0)) if cfg.enable_solar else 0.0
@@ -569,116 +649,44 @@ def evaluate_combined_financials(
 
     # 4. 15-Year Dynamic Lifecycle Cashflow, TCO & NPV Calculation
     r_disc = max(0.0, float(fin_cfg.discount_rate_pct)) / 100.0
-    r_tariff = max(0.0, float(fin_cfg.tariff_escalation_pct_pa)) / 100.0
-    r_om = max(0.0, float(fin_cfg.om_inflation_pct_pa)) / 100.0
-    d_sys = max(0.0, float(fin_cfg.system_degradation_pct_pa)) / 100.0
-    aug_yr = int(fin_cfg.battery_augmentation_year)
-
-    bill_avoided_y1 = max(0.0, baseline_total_opex - combined_grid_total)
-
-    cashflow_rows = []
-    cum_cf = -total_capex
-    cum_disc_cf = -total_capex
-    npv_acc = -total_capex
-
-    cashflow_rows.append({
-        "Year": 0,
-        "Tariff Escalation Factor": 1.0,
-        "Investment & Augmentation (€)": round(-total_capex, 0),
-        "Current situation Bill (€)": 0.0,
-        "Combined Grid Bill (€)": 0.0,
-        "System O&M & Fuel (€)": 0.0,
-        "Export Revenue (€)": 0.0,
-        "Combined System OPEX (€)": 0.0,
-        "Annual Net Savings (€)": 0.0,
-        "Net Cashflow (€)": round(-total_capex, 0),
-        "Cumulative Cashflow (€)": round(cum_cf, 0),
-        "Discounted Cashflow (€)": round(-total_capex, 0),
-        "Cumulative TCO Current situation (€)": 0.0,
-        "Cumulative TCO Combined system (€)": round(total_capex, 0),
-    })
-
-    tco_base_acc = 0.0
-    tco_comb_acc = total_capex
-    net_cfs_for_irr = [-total_capex]
-    simple_payback_years: Optional[float] = None
-    discounted_payback_years: Optional[float] = None
-
-    disc_sys_energy_acc = 0.0
-    disc_sys_cost_acc = total_capex
-
-    sys_energy_y1 = float(getattr(kpis, "solar_total_supplied_kwh", 0.0)) + float(getattr(kpis, "battery_total_discharged_kwh", 0.0)) + float(getattr(kpis, "generator_to_load_kwh", 0.0))
-
-    for yr in range(1, 16):
-        esc_tariff = (1.0 + r_tariff) ** (yr - 1)
-        esc_om = (1.0 + r_om) ** (yr - 1)
-        deg_factor = max(0.0, (1.0 - d_sys) ** (yr - 1))
-
-        b_bill_yr = baseline_total_opex * esc_tariff
-        avoided_bill_yr = bill_avoided_y1 * deg_factor * esc_tariff
-        c_grid_yr = max(0.0, b_bill_yr - avoided_bill_yr)
-
-        om_sys_yr = system_om_and_fuel_y1 * esc_om
-        exp_rev_yr = solar_export_rev_y1 * deg_factor * esc_tariff
-
-        c_tot_yr = c_grid_yr + om_sys_yr - exp_rev_yr
-        savings_yr = b_bill_yr - c_tot_yr
-
-        yr_aug = -battery_aug_eur if (battery_aug_eur > 0.0 and yr == aug_yr) else 0.0
-        net_cf = savings_yr + yr_aug
-        net_cfs_for_irr.append(net_cf)
-
-        prev_cf = cum_cf
-        cum_cf += net_cf
-
-        disc_cf = net_cf / ((1.0 + r_disc) ** yr)
-        prev_disc_cf = cum_disc_cf
-        cum_disc_cf += disc_cf
-        npv_acc += disc_cf
-
-        # Check payback crossings
-        if total_capex > 0.0:
-            if simple_payback_years is None and cum_cf >= 0.0:
-                fraction = (-prev_cf) / max(1e-6, net_cf) if net_cf > 0 else 0.0
-                simple_payback_years = round((yr - 1) + max(0.0, min(1.0, fraction)), 1)
-
-            if discounted_payback_years is None and cum_disc_cf >= 0.0:
-                fraction = (-prev_disc_cf) / max(1e-6, disc_cf) if disc_cf > 0 else 0.0
-                discounted_payback_years = round((yr - 1) + max(0.0, min(1.0, fraction)), 1)
-
-        tco_base_acc += b_bill_yr
-        tco_comb_acc += (c_tot_yr + abs(yr_aug))
-
-        disc_sys_energy_acc += (sys_energy_y1 * deg_factor) / ((1.0 + r_disc) ** yr)
-        disc_sys_cost_acc += (om_sys_yr + abs(yr_aug)) / ((1.0 + r_disc) ** yr)
-
-        cashflow_rows.append({
-            "Year": yr,
-            "Tariff Escalation Factor": round(esc_tariff, 3),
-            "Investment & Augmentation (€)": round(yr_aug, 0),
-            "Current situation Bill (€)": round(b_bill_yr, 0),
-            "Combined Grid Bill (€)": round(c_grid_yr, 0),
-            "System O&M & Fuel (€)": round(om_sys_yr, 0),
-            "Export Revenue (€)": round(exp_rev_yr, 0),
-            "Combined System OPEX (€)": round(c_tot_yr, 0),
-            "Annual Net Savings (€)": round(savings_yr, 0),
-            "Net Cashflow (€)": round(net_cf, 0),
-            "Cumulative Cashflow (€)": round(cum_cf, 0),
-            "Discounted Cashflow (€)": round(disc_cf, 0),
-            "Cumulative TCO Current situation (€)": round(tco_base_acc, 0),
-            "Cumulative TCO Combined system (€)": round(tco_comb_acc, 0),
-        })
-
-    if total_capex <= 0.0:
-        simple_payback_years = 0.0 if annual_savings >= 0.0 else None
-        discounted_payback_years = 0.0 if annual_savings >= 0.0 else None
-
-    irr_val = _calculate_irr(net_cfs_for_irr)
+    sys_energy_y1 = (
+        float(getattr(kpis, "solar_total_supplied_kwh", 0.0))
+        + float(getattr(kpis, "battery_total_discharged_kwh", 0.0))
+        + float(getattr(kpis, "generator_to_load_kwh", 0.0))
+    )
+    proj = compute_15y_lifecycle_projection(
+        total_capex=total_capex,
+        battery_aug_eur=battery_aug_eur,
+        aug_yr=int(fin_cfg.battery_augmentation_year),
+        baseline_total_opex=baseline_total_opex,
+        combined_grid_total=combined_grid_total,
+        system_om_and_fuel_y1=system_om_and_fuel_y1,
+        solar_export_rev_y1=solar_export_rev_y1,
+        annual_savings=annual_savings,
+        sys_energy_y1=sys_energy_y1,
+        solar_capex=solar_capex,
+        solar_om_annual=solar_om_annual,
+        solar_total_generation_kwh=float(getattr(kpis, "solar_total_generation_kwh", 0.0)),
+        enable_solar=bool(cfg.enable_solar),
+        discount_rate_pct=float(fin_cfg.discount_rate_pct),
+        tariff_escalation_pct_pa=float(fin_cfg.tariff_escalation_pct_pa),
+        om_inflation_pct_pa=float(fin_cfg.om_inflation_pct_pa),
+        system_degradation_pct_pa=float(fin_cfg.system_degradation_pct_pa),
+    )
+    cashflow_rows = proj["cashflow_rows"]
+    simple_payback_years = proj["simple_payback_years"]
+    discounted_payback_years = proj["discounted_payback_years"]
+    npv_acc = proj["npv_acc"]
+    irr_val = proj["irr_val"]
+    tco_base_acc = proj["tco_base_acc"]
+    tco_comb_acc = proj["tco_comb_acc"]
+    sys_lcoe = proj["sys_lcoe"]
+    solar_iso_lcoe = proj["solar_iso_lcoe"]
+    bcr_15y = proj["bcr_15y"]
 
     # Unit metrics & sub-ledger savings attribution
     ann_cons = max(1.0, float(kpis.annual_consumption_kwh))
     eff_grid_rate = baseline_total_opex / ann_cons
-    sys_lcoe = (disc_sys_cost_acc / disc_sys_energy_acc) if disc_sys_energy_acc > 1.0 else 0.0
 
     base_vol_portion = (base_supp_energy_sum + base_dso_vol_sum) * (1.0 + tax_pct) + base_tax_kwh_sum
     comb_vol_portion = (comb_supp_energy_sum + comb_dso_vol_sum) * (1.0 + tax_pct) + comb_tax_kwh_sum
@@ -692,15 +700,6 @@ def evaluate_combined_financials(
     solar_gross_val_y1 = (solar_direct_val + solar_stored_val + solar_export_rev_y1) if cfg.enable_solar else 0.0
     solar_net_val_y1 = (solar_gross_val_y1 - solar_om_annual) if cfg.enable_solar else 0.0
     solar_iso_payback = round(solar_capex / solar_net_val_y1, 1) if (cfg.enable_solar and solar_capex > 0.0 and solar_net_val_y1 > 1.0) else (0.0 if (cfg.enable_solar and solar_capex <= 0.0 and solar_net_val_y1 >= 0.0) else None)
-    if cfg.enable_solar and float(getattr(kpis, "solar_total_generation_kwh", 0.0)) > 1.0:
-        disc_sol_cost = solar_capex
-        disc_sol_gen = 0.0
-        for yr in range(1, 16):
-            disc_sol_cost += (solar_om_annual * ((1.0 + r_om) ** (yr - 1))) / ((1.0 + r_disc) ** yr)
-            disc_sol_gen += (float(kpis.solar_total_generation_kwh) * max(0.0, (1.0 - d_sys) ** (yr - 1))) / ((1.0 + r_disc) ** yr)
-        solar_iso_lcoe = disc_sol_cost / max(1.0, disc_sol_gen)
-    else:
-        solar_iso_lcoe = 0.0
 
     bat_gross_val_y1 = (bat_peak_sav_sum + solar_stored_val - bat_grid_chg_cost_sum) if cfg.enable_battery else 0.0
     bat_net_val_y1 = (bat_gross_val_y1 - battery_om_annual) if cfg.enable_battery else 0.0
@@ -715,17 +714,12 @@ def evaluate_combined_financials(
     gen_annuity = (generator_capex * ((r_disc * ((1.0 + r_disc) ** 15)) / (((1.0 + r_disc) ** 15) - 1.0))) if (r_disc > 0 and generator_capex > 0) else (generator_capex / 15.0)
     gen_cost_per_kwh = ((gen_annuity + gen_total_opex) / gen_kwh_yr) if (cfg.enable_generator and gen_kwh_yr > 1.0) else 0.0
 
-    # Isolated Contract Actor Savings & 15Y Benefit-Cost Ratio
+    # Isolated Contract Actor Savings
     dso_savings_eur = base_p2_sum - comb_p2_sum
     dso_savings_pct = (dso_savings_eur / base_p2_sum * 100.0) if base_p2_sum > 1e-6 else 0.0
     supplier_savings_eur = base_p1_sum - comb_p1_sum
     supplier_savings_pct = (supplier_savings_eur / base_p1_sum * 100.0) if base_p1_sum > 1e-6 else 0.0
     tax_metering_savings_eur = (base_p3_sum + base_p4_sum) - (comb_p3_sum + comb_p4_sum)
-    disc_gross_benefits_15y = sum(
-        ((bill_avoided_y1 + solar_export_rev_y1) * max(0.0, (1.0 - d_sys) ** (yr - 1)) * ((1.0 + r_tariff) ** (yr - 1))) / ((1.0 + r_disc) ** yr)
-        for yr in range(1, 16)
-    )
-    bcr_15y = (disc_gross_benefits_15y / max(1.0, disc_sys_cost_acc)) if disc_sys_cost_acc > 1.0 else 0.0
 
     congestion_breach_kw = float(getattr(kpis, "remaining_overload_kw", 0.0))
     congestion_compliant = bool(congestion_breach_kw <= 0.05)
@@ -860,76 +854,39 @@ def evaluate_combined_financials(
         generator_net_value_y1_eur=round(gen_net_val_y1, 0),
         generator_isolated_payback_years=gen_iso_payback,
         generator_cost_per_kwh=round(gen_cost_per_kwh, 4),
+        currency_code=str(getattr(fin_cfg, "currency_code", "EUR") or "EUR"),
+        baseline_dso_vol_peak_eur=round(base_dso_vol_pk_sum, 2),
+        combined_dso_vol_peak_eur=round(comb_dso_vol_pk_sum, 2),
+        baseline_dso_vol_offpeak_eur=round(base_dso_vol_off_sum, 2),
+        combined_dso_vol_offpeak_eur=round(comb_dso_vol_off_sum, 2),
+        baseline_dso_vol_shoulder_eur=round(base_dso_vol_sh_sum, 2),
+        combined_dso_vol_shoulder_eur=round(comb_dso_vol_sh_sum, 2),
+        baseline_dso_peak_tou_kwh=round(base_dso_pk_kwh_sum, 1),
+        combined_dso_peak_tou_kwh=round(comb_dso_pk_kwh_sum, 1),
+        baseline_dso_offpeak_tou_kwh=round(base_dso_off_kwh_sum, 1),
+        combined_dso_offpeak_tou_kwh=round(comb_dso_off_kwh_sum, 1),
+        baseline_dso_shoulder_tou_kwh=round(base_dso_sh_kwh_sum, 1),
+        combined_dso_shoulder_tou_kwh=round(comb_dso_sh_kwh_sum, 1),
+        baseline_dso_regulatory_adj_eur=round(base_dso_reg_sum, 2),
+        combined_dso_regulatory_adj_eur=round(comb_dso_reg_sum, 2),
+        baseline_dso_billed_peak_avg_kw=round(base_dso_billed_pk_sum / 12.0, 1),
+        combined_dso_billed_peak_avg_kw=round(comb_dso_billed_pk_sum / 12.0, 1),
+        baseline_dso_billed_cap_avg_kw=round(base_dso_billed_cap_sum / 12.0, 1),
+        combined_dso_billed_cap_avg_kw=round(comb_dso_billed_cap_sum / 12.0, 1),
     )
-
-    denom = max(1.0, kpis.annual_consumption_kwh)
-    payback_str = f"{simple_payback_years:.1f} yrs" if simple_payback_years is not None else "N/A"
-
-    fin_rows = [
-        {
-            "Component": "Grid",
-            "Installed Size": f"{kpis.grid_limit_kw:,.0f} kW limit",
-            "Energy Supplied (kWh/year & %)": f"{kpis.grid_supplied_to_load_kwh:,.0f} kWh ({(kpis.grid_supplied_to_load_kwh / denom * 100.0):.1f}%)",
-            "Investment (CAPEX)": "€0",
-            "Annual Operating Cost (OPEX)": f"€{fin_kpis.combined_grid_total_eur:,.0f}",
-            "Annual Savings vs. Current situation": f"€{(fin_kpis.baseline_total_opex_eur - fin_kpis.combined_grid_total_eur):,.0f}",
-            "Payback (Years)": "—",
-        },
-        {
-            "Component": "Solar",
-            "Installed Size": f"{solar_deriv.installed_kwp:,.1f} kWp" if cfg.enable_solar else "0.0 kWp",
-            "Energy Supplied (kWh/year & %)": f"{kpis.solar_direct_kwh:,.0f} kWh direct ({kpis.solar_supply_share_pct:.1f}% total)" if cfg.enable_solar else "0 kWh (0.0%)",
-            "Investment (CAPEX)": f"€{fin_kpis.solar_capex_eur:,.0f}",
-            "Annual Operating Cost (OPEX)": f"€{fin_kpis.solar_om_eur:,.0f}",
-            "Annual Savings vs. Current situation": f"€{fin_kpis.solar_net_value_y1_eur:+,.0f}" if cfg.enable_solar else "—",
-            "Payback (Years)": f"{solar_iso_payback:.1f} yrs" if solar_iso_payback is not None else "—",
-        },
-        {
-            "Component": "Battery",
-            "Installed Size": f"{cfg.battery_capacity_kwh:,.0f} kWh / {cfg.battery_power_kw:,.0f} kW" if cfg.enable_battery else "0 kWh / 0 kW",
-            "Energy Supplied (kWh/year & %)": f"{kpis.battery_total_discharged_kwh:,.0f} kWh ({kpis.battery_discharge_share_pct:.1f}%)" if cfg.enable_battery else "0 kWh (0.0%)",
-            "Investment (CAPEX)": f"€{fin_kpis.battery_capex_eur:,.0f}",
-            "Annual Operating Cost (OPEX)": f"€{fin_kpis.battery_om_eur:,.0f}",
-            "Annual Savings vs. Current situation": f"€{fin_kpis.battery_net_value_y1_eur:+,.0f}" if cfg.enable_battery else "—",
-            "Payback (Years)": f"{bat_iso_payback:.1f} yrs" if bat_iso_payback is not None else "—",
-        },
-        {
-            "Component": "Generator",
-            "Installed Size": f"{cfg.generator_rated_kw:,.0f} kW ({cfg.fuel_type})" if cfg.enable_generator else "0 kW",
-            "Energy Supplied (kWh/year & %)": f"{kpis.generator_to_load_kwh:,.0f} kWh ({kpis.generator_supply_share_pct:.1f}%)" if cfg.enable_generator else "0 kWh (0.0%)",
-            "Investment (CAPEX)": f"€{fin_kpis.generator_capex_eur:,.0f}",
-            "Annual Operating Cost (OPEX)": f"€{fin_kpis.generator_total_opex_eur:,.0f}",
-            "Annual Savings vs. Current situation": f"€{fin_kpis.generator_net_value_y1_eur:+,.0f}" if cfg.enable_generator else "—",
-            "Payback (Years)": f"{gen_iso_payback:.1f} yrs" if gen_iso_payback is not None else "—",
-        },
-        {
-            "Component": "Combined system",
-            "Installed Size": (
-                f"Grid {kpis.grid_limit_kw:,.0f} kW + "
-                f"Solar {solar_deriv.installed_kwp if cfg.enable_solar else 0.0:,.1f} kWp + "
-                f"Battery {cfg.battery_capacity_kwh if cfg.enable_battery else 0.0:,.0f} kWh + "
-                f"Generator {cfg.generator_rated_kw if cfg.enable_generator else 0.0:,.0f} kW"
-            ),
-            "Energy Supplied (kWh/year & %)": f"{kpis.annual_consumption_kwh:,.0f} kWh (100.0%)",
-            "Investment (CAPEX)": f"€{fin_kpis.total_capex_eur:,.0f}",
-            "Annual Operating Cost (OPEX)": f"€{fin_kpis.total_annual_opex_eur:,.0f}",
-            "Annual Savings vs. Current situation": f"€{fin_kpis.annual_savings_eur:,.0f}",
-            "Payback (Years)": payback_str,
-        },
-        {
-            "Component": "Current situation",
-            "Installed Size": f"Grid Limit {kpis.grid_limit_kw:,.0f} kW (Grid only)",
-            "Energy Supplied (kWh/year & %)": f"{kpis.annual_consumption_kwh:,.0f} kWh (100.0%)",
-            "Investment (CAPEX)": "€0",
-            "Annual Operating Cost (OPEX)": f"€{fin_kpis.baseline_total_opex_eur:,.0f}",
-            "Annual Savings vs. Current situation": "Baseline (€0)",
-            "Payback (Years)": "—",
-        },
-    ]
 
     sim_res.financial_config = fin_cfg
     sim_res.financial_kpis = fin_kpis
-    sim_res.financial_table_df = pd.DataFrame(fin_rows)
+    sim_res.financial_table_df = build_financial_summary_table_df(
+        cfg=cfg,
+        solar_deriv=solar_deriv,
+        kpis=kpis,
+        fin_kpis=fin_kpis,
+        simple_payback_years=simple_payback_years,
+        solar_iso_payback=solar_iso_payback,
+        bat_iso_payback=bat_iso_payback,
+        gen_iso_payback=gen_iso_payback,
+    )
     sim_res.monthly_cost_df = pd.DataFrame(monthly_cost_rows)
     sim_res.cashflow_15y_df = pd.DataFrame(cashflow_rows)
     sim_res.dso_monthly_df = pd.DataFrame(dso_monthly_rows)

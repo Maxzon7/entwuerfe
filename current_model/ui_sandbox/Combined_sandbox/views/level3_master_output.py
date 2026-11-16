@@ -76,9 +76,27 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
             live_min_soc = float(np.min(valid_soc))
 
     if has_active_system and not has_unmet:
+        gen_hrs = float(getattr(kpis, "generator_runtime_hours", 0.0)) if kpis is not None else 0.0
+        gen_fuel = float(getattr(kpis, "generator_fuel_total", 0.0)) if kpis is not None else 0.0
+        gen_unit = str(getattr(kpis, "generator_fuel_unit", "L")) if kpis is not None else "L"
+        if (
+            cfg is not None
+            and cfg.enable_battery
+            and cfg.enable_generator
+            and gen_hrs > 0.0
+            and live_min_soc is not None
+            and live_min_soc <= float(cfg.min_soc_pct) + 1.0
+        ):
+            success_body = (
+                "Your combined system covers all demand peaks above the Grid Limit. "
+                f"Battery reached SoC Min ({cfg.min_soc_pct:.0f}%) during multi-peak clusters and the "
+                f"Generator stepped in as backup for **{gen_hrs:,.1f} hrs/yr** ({gen_fuel:,.0f} {gen_unit})."
+            )
+        else:
+            success_body = "Your system covers all demand peaks above the Grid Limit."
         st.success(
             "**:material/check_circle: Grid Limit Met (Zero Overload)**\n\n"
-            "Your system covers all demand peaks above the Grid Limit."
+            f"{success_body}"
         )
         if (
             cfg is not None

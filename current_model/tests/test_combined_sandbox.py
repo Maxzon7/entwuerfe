@@ -1304,6 +1304,130 @@ class TestCombinedSandbox(unittest.TestCase):
         missing_fk_fields = sorted(referenced_fk_fields - valid_fk_fields)
         self.assertEqual(missing_fk_fields, [], f"Unknown CombinedFinancialKPIs fields referenced in app.py: {missing_fk_fields}")
 
+    def test_edemsa_single_utility_ars_and_currsit_reconciliation(self):
+        """Verifies EDEMSA Single-Utility ARS bypass of Energy Supplier/Metering and 1:1 Currentsituation reconciliation."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            apply_utility_tariff_presets,
+            sync_financial_config_from_status_quo,
+        )
+        from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import (
+            synthesize_edemsa_salentein_load_profile_2025,
+        )
+        from current_model.ui_sandbox.Currentsituation_sandbox.engine.tariff_defaults_2025 import (
+            get_edemsa_salentein_config_2025,
+        )
+        from current_model.ui_sandbox.Currentsituation_sandbox.engine.status_quo_master import (
+            calculate_status_quo_master_2025,
+        )
+
+        load_sal = synthesize_edemsa_salentein_load_profile_2025()
+        sys_cfg = CombinedSystemConfig(
+            grid_limit_kw=430.0,
+            enable_solar=False,
+            enable_battery=False,
+            enable_generator=False,
+            enable_financials=True,
+        )
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=load_sal.power_kw,
+            timestamps=load_sal.timestamps,
+            system_cfg=sys_cfg,
+            rules_cfg=InteractionRulesConfig(),
+        )
+
+        fin_edemsa = CombinedFinancialConfig()
+        apply_utility_tariff_presets(
+            dso_choice="EDEMSA Mendoza (Single-Utility)",
+            tier_choice="T2 RMT (Bodegas Salentein 430 kW)",
+            supp_choice="Vattenfall Business",
+            supp_plan="Fixed 1-Year (Dual TOU HT/NT)",
+            meter_choice="Fudura B.V.",
+            meter_tier="15-Min Interval Telemetry MV (Large Consumer)",
+            fin_cfg=fin_edemsa,
+        )
+        self.assertEqual(fin_edemsa.currency_code, "ARS")
+        self.assertEqual(fin_edemsa.market_mode, "single_utility")
+        self.assertFalse(fin_edemsa.enable_pillar_1_supplier)
+        self.assertTrue(fin_edemsa.enable_pillar_2_dso)
+        self.assertFalse(fin_edemsa.enable_pillar_3_metering)
+        self.assertTrue(fin_edemsa.enable_pillar_4_taxes)
+        self.assertTrue(fin_edemsa.dso_enable_three_window_tou)
+        self.assertTrue(fin_edemsa.dso_bill_peak_on_pico_only)
+        self.assertFalse(fin_edemsa.vat_applies_to_levies)
+
+        evaluate_combined_financials(sim_res, fin_edemsa)
+        fk = sim_res.financial_kpis
+        self.assertEqual(fk.baseline_pillar1_supply_eur, 0.0)
+        self.assertEqual(fk.combined_pillar1_supply_eur, 0.0)
+        self.assertEqual(fk.baseline_pillar3_metering_eur, 0.0)
+        self.assertGreater(fk.baseline_dso_vol_peak_eur, 0.0)
+        self.assertGreater(fk.baseline_dso_vol_offpeak_eur, 0.0)
+        self.assertGreater(fk.baseline_dso_vol_shoulder_eur, 0.0)
+        self.assertAlmostEqual(fk.baseline_dso_regulatory_adj_eur, 12.0 * 7848661.60, delta=10.0)
+
+        sq_cfg = get_edemsa_salentein_config_2025(contracted_capacity_kw=430.0)
+        sq_res = calculate_status_quo_master_2025(load=load_sal, config=sq_cfg)
+        self.assertAlmostEqual(fk.baseline_pillar2_dso_eur, sq_res.total_dso_net, delta=50.0)
+        self.assertAlmostEqual(fk.baseline_pillar4_taxes_eur, sq_res.total_levies_net, delta=50.0)
+        self.assertAlmostEqual(fk.baseline_total_opex_eur, sq_res.total_status_quo_net, delta=50.0)
+        self.assertAlmostEqual(fk.baseline_vat_eur, sq_res.total_vat_amount, delta=50.0)
+        self.assertAlmostEqual(fk.baseline_total_gross_eur, sq_res.total_status_quo_gross, delta=50.0)
+
+        # Also test direct StatusQuoConfig2025 -> CombinedFinancialConfig sync helper
+        fin_synced = sync_financial_config_from_status_quo(sq_cfg, CombinedFinancialConfig())
+        evaluate_combined_financials(sim_res, fin_synced)
+        self.assertEqual(sim_res.financial_kpis.baseline_pillar1_supply_eur, 0.0)
+        self.assertAlmostEqual(sim_res.financial_kpis.baseline_total_gross_eur, sq_res.total_status_quo_gross, delta=50.0)
+
+        ui_src = self._read_combined_ui_source()
+        self.assertIn("Sync Contract from Current Situation", ui_src)
+        self.assertIn("Single Utility Company (1 Combined Bill", ui_src)
+
+    def test_bess_generator_switch_and_handoff_zero_overload(self):
+        """Verifies Without-Generator default for BESS dual-sizing, With-Generator switch, and clean Battery->Generator handoff."""
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=140.0,
+            enable_solar=True,
+            solar_sizing_method="target_share_pct",
+            target_consumption_share_pct=60.0,
+            enable_battery=True,
+            battery_capacity_kwh=80.0,
+            battery_power_kw=150.0,
+            enable_generator=True,
+            generator_rated_kw=250.0,
+        )
+        rules = InteractionRulesConfig(
+            rule1_peak_priority="battery_first",
+            rule2_battery_strategy="peak_shaving_only",
+            rule3_charging_sources="solar_and_grid",
+        )
+
+        # 1. Default (include_generator_in_coupled=False): Battery sizing ignores Generator
+        dual_no_gen = compute_dual_battery_sizing(self.load_kw, cfg, rules)
+        self.assertGreater(dual_no_gen.coupled_100_kw, 0.0)
+        self.assertGreater(dual_no_gen.coupled_100_kwh, 0.0)
+
+        # 2. Switch ON (include_generator_in_coupled=True): 250 kW Generator absorbs overload
+        dual_with_gen = compute_dual_battery_sizing(
+            self.load_kw, cfg, rules, include_generator_in_coupled=True
+        )
+        self.assertEqual(dual_with_gen.coupled_100_kw, 0.0)
+        self.assertEqual(dual_with_gen.coupled_100_kwh, 0.0)
+
+        # 3. Partial Battery + Backup Generator handoff leaves exact 0.0 hrs remaining overload
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg, rules)
+        self.assertTrue(sim_res.kpis.grid_limit_met)
+        self.assertEqual(sim_res.kpis.remaining_overload_hours, 0.0)
+        self.assertEqual(sim_res.kpis.remaining_overload_kwh, 0.0)
+        self.assertGreater(sim_res.kpis.generator_runtime_hours, 0.0)
+
+        # 4. UI switch controls present in Sub-Tab 3
+        ui_src = self._read_combined_ui_source()
+        self.assertIn("Without Generator (Default)", ui_src)
+        self.assertIn("With Generator Backup", ui_src)
+        self.assertIn("Include Generator Backup in Limit Check", ui_src)
+
 
 if __name__ == "__main__":
     unittest.main()

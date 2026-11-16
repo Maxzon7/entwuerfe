@@ -168,7 +168,7 @@ class CombinedSystemConfig:
 class InteractionRulesConfig:
     """Operating rules governing the 15-minute interaction between Grid, Solar, Battery, and Generator."""
     rule1_peak_priority: str = "battery_first"                # "battery_first" | "generator_first"
-    rule2_battery_strategy: str = "self_consumption_reserve"  # "peak_shaving_only" | "self_consumption_reserve"
+    rule2_battery_strategy: str = "peak_shaving_only"         # "peak_shaving_only" | "self_consumption_reserve"
     peak_reserve_soc_pct: float = 30.0                        # Reserved SoC (%) for peaks when rule2 == "self_consumption_reserve"
     rule3_charging_sources: str = "solar_and_grid"            # "solar_only" | "solar_and_grid" | "solar_and_generator" | "all_sources"
 
@@ -184,6 +184,14 @@ class CombinedFinancialConfig:
       - Pillar 4: Taxes & Levies
     Also supports legacy flat tariff fields for backward compatibility.
     """
+    # Market Structure, Currency & Pillar Toggles (Aligned with Currentsituation_sandbox)
+    currency_code: str = "EUR"                       # "EUR", "ARS", "USD"
+    market_mode: str = "unbundled_4_pillar"          # "unbundled_4_pillar" | "single_utility" | "custom"
+    enable_pillar_1_supplier: bool = True
+    enable_pillar_2_dso: bool = True
+    enable_pillar_3_metering: bool = True
+    enable_pillar_4_taxes: bool = True
+
     # Pillar 1: Energy Supply (Supplier)
     supplier_energy_price_eur_kwh: float = 0.15
     supplier_fixed_fee_eur_month: float = 50.0
@@ -192,14 +200,21 @@ class CombinedFinancialConfig:
     supplier_offpeak_nt_eur_kwh: float = 0.118       # Off-Peak / Low Tariff (Nights & Weekends)
     supplier_gvo_surcharge_eur_kwh: float = 0.0      # Green Certificate & Procurement Surcharge (€/kWh)
 
-    # Pillar 2: Grid Network (DSO)
+    # Pillar 2: Grid Network (DSO / Single-Utility Bundled Network)
     dso_capacity_fee_eur_kw_month: float = 2.50
     dso_peak_demand_fee_eur_kw_month: float = 6.00
-    dso_connection_fee_eur_month: float = 0.0        # Fixed Connection Fee (€/month)
-    dso_fixed_fee_eur_month: float = 100.0           # Fixed Transport Fee (€/month)
+    dso_connection_fee_eur_month: float = 0.0        # Fixed Connection Fee (/month)
+    dso_fixed_fee_eur_month: float = 100.0           # Fixed Transport Fee (/month)
     dso_transport_eur_kwh: float = 0.025
+    dso_enable_three_window_tou: bool = False        # True = 3-Window TOU (Pico / Valle / Resto)
+    dso_transport_peak_eur_kwh: Optional[float] = None
+    dso_transport_offpeak_eur_kwh: Optional[float] = None
+    dso_transport_shoulder_eur_kwh: float = 0.0
     grid_overload_penalty_eur_kw: float = 15.00
+    dso_enable_excess_capacity_penalty: bool = True
     dso_adjust_capacity_on_breach: bool = False      # Bill contracted capacity on max(limit, monthly peak) in breach months
+    dso_bill_peak_on_pico_only: bool = False         # EDEMSA T2 Rule: Bill Pos 2.3 Peak Demand on Peak/Pico 18-23h window only
+    dso_regulatory_adjustments_eur_month: float = 0.0  # Monthly regulatory/seasonal pass-through adjustments
     strict_grid_congestion_mode: bool = False        # Strict Grid Congestion Lock (No Grid Upgrade or Contract Breach Allowed)
 
     # Avoided Grid Upgrade CAPEX & Avoided Transformer Rent OPEX
@@ -212,8 +227,9 @@ class CombinedFinancialConfig:
     # Pillar 4: Taxes & Levies
     energy_tax_eur_kwh: float = 0.05
     tax_surcharge_pct: float = 0.0
-    annual_tax_reduction_credit_eur: float = 0.0     # Annual Energy Tax Credit (€/year)
+    annual_tax_reduction_credit_eur: float = 0.0     # Annual Energy Tax Credit (/year)
     vat_rate_pct: float = 21.0                       # Value Added Tax (VAT %)
+    vat_applies_to_levies: bool = True               # True = VAT on P1..P4 (NL); False = VAT on Electric Concepts P1..P3 only (AR)
 
     # Legacy / Aggregate Tariff Aliases (if set explicitly by tests, used as overrides)
     grid_energy_price_eur_kwh: Optional[float] = None
@@ -399,6 +415,27 @@ class CombinedFinancialKPIs:
     generator_net_value_y1_eur: float = 0.0
     generator_isolated_payback_years: Optional[float] = None
     generator_cost_per_kwh: float = 0.0
+
+    # Active Currency & Detailed DSO Window / Regulatory Sub-Ledger Attribution
+    currency_code: str = "EUR"
+    baseline_dso_vol_peak_eur: float = 0.0
+    combined_dso_vol_peak_eur: float = 0.0
+    baseline_dso_vol_offpeak_eur: float = 0.0
+    combined_dso_vol_offpeak_eur: float = 0.0
+    baseline_dso_vol_shoulder_eur: float = 0.0
+    combined_dso_vol_shoulder_eur: float = 0.0
+    baseline_dso_peak_tou_kwh: float = 0.0
+    combined_dso_peak_tou_kwh: float = 0.0
+    baseline_dso_offpeak_tou_kwh: float = 0.0
+    combined_dso_offpeak_tou_kwh: float = 0.0
+    baseline_dso_shoulder_tou_kwh: float = 0.0
+    combined_dso_shoulder_tou_kwh: float = 0.0
+    baseline_dso_regulatory_adj_eur: float = 0.0
+    combined_dso_regulatory_adj_eur: float = 0.0
+    baseline_dso_billed_peak_avg_kw: float = 0.0
+    combined_dso_billed_peak_avg_kw: float = 0.0
+    baseline_dso_billed_cap_avg_kw: float = 0.0
+    combined_dso_billed_cap_avg_kw: float = 0.0
 
 
 @dataclass

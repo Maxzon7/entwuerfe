@@ -23,9 +23,14 @@ from .state_and_helpers import (
     _activate_module_callback,
 )
 from .subtab5_mix_and_rules import render_supply_mix_and_utilization_overview
-from .subtab6_financials_bill_and_hardware import (
+from .subtab6_isolated_pillars import (
+    _get_curr_code,
+    _fmt_curr,
     _render_master_cost_equation_bar,
     _render_sub_ledger_html,
+)
+from .subtab6_financials_bill_and_hardware import (
+    _apply_pending_fin_widget_sync,
     _render_subtab6_1_grid_tariffs,
 )
 
@@ -556,6 +561,8 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
 
     st.markdown("##### :material/account_balance: Financial Summary")
 
+    curr = _get_curr_code(sim_res)
+
     # Single Clear 4-Card Headline Overview
     fk1, fk2, fk3, fk4 = st.columns(4)
     pb_str = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
@@ -563,21 +570,21 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
     irr_str = f"{fin_kpis.irr_15y_pct:.1f}%" if fin_kpis.irr_15y_pct is not None else "N/A"
     with fk1:
         capex_subtext = (
-            f"Gross: €{fin_kpis.gross_capex_eur:,.0f} | Avoided: -€{fin_kpis.avoided_grid_upgrade_capex_eur:,.0f}"
+            f"Gross: {_fmt_curr(fin_kpis.gross_capex_eur, curr)} | Avoided: -{_fmt_curr(fin_kpis.avoided_grid_upgrade_capex_eur, curr)}"
             if fin_kpis.avoided_grid_upgrade_capex_eur > 0
-            else f"Solar: €{fin_kpis.solar_capex_eur:,.0f} | Battery: €{fin_kpis.battery_capex_eur:,.0f} | Gen: €{fin_kpis.generator_capex_eur:,.0f}"
+            else f"Solar: {_fmt_curr(fin_kpis.solar_capex_eur, curr)} | Battery: {_fmt_curr(fin_kpis.battery_capex_eur, curr)} | Gen: {_fmt_curr(fin_kpis.generator_capex_eur, curr)}"
         )
         render_kpi_card(
             title="Total Investment",
-            value=f"€{fin_kpis.total_capex_eur:,.0f}",
+            value=_fmt_curr(fin_kpis.total_capex_eur, curr),
             subtext=capex_subtext,
             status="default",
         )
     with fk2:
         render_kpi_card(
             title="Annual Savings (Year 1)",
-            value=f"€{fin_kpis.annual_savings_eur:+,.0f} / yr",
-            subtext=f"New annual cost: €{fin_kpis.total_annual_opex_eur:,.0f} vs. €{fin_kpis.baseline_total_opex_eur:,.0f} current",
+            value=f"{_fmt_curr(fin_kpis.annual_savings_eur, curr, signed=True)} / yr",
+            subtext=f"New annual cost: {_fmt_curr(fin_kpis.total_annual_opex_eur, curr)} vs. {_fmt_curr(fin_kpis.baseline_total_opex_eur, curr)} current",
             status="ok" if fin_kpis.annual_savings_eur > 0 else "alert",
         )
     with fk3:
@@ -590,8 +597,8 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
     with fk4:
         render_kpi_card(
             title="15-Year Net Profit",
-            value=f"€{fin_kpis.tco_15y_savings_eur:+,.0f}",
-            subtext=f"15Y total cost: €{fin_kpis.tco_15y_combined_eur:,.0f} vs. €{fin_kpis.tco_15y_baseline_eur:,.0f} current",
+            value=_fmt_curr(fin_kpis.tco_15y_savings_eur, curr, signed=True),
+            subtext=f"15Y total cost: {_fmt_curr(fin_kpis.tco_15y_combined_eur, curr)} vs. {_fmt_curr(fin_kpis.tco_15y_baseline_eur, curr)} current",
             status="ok" if fin_kpis.tco_15y_savings_eur > 0 else "alert",
         )
 
@@ -605,20 +612,20 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
             st.error(
                 f":material/gpp_bad: **Strict Grid Congestion Lock Active — Violation:** "
                 f"Grid peak reaches {sim_res.kpis.new_grid_peak_kw:,.1f} kW (+{fin_kpis.grid_congestion_breach_kw:,.1f} kW over limit). "
-                f"Avoided grid upgrade CAPEX is locked at €0; adjust Battery, Generator, or Load Mix in Tab 5."
+                f"Avoided grid upgrade CAPEX is locked at {_fmt_curr(0, curr)}; adjust Battery, Generator, or Load Mix in Tab 5."
             )
 
     # Complete Component & Cost Summary Matrix
     with st.container(border=True):
         st.markdown("##### :material/summarize: System Cost Summary")
         comp_rows = [
-            {"cells": ["1. Electricity Supply (Retailer)", "&euro;0", f"&euro;{fin_kpis.baseline_pillar1_supply_eur:,.0f}", f"&euro;{fin_kpis.combined_pillar1_supply_eur:,.0f}", f"&euro;{fin_kpis.baseline_pillar1_supply_eur - fin_kpis.combined_pillar1_supply_eur:+,.0f}"], "highlight": "#22C55E" if fin_kpis.baseline_pillar1_supply_eur > fin_kpis.combined_pillar1_supply_eur else None},
-            {"cells": ["2. Grid Network (DSO &amp; Peaks)", f"-&euro;{fin_kpis.avoided_grid_upgrade_capex_eur:,.0f}" if fin_kpis.avoided_grid_upgrade_capex_eur > 0 else "&euro;0", f"&euro;{fin_kpis.baseline_pillar2_dso_eur:,.0f}", f"&euro;{fin_kpis.combined_pillar2_dso_eur:,.0f}", f"&euro;{fin_kpis.baseline_pillar2_dso_eur - fin_kpis.combined_pillar2_dso_eur:+,.0f}"], "highlight": "#22C55E" if fin_kpis.baseline_pillar2_dso_eur > fin_kpis.combined_pillar2_dso_eur else None},
-            {"cells": ["3. Metering &amp; Statutory Taxes", "&euro;0", f"&euro;{fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur:,.0f}", f"&euro;{fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur:,.0f}", f"&euro;{(fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur) - (fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur):+,.0f}"], "highlight": "#22C55E" if fin_kpis.baseline_pillar4_taxes_eur > fin_kpis.combined_pillar4_taxes_eur else None},
-            {"cells": ["4. Solar PV System (O&amp;M)", f"&euro;{fin_kpis.solar_capex_eur:,.0f}", "&euro;0", f"&euro;{fin_kpis.solar_om_eur:,.0f}", f"-&euro;{fin_kpis.solar_om_eur:,.0f}" if fin_kpis.solar_om_eur > 0 else "&euro;0"], "highlight": "#EF4444" if fin_kpis.solar_om_eur > 0 else None},
-            {"cells": ["5. Battery Storage BESS (O&amp;M)", f"&euro;{fin_kpis.battery_capex_eur:,.0f}", "&euro;0", f"&euro;{fin_kpis.battery_om_eur:,.0f}", f"-&euro;{fin_kpis.battery_om_eur:,.0f}" if fin_kpis.battery_om_eur > 0 else "&euro;0"], "highlight": "#EF4444" if fin_kpis.battery_om_eur > 0 else None},
-            {"cells": ["6. Peaking Generator (Fuel &amp; Service)", f"&euro;{fin_kpis.generator_capex_eur:,.0f}", "&euro;0", f"&euro;{fin_kpis.generator_total_opex_eur:,.0f}", f"-&euro;{fin_kpis.generator_total_opex_eur:,.0f}" if fin_kpis.generator_total_opex_eur > 0 else "&euro;0"], "highlight": "#EF4444" if fin_kpis.generator_total_opex_eur > 0 else None},
-            {"cells": ["7. Solar Export Feed-in Revenue", "&euro;0", "&euro;0", f"-&euro;{fin_kpis.solar_export_revenue_eur:,.0f}" if fin_kpis.solar_export_revenue_eur > 0 else "&euro;0", f"+&euro;{fin_kpis.solar_export_revenue_eur:,.0f}" if fin_kpis.solar_export_revenue_eur > 0 else "&euro;0"], "highlight": "#22C55E" if fin_kpis.solar_export_revenue_eur > 0 else None},
+            {"cells": ["1. Electricity Supply (Retailer)", _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar1_supply_eur, curr, html=True), _fmt_curr(fin_kpis.combined_pillar1_supply_eur, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar1_supply_eur - fin_kpis.combined_pillar1_supply_eur, curr, signed=True, html=True)], "highlight": "#22C55E" if fin_kpis.baseline_pillar1_supply_eur > fin_kpis.combined_pillar1_supply_eur else None},
+            {"cells": ["2. Grid Network (DSO &amp; Peaks)", f"-{_fmt_curr(fin_kpis.avoided_grid_upgrade_capex_eur, curr, html=True)}" if fin_kpis.avoided_grid_upgrade_capex_eur > 0 else _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar2_dso_eur, curr, html=True), _fmt_curr(fin_kpis.combined_pillar2_dso_eur, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar2_dso_eur - fin_kpis.combined_pillar2_dso_eur, curr, signed=True, html=True)], "highlight": "#22C55E" if fin_kpis.baseline_pillar2_dso_eur > fin_kpis.combined_pillar2_dso_eur else None},
+            {"cells": ["3. Metering &amp; Statutory Taxes", _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur, curr, html=True), _fmt_curr(fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur, curr, html=True), _fmt_curr((fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur) - (fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur), curr, signed=True, html=True)], "highlight": "#22C55E" if fin_kpis.baseline_pillar4_taxes_eur > fin_kpis.combined_pillar4_taxes_eur else None},
+            {"cells": ["4. Solar PV System (O&amp;M)", _fmt_curr(fin_kpis.solar_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.solar_om_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.solar_om_eur, curr, html=True)}" if fin_kpis.solar_om_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.solar_om_eur > 0 else None},
+            {"cells": ["5. Battery Storage BESS (O&amp;M)", _fmt_curr(fin_kpis.battery_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.battery_om_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.battery_om_eur, curr, html=True)}" if fin_kpis.battery_om_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.battery_om_eur > 0 else None},
+            {"cells": ["6. Peaking Generator (Fuel &amp; Service)", _fmt_curr(fin_kpis.generator_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.generator_total_opex_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.generator_total_opex_eur, curr, html=True)}" if fin_kpis.generator_total_opex_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.generator_total_opex_eur > 0 else None},
+            {"cells": ["7. Solar Export Feed-in Revenue", _fmt_curr(0, curr, html=True), _fmt_curr(0, curr, html=True), f"-{_fmt_curr(fin_kpis.solar_export_revenue_eur, curr, html=True)}" if fin_kpis.solar_export_revenue_eur > 0 else _fmt_curr(0, curr, html=True), f"+{_fmt_curr(fin_kpis.solar_export_revenue_eur, curr, html=True)}" if fin_kpis.solar_export_revenue_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#22C55E" if fin_kpis.solar_export_revenue_eur > 0 else None},
         ]
         st.markdown(
             _render_sub_ledger_html(
@@ -627,13 +634,14 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
                 rows=comp_rows,
                 footer_cells=[
                     "= TOTAL COMBINED SYSTEM (NET)",
-                    f"&euro;{fin_kpis.total_capex_eur:,.0f}",
-                    f"&euro;{fin_kpis.baseline_total_opex_eur:,.0f}/yr",
-                    f"&euro;{fin_kpis.total_annual_opex_eur:,.0f}/yr",
-                    f"&euro;{fin_kpis.annual_savings_eur:+,.0f}/yr",
+                    _fmt_curr(fin_kpis.total_capex_eur, curr, html=True),
+                    f"{_fmt_curr(fin_kpis.baseline_total_opex_eur, curr, html=True)}/yr",
+                    f"{_fmt_curr(fin_kpis.total_annual_opex_eur, curr, html=True)}/yr",
+                    f"{_fmt_curr(fin_kpis.annual_savings_eur, curr, signed=True, html=True)}/yr",
                 ],
                 accent_color="#10B981",
                 is_enabled=True,
+                currency_code=curr,
             ),
             unsafe_allow_html=True,
         )
@@ -768,6 +776,8 @@ def render_subtab6_financials(sim_res) -> None:
     _needs_fin_eval = (
         sim_res.financial_kpis is None
         or not hasattr(sim_res.financial_kpis, "dso_savings_eur")
+        or not hasattr(sim_res.financial_kpis, "baseline_dso_vol_shoulder_eur")
+        or getattr(sim_res.financial_kpis, "currency_code", None) != getattr(cur_fin, "currency_code", None)
         or getattr(sim_res, "dso_monthly_df", None) is None
         or sim_res.dso_monthly_df.empty
     )

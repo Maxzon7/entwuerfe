@@ -469,11 +469,16 @@ def compute_dual_battery_sizing(
     rules_cfg: InteractionRulesConfig,
     step_hours: float = 0.25,
     is_gap: Optional[np.ndarray] = None,
+    include_generator_in_coupled: bool = False,
 ) -> DualBatterySizingResult:
     """
     Computes both Mode A (Standalone: Battery only) and Mode B (Coupled: With active Solar,
-    active Generator, and Interaction Rules) battery sizing along with the 4-Criterion
-    Bottleneck Diagnostic Table.
+    Interaction Rules, and optionally active Generator) battery sizing along with the
+    4-Criterion Bottleneck Diagnostic Table.
+
+    By default (`include_generator_in_coupled=False`), Mode B evaluates what the Battery needs
+    without Generator backup covering deficits, so adding a BESS or prioritizing Battery first
+    remains transparent.
     """
     p_load = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
     n_steps = len(p_load)
@@ -546,9 +551,14 @@ def compute_dual_battery_sizing(
     p_after_solar = np.maximum(0.0, p_load - p_direct)
     p_surplus = np.maximum(0.0, p_solar - p_direct)
 
-    # Account for active Generator if enabled (100% vectorized O(N) NumPy)
+    # Account for active Generator only when explicitly requested (include_generator_in_coupled=True)
     gen_Excess_chg = np.zeros(n_steps, dtype=float)
-    if system_cfg.enable_generator and system_cfg.generator_rated_kw > 0.0:
+    use_gen_in_coupled = bool(
+        include_generator_in_coupled
+        and system_cfg.enable_generator
+        and system_cfg.generator_rated_kw > 0.0
+    )
+    if use_gen_in_coupled:
         g_rated = float(system_cfg.generator_rated_kw)
         g_min = g_rated * (float(system_cfg.generator_min_load_pct) / 100.0)
         over_arr = np.maximum(0.0, p_after_solar - grid_limit)
@@ -619,12 +629,17 @@ def compute_dual_battery_sizing(
             else np.zeros(n_steps, dtype=bool)
         )
         from .dispatch_simulation import _calibrate_coupled_bess_capacity_kwh
+        calib_cfg = (
+            system_cfg
+            if use_gen_in_coupled
+            else replace(system_cfg, enable_generator=False, generator_rated_kw=0.0)
+        )
         cal_kwh, feasible = _calibrate_coupled_bess_capacity_kwh(
             p_load=p_load,
             p_solar=p_solar,
             grid_limit_kw=grid_limit,
             bess_p_max_kw=cp_100_kw,
-            system_cfg=system_cfg,
+            system_cfg=calib_cfg,
             rules_cfg=rules_cfg,
             hi_hint_kwh=max(100.0, sa_100_kwh * 2.0, cp_100_kwh * 1.25),
             step_hours=dt,
@@ -699,9 +714,9 @@ def compute_dual_battery_sizing(
 
 def compute_dual_generator_sizing(
     load_kw: np.ndarray,
-    timestamps: pd.DatetimeIndex,
-    system_cfg: CombinedSystemConfig,
-    rules_cfg: InteractionRulesConfig,
+    timestamps: Optional[pd.DatetimeIndex] = None,
+    system_cfg: Optional[CombinedSystemConfig] = None,
+    rules_cfg: Optional[InteractionRulesConfig] = None,
     step_hours: float = 0.25,
     is_gap: Optional[np.ndarray] = None,
 ) -> DualGeneratorSizingResult:
@@ -712,6 +727,13 @@ def compute_dual_generator_sizing(
         that remains after Solar and Battery dispatch.
     """
     p_load = np.maximum(0.0, np.nan_to_num(np.asarray(load_kw, dtype=float), nan=0.0))
+    if timestamps is None:
+        freq_str = f"{max(1, int(round(float(step_hours) * 60.0)))}min"
+        timestamps = pd.date_range("2025-01-01 00:00:00", periods=len(p_load), freq=freq_str)
+    if system_cfg is None:
+        system_cfg = CombinedSystemConfig()
+    if rules_cfg is None:
+        rules_cfg = InteractionRulesConfig()
     grid_limit = float(system_cfg.grid_limit_kw) if system_cfg.enable_grid else 0.0
     raw_over_kw, _ = compute_overload_reference(p_load, grid_limit, step_hours)
     sa_100 = round(math.ceil(raw_over_kw * 10.0) / 10.0, 1) if raw_over_kw > 0.05 else 0.0
@@ -734,32 +756,7 @@ def compute_dual_generator_sizing(
     sa_tank = round(max(100.0, sa_event_fuel + sa_reserve_48h), 0) if sa_100 > 0 else 0.0
 
     # Simulate with Generator disabled to measure exact residual peak left after active Solar & Battery
-    cfg_no_gen = CombinedSystemConfig(
-        enable_grid=system_cfg.enable_grid,
-        grid_limit_kw=system_cfg.grid_limit_kw,
-        enable_solar=system_cfg.enable_solar,
-        site_preset=system_cfg.site_preset,
-        latitude=system_cfg.latitude,
-        longitude=system_cfg.longitude,
-        elevation_m=system_cfg.elevation_m,
-        tilt_deg=system_cfg.tilt_deg,
-        azimuth_deg=system_cfg.azimuth_deg,
-        solar_sizing_method=system_cfg.solar_sizing_method,
-        solar_kwp=system_cfg.solar_kwp,
-        panel_wp=system_cfg.panel_wp,
-        dc_ac_ratio=system_cfg.dc_ac_ratio,
-        target_consumption_share_pct=system_cfg.target_consumption_share_pct,
-        inverter_ac_limit_kw=system_cfg.inverter_ac_limit_kw,
-        inverter_efficiency_pct=system_cfg.inverter_efficiency_pct,
-        enable_battery=system_cfg.enable_battery,
-        battery_capacity_kwh=system_cfg.battery_capacity_kwh,
-        battery_power_kw=system_cfg.battery_power_kw,
-        min_soc_pct=system_cfg.min_soc_pct,
-        max_soc_pct=system_cfg.max_soc_pct,
-        round_trip_efficiency_pct=system_cfg.round_trip_efficiency_pct,
-        enable_generator=False,
-        generator_rated_kw=0.0,
-    )
+    cfg_no_gen = replace(system_cfg, enable_generator=False, generator_rated_kw=0.0)
     from .dispatch_simulation import simulate_combined_system_dispatch
     res_no_gen = simulate_combined_system_dispatch(
         load_kw=p_load,

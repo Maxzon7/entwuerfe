@@ -498,8 +498,18 @@ def _execute_coupled_dispatch_arrays(
     net_load_served_by_grid = np.maximum(
         0.0, rem_load_after_solar_kw - bess_discharge_kw - gen_to_load_kw
     )
-    grid_import_kw = np.where(gaps, 0.0, net_load_served_by_grid + bess_charge_grid_kw)
-    unmet_overload_kw = np.where(gaps, 0.0, np.maximum(0.0, grid_import_kw - grid_limit_kw))
+    raw_grid_import_kw = net_load_served_by_grid + bess_charge_grid_kw
+    grid_import_kw = np.where(
+        gaps,
+        0.0,
+        np.where(
+            (raw_grid_import_kw > grid_limit_kw) & (raw_grid_import_kw <= grid_limit_kw + 1e-4),
+            grid_limit_kw,
+            raw_grid_import_kw,
+        ),
+    )
+    raw_unmet_kw = np.maximum(0.0, grid_import_kw - grid_limit_kw)
+    unmet_overload_kw = np.where(gaps | (raw_unmet_kw <= 1e-4), 0.0, raw_unmet_kw)
 
     return {
         "solar_export_kw": solar_export_kw,

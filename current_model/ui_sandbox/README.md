@@ -76,8 +76,9 @@ current_model/ui_sandbox/
     │   ├── solar_and_sizing.py                 # PVGIS/hourly solar model, cluster deficit kernel & dual/BESS/gen sizing
     │   ├── dispatch_simulation.py              # 35,040-step 4-source coupled dispatch kernel & hourly dataframe builder
     │   ├── utilization_and_tables.py           # Coordinated Mix Workbench optimizer, utilization diagnostics & summary tables
-    │   ├── tariff_presets.py                   # Classic 4-pillar Netherlands energy bill calculator & congestion lock checks
-    │   └── financial_engine.py                 # 15-year cashflow, NPV/IRR/TCO, isolated component economics & KPIs
+    │   ├── tariff_presets.py                   # Official NL & EDEMSA Single-Utility presets, Currentsituation sync & summary builder
+    │   ├── cashflow_lifecycle.py               # TOU/component monthly aggregator & 15-year escalated cashflow/NPV/IRR engine
+    │   └── financial_engine.py                 # 4-Pillar & Single-Utility bill calculator, congestion lock & component economics
     ├── combined_charts.py                      # Backward-compatible facade re-exporting all Plotly charts from charts/
     ├── charts/                                 # Plotly interactive chart builders
     │   ├── __init__.py                         # Aggregates and exports all chart builders
@@ -89,13 +90,14 @@ current_model/ui_sandbox/
     │   ├── __init__.py                         # Aggregates view renderers, styles, and state/tuple helpers
     │   ├── state_and_helpers.py                # CSS theme, hot-reload guards, session defaults & simulation tuple helpers
     │   ├── level1_overview_bar.py              # Level 1 compact KPI summary bar
-    │   ├── subtab1_consumption.py              # Sub-tab 1: Load profile selector, upload & peak overview
+    │   ├── subtab1_consumption.py              # Sub-tab 1: Load profile selector, auto tariff sync, upload & peak overview
     │   ├── subtab2_solar.py                    # Sub-tab 2: Solar capacity, array geometry & yield preview
     │   ├── subtab3_battery.py                  # Sub-tab 3: BESS kW/kWh, C-rate & dual-mode sizing
     │   ├── subtab4_generator.py                # Sub-tab 4: Backup generator capacity, fuel & winter cluster sizing
     │   ├── subtab5_mix_and_rules.py            # Sub-tab 5: Coordinated Mix Workbench & dispatch priority rules
-    │   ├── subtab6_financials_bill_and_hardware.py # Sub-tab 6.1-6.2: Grid/DSO 4-pillar bill, congestion lock & hardware costs
-    │   ├── subtab6_financials_overview.py      # Sub-tab 6.3 & orchestrator: Cashflow, NPV/IRR & isolated deep dives
+    │   ├── subtab6_isolated_pillars.py         # Sub-tab 6 shared HTML/currency sub-ledger & Monthly/Pillar @st.fragment views
+    │   ├── subtab6_financials_bill_and_hardware.py # Sub-tab 6.1: Bill structure (4-Part vs Single Utility), Presets, 2/3-Window Tariff editor
+    │   ├── subtab6_financials_overview.py      # Sub-tab 6.2-6.3 & orchestrator: Hardware costs, 15Y Overview & isolated assets
     │   └── level3_master_output.py             # Level 3 permanent master summary, dispatch/mix charts & Excel export
     └── app.py                                  # Lean 3-Level Streamlit entrypoint wiring views/ & 15-min simulation cache
 ```

@@ -93,6 +93,7 @@ from ..combined_sandbox_engine import (
     get_supplier_preset_options,
     get_metering_preset_options,
     apply_utility_tariff_presets,
+    sync_financial_config_from_status_quo,
 )
 from ..combined_charts import (
     create_consumption_baseline_figure,
@@ -152,6 +153,9 @@ def _init_session_defaults() -> None:
         "comb_solar_lon": 4.9041,
         # Dual-Sizing mode selections
         "comb_bess_sizing_mode": "Coupled (With active Solar / Generator & Rules)",
+        "comb_bess_include_gen": False,
+        "comb_bess_include_gen_toggle_b3": False,
+        "comb_bess_include_gen_radio_b1": "Without Generator (Default)",
         "comb_gen_sizing_mode": "Coupled (With active Solar / Battery & Rules)",
         "comb_mix_strategy_key": "hybrid_2h",
     }
@@ -268,6 +272,7 @@ def _sync_shared_load_series() -> None:
         st.session_state.pop("comb_dispatch_fp", None)
         st.session_state.pop("comb_bess_sizing_fp", None)
         st.session_state.pop("comb_cached_dual_bess", None)
+        st.session_state.pop("comb_cached_dual_bess_pair", None)
         st.session_state.pop("comb_gen_sizing_fp", None)
         st.session_state.pop("comb_cached_dual_gen", None)
         st.session_state.pop("comb_cached_excel_bytes", None)
