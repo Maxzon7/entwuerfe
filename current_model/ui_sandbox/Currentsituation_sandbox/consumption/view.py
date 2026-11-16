@@ -63,7 +63,6 @@ def render_tab1_consumption(key_prefix: str = "tab1") -> None:
     app_mode = st.radio(
         "Select Consumption Source:",
         options=options,
-        index=default_idx,
         horizontal=True,
         key=radio_key,
         on_change=_on_mode_change
@@ -88,7 +87,13 @@ def render_tab1_consumption(key_prefix: str = "tab1") -> None:
                         from current_model.ui_sandbox.Currentsituation_sandbox.engine.consumption_pipeline import synthesize_benchmark_load_profile_2025
                     except ImportError:
                         from ui_sandbox.status_quo_2025.consumption_pipeline import synthesize_benchmark_load_profile_2025
-            if "active_load_series_2025" not in st.session_state or st.session_state.get("last_synced_source") != "synthetic":
+            if (
+                not st.session_state.get("comb_allow_empty_baseline", False)
+                and (
+                    "active_load_series_2025" not in st.session_state
+                    or st.session_state.get("last_synced_source") != "synthetic"
+                )
+            ):
                 st.session_state["active_load_series_2025"] = synthesize_benchmark_load_profile_2025(nominal_peak_kw=250.0)
                 st.session_state["last_synced_source"] = "synthetic"
         except Exception:

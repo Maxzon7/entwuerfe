@@ -74,6 +74,7 @@ Clean Screen Policy 2-Tab workbench uniting Grid, Solar, Battery, and Generator 
 ```bash
 python -m streamlit run ui_sandbox/Combined_sandbox/app.py
 ```
+*(1-Click Windows Launch: double-click [`Start_Combined_System.bat`](Start_Combined_System.bat) or the `Start Combined System.lnk` / Desktop `Combined System` icon shortcut.)*
 
 ---
 

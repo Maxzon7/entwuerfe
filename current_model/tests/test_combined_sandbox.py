@@ -1528,6 +1528,42 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertNotIn("Direct Electricity Saved", hw_src)
         self.assertNotIn("Peak Shaving &amp; Penalty Savings", hw_src)
 
+    def test_zero_start_baseline_example_expander_and_no_radio_warning(self):
+        """Verifies zero-load 35,040-step simulation, collapsed Example Profiles (index=None), and clean radio widget."""
+        from current_model.ui_sandbox.Combined_sandbox.views.state_and_helpers import _create_empty_load_series_2025
+
+        empty_ls = _create_empty_load_series_2025()
+        self.assertEqual(len(empty_ls.power_kw), 35040)
+        self.assertEqual(empty_ls.total_energy_kwh, 0.0)
+        self.assertEqual(empty_ls.peak_demand_kw, 0.0)
+
+        cfg = CombinedSystemConfig(enable_grid=True, grid_limit_kw=180.0, enable_financials=True)
+        sim_zero = simulate_combined_system_dispatch(
+            load_kw=empty_ls.power_kw,
+            timestamps=empty_ls.timestamps,
+            system_cfg=cfg,
+            rules_cfg=InteractionRulesConfig(),
+        )
+        self.assertEqual(sim_zero.kpis.annual_consumption_kwh, 0.0)
+        self.assertTrue(sim_zero.kpis.grid_limit_met)
+        evaluate_combined_financials(sim_zero, CombinedFinancialConfig())
+        self.assertIsNotNone(sim_zero.financial_kpis)
+
+        sub1_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "views", "subtab1_consumption.py")
+        )
+        with open(sub1_path, "r", encoding="utf-8") as f:
+            sub1_src = f.read()
+        self.assertIn('st.expander(":material/dataset: Example Profiles", expanded=False)', sub1_src)
+        self.assertIn("index=None,", sub1_src)
+
+        cons_view_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Currentsituation_sandbox", "consumption", "view.py")
+        )
+        with open(cons_view_path, "r", encoding="utf-8") as f:
+            cons_src = f.read()
+        self.assertNotIn("index=default_idx", cons_src)
+
 
 if __name__ == "__main__":
     unittest.main()

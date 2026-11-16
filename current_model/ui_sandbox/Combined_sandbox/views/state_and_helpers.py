@@ -139,6 +139,7 @@ def _init_session_defaults() -> None:
 
     defaults = {
         "tab1_active_source": "csv",
+        "comb_allow_empty_baseline": True,
         "comb_load_source_mode": "CSV Upload",
         "comb_dispatch_timeframe": "7D",
         # Global Overview Switches: All add-on modules start OFF
@@ -162,6 +163,21 @@ def _init_session_defaults() -> None:
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+
+def _create_empty_load_series_2025() -> LoadSeries2025:
+    """Returns a valid 35,040-step all-zero 2025 LoadSeries2025 for a clean zero-start baseline."""
+    ts = pd.date_range("2025-01-01 00:00:00", "2025-12-31 23:45:00", freq="15min")
+    n = len(ts)
+    zeros = np.zeros(n, dtype=float)
+    is_peak = np.asarray((ts.dayofweek < 5) & (ts.hour >= 7) & (ts.hour < 23), dtype=bool)
+    return LoadSeries2025(
+        timestamps=ts,
+        power_kw=zeros,
+        energy_kwh=zeros,
+        month_indices=ts.month.to_numpy(dtype=np.intp),
+        is_peak_tou=is_peak,
+    )
 
 
 def _get_active_load_series() -> Tuple[LoadSeries2025, str]:
@@ -200,11 +216,10 @@ def _get_active_load_series() -> Tuple[LoadSeries2025, str]:
             st.session_state.get("comb_active_load_label", "Active Load Profile"),
         )
 
-    load_bench = synthesize_benchmark_load_profile_2025(nominal_peak_kw=250.0)
-    st.session_state["active_load_series_2025"] = load_bench
-    st.session_state["comb_active_load_series"] = load_bench
-    st.session_state["comb_active_load_label"] = "Commercial Facility (250 kW Peak)"
-    return load_bench, "Commercial Facility (250 kW Peak)"
+    empty_series = _create_empty_load_series_2025()
+    st.session_state["comb_active_load_series"] = empty_series
+    st.session_state["comb_active_load_label"] = "No Profile Loaded (0 kWh)"
+    return empty_series, "No Profile Loaded (0 kWh)"
 
 
 def _load_fingerprint(load_series: LoadSeries2025) -> Tuple[int, float, float]:

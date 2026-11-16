@@ -91,9 +91,14 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
             status="ok" if over_kw <= 0.05 else "alert",
         )
 
-    # Reference Profiles
-    with st.container(border=True):
-        st.markdown("##### :material/dataset: Example Profiles")
+    if ann_kwh <= 0.0:
+        st.info(
+            ":material/info: **No consumption profile loaded yet (starting at 0 kWh).** "
+            "Upload a CSV file, build a custom profile below, or open **Example Profiles** to load a sample."
+        )
+
+    # Reference Profiles (collapsed by default, no pre-selected profile)
+    with st.expander(":material/dataset: Example Profiles", expanded=False):
         with st.form("comb_ref_scenario_form"):
             sc1, sc_btn = st.columns([2.5, 1.2])
             with sc1:
@@ -101,7 +106,8 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
                 sel_sc = st.selectbox(
                     "Select Profile",
                     options=ref_names,
-                    index=0,
+                    index=None,
+                    placeholder="Choose an example profile...",
                     key="comb_ref_scenario_select",
                     help="Loads a ready-made consumption profile and grid limit.",
                 )
@@ -113,7 +119,9 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
                     use_container_width=True,
                 )
 
-        if apply_sc and sel_sc in REFERENCE_SCENARIOS:
+        if apply_sc and sel_sc is None:
+            st.warning("Please select an example profile before clicking **Load Profile**.")
+        elif apply_sc and sel_sc in REFERENCE_SCENARIOS:
             sc_info = REFERENCE_SCENARIOS[sel_sc]
             cur_sys.grid_limit_kw = float(sc_info["grid_limit_kw"])
             st.session_state["comb_grid_limit_num"] = cur_sys.grid_limit_kw
