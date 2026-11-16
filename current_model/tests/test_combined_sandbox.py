@@ -332,7 +332,20 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(len(fig_cost.data), 6)
 
         fig_tco = create_financial_tco_trajectory_figure(sim_res)
-        self.assertEqual(len(fig_tco.data), 3)
+        self.assertEqual(len(fig_tco.data), 4)
+        tco_trace_names = [t.name for t in fig_tco.data]
+        self.assertIn("Cumulative Net Cashflow (EUR)", tco_trace_names)
+        self.assertIn("Annual Net Cashflow (EUR/yr)", tco_trace_names)
+        self.assertIn("Current System Annual Bill (EUR/yr)", tco_trace_names)
+        self.assertIn("Combined System Annual Cost (EUR/yr)", tco_trace_names)
+
+        # Also test No-Break-Even annotation branch (payback_years=None)
+        old_pb = sim_res.financial_kpis.payback_years
+        sim_res.financial_kpis.payback_years = None
+        fig_tco_nopb = create_financial_tco_trajectory_figure(sim_res)
+        self.assertEqual(len(fig_tco_nopb.data), 4)
+        self.assertTrue(any("No Break-Even" in str(a.text) for a in fig_tco_nopb.layout.annotations))
+        sim_res.financial_kpis.payback_years = old_pb
 
         fig_bridge = create_financial_waterfall_bridge_figure(sim_res)
         self.assertGreater(len(fig_bridge.data), 0)

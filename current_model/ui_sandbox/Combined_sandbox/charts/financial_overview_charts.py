@@ -130,86 +130,142 @@ def create_financial_tco_trajectory_figure(
     sim_res: CombinedSimulationResult,
 ) -> go.Figure:
     """
-    Creates the 15-Year Cumulative TCO & Break-Even Trajectory figure,
-    comparing cumulative expenditures of Current situation vs. Combined system,
-    with annual net cashflow bars and break-even point indicator.
+    Creates the synchronized 2-panel 15-Year Amortization & Annual Cashflow figure:
+      - Row 1: Cumulative Net Cashflow (starts at -CAPEX, dips on Repowering, crosses 0 at Break-Even)
+      - Row 2: Annual Current System Bill vs. Combined System Annual OPEX & Annual Net Cashflow bars
     """
     df = sim_res.cashflow_15y_df
     fk = sim_res.financial_kpis
     if df.empty or fk is None:
         return go.Figure()
 
+    curr = str(getattr(fk, "currency_code", "EUR") or "EUR")
+    curr_sym = "€" if curr == "EUR" else (f"{curr} " if curr == "ARS" else "$")
+
     years = df["Year"].tolist()
-    tco_base = df["Cumulative TCO Current situation (€)"].tolist()
-    tco_comb = df["Cumulative TCO Combined system (€)"].tolist()
+    cum_cf = df["Cumulative Cashflow (€)"].tolist()
+    base_bill = df["Current situation Bill (€)"].tolist()
+    comb_opex = df["Combined System OPEX (€)"].tolist()
     net_cf = df["Net Cashflow (€)"].tolist()
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.14,
+        row_heights=[0.52, 0.48],
+        subplot_titles=(
+            f"1. Amortization Trajectory — Cumulative Net Cashflow ({curr})",
+            f"2. Annual Costs vs. Current System & Net Cashflow ({curr}/yr)",
+        ),
+    )
 
-    # Background annual cashflow bars (secondary y-axis)
+    # Row 1: Cumulative Net Cashflow & Break-Even Amortization
+    fig.add_hline(
+        y=0,
+        row=1,
+        col=1,
+        line_color="rgba(248, 250, 252, 0.55)",
+        line_width=1.2,
+        line_dash="dot",
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=cum_cf,
+            mode="lines+markers",
+            name=f"Cumulative Net Cashflow ({curr})",
+            line=dict(color="#38BDF8", width=2.8),
+            fill="tozeroy",
+            fillcolor="rgba(56, 189, 248, 0.14)",
+            hovertemplate=f"Year %{{x}}<br>Cumulative Cashflow: {curr_sym}%{{y:,.0f}}<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    if fk.payback_years is not None and 0.0 < fk.payback_years <= 15.0:
+        fig.add_vline(
+            x=fk.payback_years,
+            row=1,
+            col=1,
+            line_dash="dot",
+            line_color="#22C55E",
+            line_width=1.8,
+            annotation_text=f"Break-Even: {fk.payback_years:.1f} yrs",
+            annotation_position="top left",
+            annotation_font=dict(color="#22C55E", size=11),
+        )
+    elif fk.total_capex_eur > 0.0:
+        fig.add_annotation(
+            x=0.99,
+            y=0.06,
+            xref="x domain",
+            yref="y domain",
+            text="No Break-Even within 15 yrs",
+            showarrow=False,
+            font=dict(color="#F87171", size=11),
+            xanchor="right",
+        )
+
+    # Row 2: Annual Net Cashflow Bars vs. Annual Costs Comparison
     bar_colors = ["#22C55E" if v >= 0 else "#EF4444" for v in net_cf]
     fig.add_trace(
         go.Bar(
             x=years,
             y=net_cf,
-            name="Annual Net Cashflow (€)",
+            name=f"Annual Net Cashflow ({curr}/yr)",
             marker_color=bar_colors,
-            opacity=0.35,
-            hovertemplate="Year %{x}<br>Net Cashflow: €%{y:,.0f}<extra></extra>",
+            opacity=0.75,
+            hovertemplate=f"Year %{{x}}<br>Net Cashflow: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
-        secondary_y=True,
+        row=2,
+        col=1,
     )
-
-    # Current situation TCO line
     fig.add_trace(
         go.Scatter(
-            x=years,
-            y=tco_base,
+            x=years[1:],
+            y=base_bill[1:],
             mode="lines+markers",
-            name="Current situation TCO (€)",
+            name=f"Current System Annual Bill ({curr}/yr)",
             line=dict(color="#F87171", width=2.2, dash="dash"),
-            hovertemplate="Year %{x}<br>Current situation TCO: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"Year %{{x}}<br>Current Bill: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         ),
-        secondary_y=False,
+        row=2,
+        col=1,
     )
-
-    # Combined system TCO line
     fig.add_trace(
         go.Scatter(
-            x=years,
-            y=tco_comb,
+            x=years[1:],
+            y=comb_opex[1:],
             mode="lines+markers",
-            name="Combined system TCO (€)",
-            line=dict(color="#38BDF8", width=2.8),
-            hovertemplate="Year %{x}<br>Combined system TCO: €%{y:,.0f}<extra></extra>",
+            name=f"Combined System Annual Cost ({curr}/yr)",
+            line=dict(color="#FACC15", width=2.4),
+            hovertemplate=f"Year %{{x}}<br>Combined Cost: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         ),
-        secondary_y=False,
+        row=2,
+        col=1,
     )
-
-    # Break-Even indicator if payback occurs
-    if fk.payback_years is not None and 0.0 < fk.payback_years <= 15.0:
-        fig.add_vline(
-            x=fk.payback_years,
-            line_dash="dot",
-            line_color="#22C55E",
-            line_width=1.5,
-            annotation_text=f"Break-Even: {fk.payback_years:.1f} yrs",
-            annotation_position="top left",
-            annotation_font=dict(color="#22C55E", size=11),
-        )
 
     fig.update_layout(
         template="plotly_dark",
-        height=430,
-        margin=dict(l=55, r=55, t=75, b=45),
+        height=560,
+        margin=dict(l=60, r=40, t=105, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text="15-Year Cumulative Cost & Break-Even (€)",
+            text=f"15-Year Amortization & Annual Cashflow Comparison ({curr})",
             font=dict(size=15, color="#F8FAFC"),
             x=0.0,
+            y=0.98,
         ),
         xaxis=dict(
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            tickmode="linear",
+            tick0=0,
+            dtick=1,
+        ),
+        xaxis2=dict(
             title="Year",
             gridcolor="rgba(148, 163, 184, 0.12)",
             tickmode="linear",
@@ -217,21 +273,23 @@ def create_financial_tco_trajectory_figure(
             dtick=1,
         ),
         yaxis=dict(
-            title="Cumulative TCO (€)",
+            title=f"Cumulative Cashflow ({curr})",
             gridcolor="rgba(148, 163, 184, 0.12)",
-            rangemode="tozero",
+            zeroline=True,
+            zerolinecolor="rgba(248, 250, 252, 0.45)",
+            zerolinewidth=1.2,
         ),
         yaxis2=dict(
-            title="Annual Net Cashflow (€)",
-            gridcolor="rgba(0,0,0,0)",
-            overlaying="y",
-            side="right",
-            showgrid=False,
+            title=f"Annual Cashflow & Cost ({curr}/yr)",
+            gridcolor="rgba(148, 163, 184, 0.12)",
+            zeroline=True,
+            zerolinecolor="rgba(248, 250, 252, 0.45)",
+            zerolinewidth=1.2,
         ),
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.04,
+            y=1.06,
             xanchor="left",
             x=0.0,
             bgcolor="rgba(0,0,0,0)",
