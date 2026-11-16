@@ -320,6 +320,66 @@ def get_metering_preset_options() -> Dict[str, List[str]]:
     return {meter: list(plans.keys()) for meter, plans in UTILITY_METERING_PRESETS.items()}
 
 
+def scale_eur_hardware_defaults_to_currency(
+    fin_cfg: CombinedFinancialConfig,
+    fx_rate: Optional[float] = None,
+) -> bool:
+    """
+    Component-wise scales untouched EUR hardware defaults to the active non-EUR currency
+    (e.g. ARS at 1,100x). Already customized/scaled components are left untouched to
+    prevent double-scaling. Returns True if any component was scaled.
+    """
+    curr = str(getattr(fin_cfg, "currency_code", "EUR") or "EUR")
+    if curr == "EUR":
+        return False
+
+    r = float(fx_rate) if fx_rate is not None else (1100.0 if curr == "ARS" else 1.08)
+    r = max(0.01, r)
+    scaled_any = False
+
+    # 1. Solar component (only if still at EUR defaults)
+    if (
+        float(fin_cfg.solar_lump_sum_capex_eur) == 0.0
+        and abs(float(fin_cfg.solar_turnkey_eur_kwp) - 850.0) < 1e-3
+    ):
+        fin_cfg.solar_turnkey_eur_kwp = round(float(fin_cfg.solar_turnkey_eur_kwp) * r, 2)
+        if abs(float(fin_cfg.solar_modules_eur_wp) - 0.45) < 1e-4:
+            fin_cfg.solar_modules_eur_wp = round(float(fin_cfg.solar_modules_eur_wp) * r, 2)
+        if abs(float(fin_cfg.solar_inverter_eur_w) - 0.12) < 1e-4:
+            fin_cfg.solar_inverter_eur_w = round(float(fin_cfg.solar_inverter_eur_w) * r, 2)
+        if abs(float(fin_cfg.solar_mounting_eur_wp) - 0.28) < 1e-4:
+            fin_cfg.solar_mounting_eur_wp = round(float(fin_cfg.solar_mounting_eur_wp) * r, 2)
+        scaled_any = True
+
+    # 2. Battery component (only if still at EUR defaults)
+    if (
+        float(fin_cfg.battery_lump_sum_capex_eur) == 0.0
+        and abs(float(fin_cfg.battery_capex_eur_kwh) - 280.0) < 1e-3
+    ):
+        fin_cfg.battery_capex_eur_kwh = round(float(fin_cfg.battery_capex_eur_kwh) * r, 2)
+        if abs(float(fin_cfg.battery_capex_eur_kw) - 150.0) < 1e-3:
+            fin_cfg.battery_capex_eur_kw = round(float(fin_cfg.battery_capex_eur_kw) * r, 2)
+        if abs(float(fin_cfg.battery_fixed_bop_eur) - 15000.0) < 1e-1:
+            fin_cfg.battery_fixed_bop_eur = round(float(fin_cfg.battery_fixed_bop_eur) * r, 0)
+        scaled_any = True
+
+    # 3. Generator component (only if still at EUR defaults)
+    if (
+        float(fin_cfg.generator_lump_sum_capex_eur) == 0.0
+        and abs(float(fin_cfg.generator_capex_eur) - 22000.0) < 1e-1
+    ):
+        fin_cfg.generator_capex_eur = round(float(fin_cfg.generator_capex_eur) * r, 0)
+        if abs(float(fin_cfg.generator_rental_eur_month) - 1200.0) < 1e-1:
+            fin_cfg.generator_rental_eur_month = round(float(fin_cfg.generator_rental_eur_month) * r, 0)
+        if abs(float(fin_cfg.fuel_price_eur_per_unit) - 1.45) < 1e-3:
+            fin_cfg.fuel_price_eur_per_unit = round(float(fin_cfg.fuel_price_eur_per_unit) * r, 2)
+        if abs(float(fin_cfg.generator_maintenance_eur_per_hour) - 4.50) < 1e-3:
+            fin_cfg.generator_maintenance_eur_per_hour = round(float(fin_cfg.generator_maintenance_eur_per_hour) * r, 2)
+        scaled_any = True
+
+    return scaled_any
+
+
 def apply_utility_tariff_presets(
     dso_choice: str,
     tier_choice: str,
@@ -400,6 +460,9 @@ def apply_utility_tariff_presets(
         if meter_data:
             fin_cfg.metering_fixed_fee_eur_month = float(meter_data.get("fixed_fee_mo", fin_cfg.metering_fixed_fee_eur_month))
 
+    if str(getattr(fin_cfg, "currency_code", "EUR") or "EUR") == "ARS":
+        scale_eur_hardware_defaults_to_currency(fin_cfg, fx_rate=1100.0)
+
     return fin_cfg
 
 
@@ -470,6 +533,9 @@ def sync_financial_config_from_status_quo(
         fin_cfg.annual_tax_reduction_credit_eur = float(getattr(levies, "annual_tax_reduction", 0.0))
         fin_cfg.vat_rate_pct = float(getattr(levies, "vat_rate_pct", 21.0))
         fin_cfg.vat_applies_to_levies = bool(getattr(levies, "vat_applies_to_levies", True))
+
+    if str(getattr(fin_cfg, "currency_code", "EUR") or "EUR") == "ARS":
+        scale_eur_hardware_defaults_to_currency(fin_cfg, fx_rate=1100.0)
 
     return fin_cfg
 

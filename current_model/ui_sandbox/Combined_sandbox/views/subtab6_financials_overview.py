@@ -24,6 +24,7 @@ from .subtab6_isolated_pillars import (
     _get_curr_code,
     _curr_prefix,
     _fmt_curr,
+    _rename_df_currency_cols,
     _render_master_cost_equation_bar,
     _render_sub_ledger_html,
 )
@@ -85,7 +86,7 @@ def _render_cashflow_table_expander_fragment(sim_res) -> None:
         )
         if show_cf_tbl and sim_res.cashflow_15y_df is not None and not sim_res.cashflow_15y_df.empty:
             st.dataframe(
-                sim_res.cashflow_15y_df,
+                _rename_df_currency_cols(sim_res.cashflow_15y_df, _get_curr_code(sim_res)),
                 use_container_width=True,
                 hide_index=True,
             )

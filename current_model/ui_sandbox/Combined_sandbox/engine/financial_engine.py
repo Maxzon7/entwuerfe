@@ -420,7 +420,14 @@ def evaluate_combined_financials(
                 c_rent = 0.0
             else:
                 c_maint = gen_hrs * fin_cfg.generator_maintenance_eur_per_hour
-                c_rent = fin_cfg.generator_rental_eur_month if not gen_is_purchase else 0.0
+                gen_active_this_month = (gen_hrs > 0.0 or g_out_m_kwh > 0.0)
+                if gen_is_purchase or (
+                    bool(getattr(fin_cfg, "generator_rental_active_months_only", False))
+                    and not gen_active_this_month
+                ):
+                    c_rent = 0.0
+                else:
+                    c_rent = fin_cfg.generator_rental_eur_month
         else:
             c_maint = 0.0
             c_rent = 0.0

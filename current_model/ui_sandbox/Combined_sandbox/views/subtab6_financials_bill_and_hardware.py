@@ -15,6 +15,7 @@ from .state_and_helpers import (
     get_metering_preset_options,
     apply_utility_tariff_presets,
     sync_financial_config_from_status_quo,
+    scale_eur_hardware_defaults_to_currency,
 )
 from .subtab6_isolated_pillars import (
     _curr_prefix,
@@ -77,6 +78,17 @@ def _queue_fin_cfg_widget_sync(cur_fin: CombinedFinancialConfig) -> None:
         "comb_fin_tax_credit": float(cur_fin.annual_tax_reduction_credit_eur),
         "comb_fin_vat_pct": float(cur_fin.vat_rate_pct),
         "comb_fin_vat_levies_chk": bool(cur_fin.vat_applies_to_levies),
+        "comb_fin_sol_turnkey": float(cur_fin.solar_turnkey_eur_kwp),
+        "comb_fin_sol_mod": float(cur_fin.solar_modules_eur_wp),
+        "comb_fin_sol_inv": float(cur_fin.solar_inverter_eur_w),
+        "comb_fin_sol_mnt": float(cur_fin.solar_mounting_eur_wp),
+        "comb_fin_bat_rack": float(cur_fin.battery_capex_eur_kwh),
+        "comb_fin_bat_inv": float(cur_fin.battery_capex_eur_kw),
+        "comb_fin_bat_bop": float(cur_fin.battery_fixed_bop_eur),
+        "comb_fin_gen_capex": float(cur_fin.generator_capex_eur),
+        "comb_fin_gen_rent": float(cur_fin.generator_rental_eur_month),
+        "comb_fin_gen_fuel": float(cur_fin.fuel_price_eur_per_unit),
+        "comb_fin_gen_maint": float(cur_fin.generator_maintenance_eur_per_hour),
         "comb_fin_dso_tou_v": int(st.session_state.get("comb_fin_dso_tou_v", 0)) + 1,
     }
 
@@ -218,6 +230,8 @@ def _render_subtab6_1_bill_setup_controls(
         changed_mode = False
         if sel_curr != cur_fin.currency_code:
             cur_fin.currency_code = sel_curr
+            if sel_curr == "ARS" and scale_eur_hardware_defaults_to_currency(cur_fin, fx_rate=1100.0):
+                _queue_fin_cfg_widget_sync(cur_fin)
             changed_mode = True
 
         target_mode_code = (

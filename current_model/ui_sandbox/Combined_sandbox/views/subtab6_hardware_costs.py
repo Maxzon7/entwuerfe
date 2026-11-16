@@ -11,6 +11,7 @@ from .state_and_helpers import (
     render_kpi_card,
     determine_smart_modular_units,
     evaluate_combined_financials,
+    scale_eur_hardware_defaults_to_currency,
     create_solar_isolated_financial_figure,
     create_battery_isolated_financial_figure,
     create_generator_isolated_financial_figure,
@@ -20,6 +21,7 @@ from .subtab6_isolated_pillars import (
     _curr_prefix,
     _fmt_curr,
     _render_sub_ledger_html,
+    _rename_df_currency_cols,
 )
 
 
@@ -63,17 +65,7 @@ def _render_subtab6_2_currency_guard(sim_res, cur_sys: CombinedSystemConfig, cur
 
     if fx_apply:
         r = max(0.01, float(fx_rate))
-        cur_fin.solar_modules_eur_wp = round(cur_fin.solar_modules_eur_wp * r, 2)
-        cur_fin.solar_inverter_eur_w = round(cur_fin.solar_inverter_eur_w * r, 2)
-        cur_fin.solar_mounting_eur_wp = round(cur_fin.solar_mounting_eur_wp * r, 2)
-        cur_fin.solar_turnkey_eur_kwp = round(cur_fin.solar_turnkey_eur_kwp * r, 2)
-        cur_fin.battery_capex_eur_kwh = round(cur_fin.battery_capex_eur_kwh * r, 2)
-        cur_fin.battery_capex_eur_kw = round(cur_fin.battery_capex_eur_kw * r, 2)
-        cur_fin.battery_fixed_bop_eur = round(cur_fin.battery_fixed_bop_eur * r, 0)
-        cur_fin.generator_capex_eur = round(cur_fin.generator_capex_eur * r, 0)
-        cur_fin.generator_rental_eur_month = round(cur_fin.generator_rental_eur_month * r, 0)
-        cur_fin.fuel_price_eur_per_unit = round(cur_fin.fuel_price_eur_per_unit * r, 2)
-        cur_fin.generator_maintenance_eur_per_hour = round(cur_fin.generator_maintenance_eur_per_hour * r, 2)
+        scale_eur_hardware_defaults_to_currency(cur_fin, fx_rate=r)
         for wk in (
             "comb_fin_sol_turnkey", "comb_fin_sol_mod", "comb_fin_sol_inv", "comb_fin_sol_mnt",
             "comb_fin_bat_rack", "comb_fin_bat_inv", "comb_fin_bat_bop",
@@ -82,7 +74,7 @@ def _render_subtab6_2_currency_guard(sim_res, cur_sys: CombinedSystemConfig, cur
             st.session_state.pop(wk, None)
         evaluate_combined_financials(sim_res, cur_fin)
         st.session_state.pop("comb_cached_excel_bytes", None)
-        st.rerun(scope="fragment")
+        st.rerun()
 
 
 def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur_fin: CombinedFinancialConfig) -> None:
@@ -333,6 +325,14 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                         {"cells": ["2.2 Bidirectional Inverter (PCS)", f"{cur_sys.battery_power_kw:,.0f} kW &times; {c_html}{cur_fin.battery_capex_eur_kw:,.0f}/kW", "&mdash;", _fmt_curr(fk.battery_inverter_capex_eur, curr, html=True)]},
                         {"cells": ["2.3 Installation &amp; BoP", "Fixed Balance of Plant", "&mdash;", _fmt_curr(fk.battery_bop_capex_eur, curr, html=True)]},
                     ])
+                bat_rows.append({
+                    "cells": [
+                        "<b>= Total Battery CAPEX</b>",
+                        "Upfront Turnkey Investment",
+                        "&mdash;",
+                        f"<b>{_fmt_curr(fk.battery_capex_eur, curr, html=True)}</b>",
+                    ]
+                })
 
                 rep_desc = (
                     f"Year {int(cur_fin.battery_augmentation_year)} ({fk.battery_repowering_mode})"
@@ -414,6 +414,13 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                         min_value=0.0, max_value=1e9, value=float(cur_fin.generator_maintenance_eur_per_hour), step=0.5,
                         key="comb_fin_gen_maint", disabled=not cur_sys.enable_generator,
                     )
+                gen_rent_active_only = st.checkbox(
+                    "Charge Rental Only in Active Months (Runtime > 0)",
+                    value=bool(getattr(cur_fin, "generator_rental_active_months_only", False)),
+                    key="comb_fin_gen_rent_active_only",
+                    disabled=not (cur_sys.enable_generator and gen_model == "Monthly Rental (OPEX)"),
+                    help="When enabled, monthly rental is only charged in months where the generator actually runs (runtime > 0 hrs). Default off = all 12 months.",
+                )
 
                 st.markdown("---")
                 st.caption("**Quote Override (Enter > 0 to replace Purchase CAPEX or Service/Rental OPEX):**")
@@ -443,10 +450,15 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                     if cur_fin.generator_lump_sum_service_opex_eur_year > 0.0
                     else f"{kpis.generator_runtime_hours:,.1f} hrs &times; {c_html}{cur_fin.generator_maintenance_eur_per_hour:,.2f}/hr"
                 )
+                rent_months_label = (
+                    f"{int(round(fk.generator_rental_cost_eur / cur_fin.generator_rental_eur_month))} active mos"
+                    if (cur_fin.generator_rental_active_months_only and cur_fin.generator_rental_eur_month > 0.0 and cur_fin.generator_cost_model == "Monthly Rental (OPEX)")
+                    else "12 mos"
+                )
                 gen_rows = [
                     {"group": f"Acquisition ({fk.generator_pricing_mode})"},
                     {"cells": ["3.1 Purchase Investment (CAPEX)", capex_desc, "&mdash;", _fmt_curr(fk.generator_capex_eur, curr, html=True)]},
-                    {"cells": ["3.2 Rental / Leasing Fee (OPEX)", f"12 mos &times; {c_html}{cur_fin.generator_rental_eur_month:,.0f}/mo (if rental &amp; no override)", _fmt_curr(fk.generator_rental_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_rental_cost_eur, curr, html=True)]},
+                    {"cells": ["3.2 Rental / Leasing Fee (OPEX)", f"{rent_months_label} &times; {c_html}{cur_fin.generator_rental_eur_month:,.0f}/mo (if rental &amp; no override)", _fmt_curr(fk.generator_rental_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_rental_cost_eur, curr, html=True)]},
                     {"group": f"Annual Fuel &amp; Operating Service ({fk.generator_opex_pricing_mode})"},
                     {"cells": [f"3.3 Fuel Consumption ({cur_sys.fuel_type})", f"{kpis.generator_fuel_total:,.1f} {kpis.generator_fuel_unit} &times; {c_html}{cur_fin.fuel_price_eur_per_unit:,.2f}", _fmt_curr(fk.generator_fuel_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_fuel_cost_eur, curr, html=True)]},
                     {"cells": ["3.4 Service &amp; Maintenance", svc_desc, _fmt_curr(fk.generator_maintenance_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_maintenance_cost_eur, curr, html=True)]},
@@ -539,6 +551,7 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
             cur_fin.generator_capex_eur = float(gen_capex)
             cur_fin.generator_lump_sum_capex_eur = float(gen_lump_capex)
             cur_fin.generator_rental_eur_month = float(gen_rent)
+            cur_fin.generator_rental_active_months_only = bool(gen_rent_active_only)
             cur_fin.fuel_price_eur_per_unit = float(fuel_pr)
             cur_fin.generator_maintenance_eur_per_hour = float(gen_maint)
             cur_fin.generator_lump_sum_service_opex_eur_year = float(gen_lump_svc)
@@ -607,7 +620,7 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
                 key="comb_iso_solar_chart",
             )
             if sim_res.solar_fin_monthly_df is not None and not sim_res.solar_fin_monthly_df.empty:
-                st.dataframe(sim_res.solar_fin_monthly_df, use_container_width=True, hide_index=True)
+                st.dataframe(_rename_df_currency_cols(sim_res.solar_fin_monthly_df, curr), use_container_width=True, hide_index=True)
 
     with st.expander(":material/battery_charging_full: Isolated Battery Economics (Chart & 12-Month Table)", expanded=False):
         if not cur_sys.enable_battery:
@@ -650,7 +663,7 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
                 key="comb_iso_battery_chart",
             )
             if sim_res.battery_fin_monthly_df is not None and not sim_res.battery_fin_monthly_df.empty:
-                st.dataframe(sim_res.battery_fin_monthly_df, use_container_width=True, hide_index=True)
+                st.dataframe(_rename_df_currency_cols(sim_res.battery_fin_monthly_df, curr), use_container_width=True, hide_index=True)
 
     with st.expander(":material/settings_input_component: Isolated Generator Economics (Chart & 12-Month Table)", expanded=False):
         if not cur_sys.enable_generator:
@@ -693,5 +706,5 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
                 key="comb_iso_generator_chart",
             )
             if sim_res.generator_fin_monthly_df is not None and not sim_res.generator_fin_monthly_df.empty:
-                st.dataframe(sim_res.generator_fin_monthly_df, use_container_width=True, hide_index=True)
+                st.dataframe(_rename_df_currency_cols(sim_res.generator_fin_monthly_df, curr), use_container_width=True, hide_index=True)
 

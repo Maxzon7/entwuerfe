@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from ..combined_sandbox_engine import CombinedSimulationResult
+from .financial_overview_charts import _resolve_chart_currency
 
 def create_dso_isolated_breakdown_figure(
     sim_res: CombinedSimulationResult,
@@ -23,6 +24,8 @@ def create_dso_isolated_breakdown_figure(
     if fk is None or d_df is None or d_df.empty:
         return go.Figure()
 
+    curr, curr_sym, c_lbl = _resolve_chart_currency(sim_res)
+
     fig = make_subplots(
         rows=1,
         cols=2,
@@ -30,8 +33,8 @@ def create_dso_isolated_breakdown_figure(
         horizontal_spacing=0.09,
         specs=[[{"type": "bar"}, {"secondary_y": True}]],
         subplot_titles=(
-            "Annual DSO Cost Structure (EUR/yr)",
-            "12-Month DSO Contract Bill (EUR) & Peak (kW)",
+            f"Annual DSO Cost Structure ({curr}/yr)",
+            f"12-Month DSO Contract Bill ({curr}) & Peak (kW)",
         ),
     )
 
@@ -58,7 +61,7 @@ def create_dso_isolated_breakdown_figure(
                 base=list(cum_base),
                 offsetgroup="dso_annual_stack",
                 marker_color=color,
-                hovertemplate=f"%{{x}}<br>{label}: €%{{y:,.0f}}/yr<extra></extra>",
+                hovertemplate=f"%{{x}}<br>{label}: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
             ),
             row=1,
             col=1,
@@ -69,12 +72,12 @@ def create_dso_isolated_breakdown_figure(
     months = d_df["Month"].tolist()
     fig.add_trace(
         go.Bar(
-            name="DSO Current (EUR)",
+            name=f"DSO Current ({curr})",
             x=months,
             y=d_df["DSO Current (€)"].tolist(),
             offsetgroup="dso_mo_curr",
             marker_color="#F87171",
-            hovertemplate="%{x}<br>DSO Current: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>DSO Current: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
         row=1,
         col=2,
@@ -82,12 +85,12 @@ def create_dso_isolated_breakdown_figure(
     )
     fig.add_trace(
         go.Bar(
-            name="DSO With System (EUR)",
+            name=f"DSO With System ({curr})",
             x=months,
             y=d_df["DSO With System (€)"].tolist(),
             offsetgroup="dso_mo_sys",
             marker_color="#38BDF8",
-            hovertemplate="%{x}<br>DSO With System: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>DSO With System: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
         row=1,
         col=2,
@@ -139,8 +142,8 @@ def create_dso_isolated_breakdown_figure(
         ),
         hovermode="x unified",
     )
-    fig.update_yaxes(title_text="Annual DSO Cost (EUR)", row=1, col=1, gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero")
-    fig.update_yaxes(title_text="Monthly DSO Cost (EUR)", row=1, col=2, secondary_y=False, gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero")
+    fig.update_yaxes(title_text=f"Annual DSO Cost ({curr})", row=1, col=1, gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero")
+    fig.update_yaxes(title_text=f"Monthly DSO Cost ({curr})", row=1, col=2, secondary_y=False, gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero")
     fig.update_yaxes(title_text="Peak Demand (kW)", row=1, col=2, secondary_y=True, showgrid=False, rangemode="tozero")
     return fig
 
@@ -156,25 +159,26 @@ def create_supplier_isolated_breakdown_figure(
     if s_df is None or s_df.empty:
         return go.Figure()
 
+    curr, curr_sym, _ = _resolve_chart_currency(sim_res)
     months = s_df["Month"].tolist()
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
         go.Bar(
-            name="Supplier Current (EUR)",
+            name=f"Supplier Current ({curr})",
             x=months,
             y=s_df["Supplier Current (€)"].tolist(),
             marker_color="#F87171",
-            hovertemplate="%{x}<br>Current Supplier Bill: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Current Supplier Bill: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
         secondary_y=False,
     )
     fig.add_trace(
         go.Bar(
-            name="Supplier With System (EUR)",
+            name=f"Supplier With System ({curr})",
             x=months,
             y=s_df["Supplier With System (€)"].tolist(),
             marker_color="#3B82F6",
-            hovertemplate="%{x}<br>With System Supplier Bill: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>With System Supplier Bill: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
         secondary_y=False,
     )
@@ -198,11 +202,11 @@ def create_supplier_isolated_breakdown_figure(
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text="Isolated Energy Supplier Contract: Monthly Bill (EUR) & Import Volume (MWh)",
+            text=f"Isolated Energy Supplier Contract: Monthly Bill ({curr}) & Import Volume (MWh)",
             font=dict(size=14, color="#F8FAFC"),
             x=0.0,
         ),
-        yaxis=dict(title="Supplier Cost (EUR/mo)", gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero"),
+        yaxis=dict(title=f"Supplier Cost ({curr}/mo)", gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero"),
         yaxis2=dict(title="Grid Import (MWh)", overlaying="y", side="right", showgrid=False, rangemode="tozero"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
         hovermode="x unified",
@@ -221,53 +225,54 @@ def create_solar_isolated_financial_figure(
     if df is None or df.empty:
         return go.Figure()
 
+    curr, curr_sym, _ = _resolve_chart_currency(sim_res)
     months = df["Month"].tolist()
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
-            name="Direct Grid Savings (EUR)",
+            name=f"Direct Grid Savings ({curr})",
             x=months,
             y=df["Direct Savings (€)"].tolist(),
             marker_color="#FACC15",
-            hovertemplate="%{x}<br>Direct Savings: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Direct Savings: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Battery-Shift Solar Value (EUR)",
+            name=f"Battery-Shift Solar Value ({curr})",
             x=months,
             y=df["Battery-Shift Value (€)"].tolist(),
             marker_color="#22C55E",
-            hovertemplate="%{x}<br>Battery-Shift Value: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Battery-Shift Value: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Export Revenue (EUR)",
+            name=f"Export Revenue ({curr})",
             x=months,
             y=df["Export Revenue (€)"].tolist(),
             marker_color="#38BDF8",
-            hovertemplate="%{x}<br>Export Revenue: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Export Revenue: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Solar O&M Cost (-EUR)",
+            name=f"Solar O&M Cost (-{curr})",
             x=months,
             y=[-float(v) for v in df["Solar O&M (€)"].tolist()],
             marker_color="#EF4444",
-            hovertemplate="%{x}<br>Solar O&M: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Solar O&M: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Scatter(
-            name="Net Solar Benefit (EUR)",
+            name=f"Net Solar Benefit ({curr})",
             x=months,
             y=df["Net Solar Benefit (€)"].tolist(),
             mode="lines+markers",
             line=dict(color="#F8FAFC", width=2.3),
             marker=dict(size=6, color="#F8FAFC"),
-            hovertemplate="%{x}<br>Net Solar Benefit: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Net Solar Benefit: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.update_layout(
@@ -277,8 +282,8 @@ def create_solar_isolated_financial_figure(
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
-        title=dict(text="Isolated Solar Economics: Monthly Value vs. O&M (EUR/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
-        yaxis=dict(title="Monthly Value / Cost (EUR)", gridcolor="rgba(148, 163, 184, 0.12)", zeroline=True, zerolinecolor="rgba(248, 250, 252, 0.35)"),
+        title=dict(text=f"Isolated Solar Economics: Monthly Value vs. O&M ({curr}/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
+        yaxis=dict(title=f"Monthly Value / Cost ({curr})", gridcolor="rgba(148, 163, 184, 0.12)", zeroline=True, zerolinecolor="rgba(248, 250, 252, 0.35)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
         hovermode="x unified",
     )
@@ -296,53 +301,54 @@ def create_battery_isolated_financial_figure(
     if df is None or df.empty:
         return go.Figure()
 
+    curr, curr_sym, _ = _resolve_chart_currency(sim_res)
     months = df["Month"].tolist()
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
-            name="DSO Peak & Penalty Savings (EUR)",
+            name=f"DSO Peak & Penalty Savings ({curr})",
             x=months,
             y=df["DSO Peak & Penalty Savings (€)"].tolist(),
             marker_color="#10B981",
-            hovertemplate="%{x}<br>DSO Peak & Penalty Savings: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>DSO Peak & Penalty Savings: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Solar Shift Value (EUR)",
+            name=f"Solar Shift Value ({curr})",
             x=months,
             y=df["Solar Shift Value (€)"].tolist(),
             marker_color="#FACC15",
-            hovertemplate="%{x}<br>Solar Shift Value: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Solar Shift Value: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Grid Charging Cost (-EUR)",
+            name=f"Grid Charging Cost (-{curr})",
             x=months,
             y=[-float(v) for v in df["Grid Charging Cost (€)"].tolist()],
             marker_color="#F59E0B",
-            hovertemplate="%{x}<br>Grid Charging Cost: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Grid Charging Cost: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Battery O&M Cost (-EUR)",
+            name=f"Battery O&M Cost (-{curr})",
             x=months,
             y=[-float(v) for v in df["Battery O&M (€)"].tolist()],
             marker_color="#EF4444",
-            hovertemplate="%{x}<br>Battery O&M: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Battery O&M: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Scatter(
-            name="Net Battery Benefit (EUR)",
+            name=f"Net Battery Benefit ({curr})",
             x=months,
             y=df["Net Battery Benefit (€)"].tolist(),
             mode="lines+markers",
             line=dict(color="#F8FAFC", width=2.3),
             marker=dict(size=6, color="#F8FAFC"),
-            hovertemplate="%{x}<br>Net Battery Benefit: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Net Battery Benefit: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.update_layout(
@@ -352,8 +358,8 @@ def create_battery_isolated_financial_figure(
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
-        title=dict(text="Isolated Battery Economics: Monthly Value vs. O&M & Grid Charging (EUR/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
-        yaxis=dict(title="Monthly Value / Cost (EUR)", gridcolor="rgba(148, 163, 184, 0.12)", zeroline=True, zerolinecolor="rgba(248, 250, 252, 0.35)"),
+        title=dict(text=f"Isolated Battery Economics: Monthly Value vs. O&M & Grid Charging ({curr}/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
+        yaxis=dict(title=f"Monthly Value / Cost ({curr})", gridcolor="rgba(148, 163, 184, 0.12)", zeroline=True, zerolinecolor="rgba(248, 250, 252, 0.35)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
         hovermode="x unified",
     )
@@ -371,44 +377,45 @@ def create_generator_isolated_financial_figure(
     if df is None or df.empty:
         return go.Figure()
 
+    curr, curr_sym, _ = _resolve_chart_currency(sim_res)
     months = df["Month"].tolist()
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
-            name="Avoided DSO Value (EUR)",
+            name=f"Avoided DSO Value ({curr})",
             x=months,
             y=df["Avoided DSO Value (€)"].tolist(),
             marker_color="#22C55E",
-            hovertemplate="%{x}<br>Avoided DSO Value: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Avoided DSO Value: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Fuel & Service (-EUR)",
+            name=f"Fuel & Service (-{curr})",
             x=months,
             y=[-float(v) for v in df["Fuel & Service (€)"].tolist()],
             marker_color="#F97316",
-            hovertemplate="%{x}<br>Fuel & Service: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Fuel & Service: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Rental Cost (-EUR)",
+            name=f"Rental Cost (-{curr})",
             x=months,
             y=[-float(v) for v in df["Rental (€)"].tolist()],
             marker_color="#EF4444",
-            hovertemplate="%{x}<br>Rental Cost: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Rental Cost: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Scatter(
-            name="Net Generator Impact (EUR)",
+            name=f"Net Generator Impact ({curr})",
             x=months,
             y=df["Net Generator Impact (€)"].tolist(),
             mode="lines+markers",
             line=dict(color="#F8FAFC", width=2.3),
             marker=dict(size=6, color="#F8FAFC"),
-            hovertemplate="%{x}<br>Net Generator Impact: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Net Generator Impact: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.update_layout(
@@ -418,8 +425,8 @@ def create_generator_isolated_financial_figure(
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
-        title=dict(text="Isolated Generator Economics: Avoided Peak Value vs. Fuel & Service (EUR/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
-        yaxis=dict(title="Monthly Value / Cost (EUR)", gridcolor="rgba(148, 163, 184, 0.12)", zeroline=True, zerolinecolor="rgba(248, 250, 252, 0.35)"),
+        title=dict(text=f"Isolated Generator Economics: Avoided Peak Value vs. Fuel & Service ({curr}/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
+        yaxis=dict(title=f"Monthly Value / Cost ({curr})", gridcolor="rgba(148, 163, 184, 0.12)", zeroline=True, zerolinecolor="rgba(248, 250, 252, 0.35)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
         hovermode="x unified",
     )
@@ -440,25 +447,26 @@ def create_tax_isolated_breakdown_figure(
         fig.update_layout(template="plotly_dark", height=height, title="No Metering & Tax Data Available")
         return fig
 
+    curr, curr_sym, _ = _resolve_chart_currency(sim_res)
     months = df["Month"].tolist()
     fig.add_trace(
         go.Bar(
-            name="Current Metering & Taxes (EUR)",
+            name=f"Current Metering & Taxes ({curr})",
             x=months,
             y=df["Tax & Metering Current (€)"].tolist(),
             marker_color="rgba(248, 113, 113, 0.65)",
             offsetgroup="curr_tax",
-            hovertemplate="%{x}<br>Current: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Current: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="With System: Metering (€)",
+            name=f"With System: Metering ({curr})",
             x=months,
             y=df["Metering (€)"].tolist(),
             marker_color="#94A3B8",
             offsetgroup="sys_tax_stack",
-            hovertemplate="%{x}<br>Metering: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Metering: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     net_tax_after_credit = [
@@ -467,25 +475,25 @@ def create_tax_isolated_breakdown_figure(
     ]
     fig.add_trace(
         go.Bar(
-            name="With System: Net Energy Tax (€)",
+            name=f"With System: Net Energy Tax ({curr})",
             x=months,
             y=net_tax_after_credit,
             base=df["Metering (€)"].tolist(),
             marker_color="#F59E0B",
             offsetgroup="sys_tax_stack",
-            hovertemplate="%{x}<br>Net Energy Tax: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Net Energy Tax: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     base_surcharge = [float(m) + float(nt) for m, nt in zip(df["Metering (€)"].tolist(), net_tax_after_credit)]
     fig.add_trace(
         go.Bar(
-            name="With System: Surcharge & VAT (€)",
+            name=f"With System: Surcharge & VAT ({curr})",
             x=months,
             y=[float(s) + float(v) for s, v in zip(df["Tax Surcharge (€)"].tolist(), df["VAT With System (€)"].tolist())],
             base=base_surcharge,
             marker_color="#38BDF8",
             offsetgroup="sys_tax_stack",
-            hovertemplate="%{x}<br>Surcharge & VAT: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Surcharge & VAT: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
     fig.update_layout(
@@ -495,8 +503,8 @@ def create_tax_isolated_breakdown_figure(
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
-        title=dict(text="Isolated Metering & Taxes: Monthly Breakdown (EUR/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
-        yaxis=dict(title="Monthly Cost (EUR)", gridcolor="rgba(148, 163, 184, 0.12)"),
+        title=dict(text=f"Isolated Metering & Taxes: Monthly Breakdown ({curr}/month)", font=dict(size=14, color="#F8FAFC"), x=0.0),
+        yaxis=dict(title=f"Monthly Cost ({curr})", gridcolor="rgba(148, 163, 184, 0.12)"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
         hovermode="x unified",
     )

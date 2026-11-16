@@ -47,6 +47,14 @@ def _fmt_curr(val: float, currency_code: str = "EUR", signed: bool = False, html
     return f"{pref}{val:,.0f}"
 
 
+def _rename_df_currency_cols(df: pd.DataFrame, currency_code: str) -> pd.DataFrame:
+    """Returns a display copy of a financial DataFrame with `(€)` headers replaced by active currency."""
+    c_lbl = "€" if currency_code == "EUR" else currency_code
+    if c_lbl == "€" or df is None or df.empty:
+        return df
+    return df.rename(columns={col: str(col).replace("(€)", f"({c_lbl})") for col in df.columns})
+
+
 def _render_master_cost_equation_bar(sim_res) -> str:
     """Renders the top Live Annual Cost & Savings Equation Bar using active currency."""
     fk = sim_res.financial_kpis
@@ -331,7 +339,7 @@ def _render_isolated_pillar_deep_dive_fragment(sim_res) -> None:
                 key="comb_iso_dso_chart",
             )
             if sim_res.dso_monthly_df is not None and not sim_res.dso_monthly_df.empty:
-                st.dataframe(sim_res.dso_monthly_df, use_container_width=True, hide_index=True)
+                st.dataframe(_rename_df_currency_cols(sim_res.dso_monthly_df, curr), use_container_width=True, hide_index=True)
 
         elif pillar_choice == "Energy Supplier Contract Only (Retailer)":
             if fc is not None and not getattr(fc, "enable_pillar_1_supplier", True):
@@ -374,7 +382,7 @@ def _render_isolated_pillar_deep_dive_fragment(sim_res) -> None:
                 key="comb_iso_supplier_chart",
             )
             if sim_res.supplier_monthly_df is not None and not sim_res.supplier_monthly_df.empty:
-                st.dataframe(sim_res.supplier_monthly_df, use_container_width=True, hide_index=True)
+                st.dataframe(_rename_df_currency_cols(sim_res.supplier_monthly_df, curr), use_container_width=True, hide_index=True)
 
         else:
             cur_mt = fk.baseline_pillar3_metering_eur + fk.baseline_pillar4_taxes_eur
@@ -415,5 +423,5 @@ def _render_isolated_pillar_deep_dive_fragment(sim_res) -> None:
                 key="comb_iso_tax_chart",
             )
             if sim_res.tax_monthly_df is not None and not sim_res.tax_monthly_df.empty:
-                st.dataframe(sim_res.tax_monthly_df, use_container_width=True, hide_index=True)
+                st.dataframe(_rename_df_currency_cols(sim_res.tax_monthly_df, curr), use_container_width=True, hide_index=True)
 

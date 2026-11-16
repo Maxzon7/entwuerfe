@@ -1577,6 +1577,111 @@ class TestCombinedSandbox(unittest.TestCase):
             cons_src = f.read()
         self.assertNotIn("index=default_idx", cons_src)
 
+    def test_generator_rental_active_months_only_option(self):
+        """Verifies generator_rental_active_months_only defaults to False (12 mos) and bills only active months when True."""
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=220.0,
+            enable_solar=False,
+            enable_battery=False,
+            enable_generator=True,
+            generator_rated_kw=100.0,
+            enable_financials=True,
+        )
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg, InteractionRulesConfig())
+
+        # Default: False -> all 12 months charged
+        fin_all = CombinedFinancialConfig(
+            generator_cost_model="Monthly Rental (OPEX)",
+            generator_rental_eur_month=1200.0,
+        )
+        self.assertFalse(fin_all.generator_rental_active_months_only)
+        evaluate_combined_financials(sim_res, fin_all)
+        self.assertAlmostEqual(sim_res.financial_kpis.generator_rental_cost_eur, 12.0 * 1200.0, places=2)
+
+        # Active months only: True -> only months with runtime > 0 charged
+        fin_active = CombinedFinancialConfig(
+            generator_cost_model="Monthly Rental (OPEX)",
+            generator_rental_eur_month=1200.0,
+            generator_rental_active_months_only=True,
+        )
+        evaluate_combined_financials(sim_res, fin_active)
+        gen_df = sim_res.generator_fin_monthly_df
+        active_months = int((gen_df["Runtime (hrs)"] > 0.0).sum())
+        self.assertGreater(active_months, 0)
+        self.assertLess(active_months, 12)
+        self.assertAlmostEqual(sim_res.financial_kpis.generator_rental_cost_eur, active_months * 1200.0, places=2)
+        self.assertTrue(all(gen_df.loc[gen_df["Runtime (hrs)"] == 0.0, "Rental (€)"] == 0.0))
+        self.assertTrue(all(gen_df.loc[gen_df["Runtime (hrs)"] > 0.0, "Rental (€)"] == 1200.0))
+
+    def test_component_wise_ars_scaling_and_dynamic_chart_currency_labels(self):
+        """Verifies component-wise EUR->ARS default scaling without double-scaling and ARS labels across all charts."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            scale_eur_hardware_defaults_to_currency,
+        )
+        from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
+            create_dso_isolated_breakdown_figure,
+            create_supplier_isolated_breakdown_figure,
+            create_solar_isolated_financial_figure,
+            create_battery_isolated_financial_figure,
+            create_generator_isolated_financial_figure,
+            create_tax_isolated_breakdown_figure,
+        )
+
+        # Simulate Battery already customized in ARS while Solar is still at EUR default (850.0)
+        fin = CombinedFinancialConfig(
+            currency_code="ARS",
+            battery_capex_eur_kwh=300000.0,
+            battery_capex_eur_kw=150000.0,
+            battery_fixed_bop_eur=10000000.0,
+        )
+        changed = scale_eur_hardware_defaults_to_currency(fin, fx_rate=1100.0)
+        self.assertTrue(changed)
+        # Solar & Generator scaled once; Battery NOT double-scaled
+        self.assertAlmostEqual(fin.solar_turnkey_eur_kwp, 850.0 * 1100.0, places=2)
+        self.assertAlmostEqual(fin.solar_modules_eur_wp, 0.45 * 1100.0, places=2)
+        self.assertAlmostEqual(fin.battery_capex_eur_kwh, 300000.0, places=2)
+        self.assertAlmostEqual(fin.generator_capex_eur, 22000.0 * 1100.0, places=2)
+        # Second call is a no-op
+        self.assertFalse(scale_eur_hardware_defaults_to_currency(fin, fx_rate=1100.0))
+
+        # All charts use ARS instead of € / EUR
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=150.0,
+            enable_battery=True,
+            battery_capacity_kwh=200.0,
+            battery_power_kw=100.0,
+            enable_generator=True,
+            generator_rated_kw=100.0,
+            enable_financials=True,
+        )
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg, InteractionRulesConfig())
+        evaluate_combined_financials(sim_res, fin)
+
+        for fig_fn in (
+            create_financial_cost_comparison_figure,
+            create_financial_tco_trajectory_figure,
+            create_financial_waterfall_bridge_figure,
+            create_financial_monthly_cashflow_figure,
+            create_monthly_grid_bill_progression_figure,
+            create_dso_isolated_breakdown_figure,
+            create_supplier_isolated_breakdown_figure,
+            create_solar_isolated_financial_figure,
+            create_battery_isolated_financial_figure,
+            create_generator_isolated_financial_figure,
+            create_tax_isolated_breakdown_figure,
+        ):
+            fig = fig_fn(sim_res)
+            title_txt = str(fig.layout.title.text or "")
+            if title_txt:
+                self.assertIn("ARS", title_txt)
+                self.assertNotIn("EUR", title_txt)
+                self.assertNotIn("€", title_txt)
+
 
 if __name__ == "__main__":
     unittest.main()

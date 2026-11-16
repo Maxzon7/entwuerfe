@@ -10,6 +10,23 @@ from plotly.subplots import make_subplots
 
 from ..combined_sandbox_engine import CombinedSimulationResult
 
+
+def _resolve_chart_currency(sim_res: CombinedSimulationResult) -> tuple[str, str, str]:
+    """Returns `(curr_code, prefix_symbol, unit_label)` for dynamic Plotly currency formatting."""
+    fk = getattr(sim_res, "financial_kpis", None)
+    fc = getattr(sim_res, "financial_config", None)
+    curr = str(
+        getattr(fc, "currency_code", None)
+        or getattr(fk, "currency_code", None)
+        or "EUR"
+    )
+    if curr == "EUR":
+        return "EUR", "€", "€"
+    if curr == "USD":
+        return "USD", "$", "USD"
+    return curr, f"{curr} ", curr
+
+
 def create_financial_cost_comparison_figure(
     sim_res: CombinedSimulationResult,
 ) -> go.Figure:
@@ -23,6 +40,8 @@ def create_financial_cost_comparison_figure(
 
     if fk is None:
         return go.Figure()
+
+    curr, curr_sym, c_lbl = _resolve_chart_currency(sim_res)
 
     p1_vals = [fk.baseline_pillar1_supply_eur, fk.combined_pillar1_supply_eur]
     p2_net_vals = [
@@ -45,7 +64,7 @@ def create_financial_cost_comparison_figure(
             x=scenarios,
             y=p1_vals,
             marker_color="#3B82F6",
-            hovertemplate="%{x}<br>Energy Supply: €%{y:,.0f}/yr<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Energy Supply: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         )
     )
     fig.add_trace(
@@ -54,7 +73,7 @@ def create_financial_cost_comparison_figure(
             x=scenarios,
             y=p2_net_vals,
             marker_color="#0EA5E9",
-            hovertemplate="%{x}<br>Grid Network (DSO): €%{y:,.0f}/yr<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Grid Network (DSO): {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         )
     )
     fig.add_trace(
@@ -63,7 +82,7 @@ def create_financial_cost_comparison_figure(
             x=scenarios,
             y=pen_vals,
             marker_color="#EF4444",
-            hovertemplate="%{x}<br>Overload Penalties: €%{y:,.0f}/yr<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Overload Penalties: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         )
     )
     fig.add_trace(
@@ -72,7 +91,7 @@ def create_financial_cost_comparison_figure(
             x=scenarios,
             y=p3_vals,
             marker_color="#A855F7",
-            hovertemplate="%{x}<br>Metering: €%{y:,.0f}/yr<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Metering: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         )
     )
     fig.add_trace(
@@ -81,7 +100,7 @@ def create_financial_cost_comparison_figure(
             x=scenarios,
             y=p4_vals,
             marker_color="#F59E0B",
-            hovertemplate="%{x}<br>Taxes & Levies: €%{y:,.0f}/yr<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Taxes & Levies: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         )
     )
     fig.add_trace(
@@ -90,7 +109,7 @@ def create_financial_cost_comparison_figure(
             x=scenarios,
             y=sys_opex_vals,
             marker_color="#10B981",
-            hovertemplate="%{x}<br>System O&M, Fuel & Rental: €%{y:,.0f}/yr<extra></extra>",
+            hovertemplate=f"%{{x}}<br>System O&M, Fuel & Rental: {curr_sym}%{{y:,.0f}}/yr<extra></extra>",
         )
     )
 
@@ -102,12 +121,12 @@ def create_financial_cost_comparison_figure(
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text="Annual Cost Comparison: Current situation vs. Combined system (€/year)",
+            text=f"Annual Cost Comparison: Current situation vs. Combined system ({c_lbl}/year)",
             font=dict(size=15, color="#F8FAFC"),
             x=0.0,
         ),
         yaxis=dict(
-            title="Annual Cost (€/year)",
+            title=f"Annual Cost ({c_lbl}/year)",
             gridcolor="rgba(148, 163, 184, 0.12)",
             rangemode="tozero",
         ),
@@ -312,6 +331,8 @@ def create_financial_waterfall_bridge_figure(
     if fk is None:
         return go.Figure()
 
+    curr, curr_sym, c_lbl = _resolve_chart_currency(sim_res)
+
     supply_sav = -(fk.baseline_pillar1_supply_eur - fk.combined_pillar1_supply_eur)
     dso_base_net = max(0.0, fk.baseline_pillar2_dso_eur - fk.baseline_penalty_cost_eur)
     dso_comb_net = max(0.0, fk.combined_pillar2_dso_eur - fk.combined_grid_penalty_cost_eur)
@@ -379,12 +400,12 @@ def create_financial_waterfall_bridge_figure(
             x=x_labels,
             y=y_vals,
             textposition="outside",
-            text=[f"€{abs(v):,.0f}" if m != "total" else f"€{fk.total_annual_opex_eur:,.0f}" for v, m in zip(y_vals, measures)],
+            text=[f"{curr_sym}{abs(v):,.0f}" if m != "total" else f"{curr_sym}{fk.total_annual_opex_eur:,.0f}" for v, m in zip(y_vals, measures)],
             connector={"line": {"color": "rgba(148, 163, 184, 0.4)"}},
             decreasing={"marker": {"color": "#22C55E"}},
             increasing={"marker": {"color": "#EF4444"}},
             totals={"marker": {"color": "#3B82F6"}},
-            hovertemplate="%{x}<br>Amount: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Amount: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
 
@@ -395,12 +416,12 @@ def create_financial_waterfall_bridge_figure(
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text="Year-1 Annual Cost Bridge: Current situation to Combined System (€/year)",
+            text=f"Year-1 Annual Cost Bridge: Current situation to Combined System ({c_lbl}/year)",
             font=dict(size=15, color="#F8FAFC"),
             x=0.0,
         ),
         yaxis=dict(
-            title="Annual Cost (€/year)",
+            title=f"Annual Cost ({c_lbl}/year)",
             gridcolor="rgba(148, 163, 184, 0.12)",
         ),
         xaxis=dict(
@@ -425,6 +446,7 @@ def create_financial_monthly_cashflow_figure(
     if m_df.empty:
         return go.Figure()
 
+    curr, curr_sym, c_lbl = _resolve_chart_currency(sim_res)
     months = m_df["Month"].tolist()
     base_bills = m_df["Current situation Total (€)"].tolist()
     comb_opex = m_df["Combined System Total OPEX (€)"].tolist()
@@ -436,9 +458,9 @@ def create_financial_monthly_cashflow_figure(
         go.Bar(
             x=months,
             y=base_bills,
-            name="Current situation Bill (€)",
+            name=f"Current situation Bill ({c_lbl})",
             marker_color="#F87171",
-            hovertemplate="%{x}<br>Current situation: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Current situation: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
         secondary_y=False,
     )
@@ -447,9 +469,9 @@ def create_financial_monthly_cashflow_figure(
         go.Bar(
             x=months,
             y=comb_opex,
-            name="Combined System OPEX (€)",
+            name=f"Combined System OPEX ({c_lbl})",
             marker_color="#38BDF8",
-            hovertemplate="%{x}<br>Combined System: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Combined System: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
         secondary_y=False,
     )
@@ -459,10 +481,10 @@ def create_financial_monthly_cashflow_figure(
             x=months,
             y=m_savings,
             mode="lines+markers",
-            name="Monthly Net Savings (€)",
+            name=f"Monthly Net Savings ({c_lbl})",
             line=dict(color="#22C55E", width=2.4),
             marker=dict(size=7, color="#22C55E"),
-            hovertemplate="%{x}<br>Monthly Savings: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Monthly Savings: {curr_sym}%{{y:,.0f}}<extra></extra>",
         ),
         secondary_y=True,
     )
@@ -475,17 +497,17 @@ def create_financial_monthly_cashflow_figure(
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         title=dict(
-            text="Monthly Costs & Net Savings (€/month)",
+            text=f"Monthly Costs & Net Savings ({c_lbl}/month)",
             font=dict(size=15, color="#F8FAFC"),
             x=0.0,
         ),
         yaxis=dict(
-            title="Monthly Expense (€/month)",
+            title=f"Monthly Expense ({c_lbl}/month)",
             gridcolor="rgba(148, 163, 184, 0.12)",
             rangemode="tozero",
         ),
         yaxis2=dict(
-            title="Monthly Savings (€/month)",
+            title=f"Monthly Savings ({c_lbl}/month)",
             gridcolor="rgba(0,0,0,0)",
             overlaying="y",
             side="right",
@@ -522,6 +544,7 @@ def create_monthly_grid_bill_progression_figure(
     if m_df is None or m_df.empty:
         return go.Figure()
 
+    curr, curr_sym, c_lbl = _resolve_chart_currency(sim_res)
     months = m_df["Month"].tolist()
 
     if view_mode == "Monthly Bill Comparison":
@@ -539,9 +562,9 @@ def create_monthly_grid_bill_progression_figure(
             go.Bar(
                 x=months,
                 y=base_bills,
-                name="Current Situation Grid Bill (€)",
+                name=f"Current Situation Grid Bill ({c_lbl})",
                 marker_color="#F87171",
-                hovertemplate="%{x}<br>Current Bill: €%{y:,.0f}<extra></extra>",
+                hovertemplate=f"%{{x}}<br>Current Bill: {curr_sym}%{{y:,.0f}}<extra></extra>",
             ),
             secondary_y=False,
         )
@@ -549,9 +572,9 @@ def create_monthly_grid_bill_progression_figure(
             go.Bar(
                 x=months,
                 y=comb_grid_bills,
-                name="With System Grid Bill (€)",
+                name=f"With System Grid Bill ({c_lbl})",
                 marker_color="#38BDF8",
-                hovertemplate="%{x}<br>With System Grid Bill: €%{y:,.0f}<extra></extra>",
+                hovertemplate=f"%{{x}}<br>With System Grid Bill: {curr_sym}%{{y:,.0f}}<extra></extra>",
             ),
             secondary_y=False,
         )
@@ -560,10 +583,10 @@ def create_monthly_grid_bill_progression_figure(
                 x=months,
                 y=grid_savings,
                 mode="lines+markers",
-                name="Gross Monthly Grid Savings (€)",
+                name=f"Gross Monthly Grid Savings ({c_lbl})",
                 line=dict(color="#22C55E", width=2.4),
                 marker=dict(size=7, color="#22C55E"),
-                hovertemplate="%{x}<br>Grid Bill Savings: €%{y:,.0f}<extra></extra>",
+                hovertemplate=f"%{{x}}<br>Grid Bill Savings: {curr_sym}%{{y:,.0f}}<extra></extra>",
             ),
             secondary_y=True,
         )
@@ -575,12 +598,12 @@ def create_monthly_grid_bill_progression_figure(
             paper_bgcolor="rgba(15, 23, 42, 0.0)",
             plot_bgcolor="rgba(15, 23, 42, 0.45)",
             title=dict(
-                text="Monthly Electricity Bill Comparison (€/month)",
+                text=f"Monthly Electricity Bill Comparison ({c_lbl}/month)",
                 font=dict(size=14, color="#F8FAFC"),
                 x=0.0,
             ),
-            yaxis=dict(title="Monthly Bill (€)", gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero"),
-            yaxis2=dict(title="Grid Bill Savings (€)", gridcolor="rgba(0,0,0,0)", overlaying="y", side="right", showgrid=False),
+            yaxis=dict(title=f"Monthly Bill ({c_lbl})", gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero"),
+            yaxis2=dict(title=f"Grid Bill Savings ({c_lbl})", gridcolor="rgba(0,0,0,0)", overlaying="y", side="right", showgrid=False),
             legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0.0, bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
             hovermode="x unified",
         )
@@ -590,12 +613,12 @@ def create_monthly_grid_bill_progression_figure(
 
     if view_mode == "Current Situation Bill":
         series_defs = [
-            ("Network, Capacity & Standing (€)", m_df["Current situation Network & Standing (€)"].tolist(), "#F59E0B"),
-            ("Electricity & Taxes (€)", m_df["Current situation Energy & Taxes (€)"].tolist(), "#3B82F6"),
-            ("Overload Penalties (€)", m_df["Current situation Overload Penalty (€)"].tolist(), "#EF4444"),
+            (f"Network, Capacity & Standing ({c_lbl})", m_df["Current situation Network & Standing (€)"].tolist(), "#F59E0B"),
+            (f"Electricity & Taxes ({c_lbl})", m_df["Current situation Energy & Taxes (€)"].tolist(), "#3B82F6"),
+            (f"Overload Penalties ({c_lbl})", m_df["Current situation Overload Penalty (€)"].tolist(), "#EF4444"),
         ]
         total_line = m_df["Current situation Total (€)"].tolist()
-        chart_title = "Monthly Electricity & Grid Cost Progression — Current Situation (€/month)"
+        chart_title = f"Monthly Electricity & Grid Cost Progression — Current Situation ({c_lbl}/month)"
     else:
         has_granular = "Combined Booked Capacity (€)" in m_df.columns
         if has_granular:
@@ -619,7 +642,7 @@ def create_monthly_grid_bill_progression_figure(
             + float(r["Combined Overload Penalty (€)"])
             for _, r in m_df.iterrows()
         ]
-        chart_title = "Monthly Electricity & Grid Cost Progression — Combined System (€/month)"
+        chart_title = f"Monthly Electricity & Grid Cost Progression — Combined System ({c_lbl}/month)"
 
     for label, vals, color_hex in series_defs:
         if sum(abs(float(v)) for v in vals) > 0.01:
@@ -629,7 +652,7 @@ def create_monthly_grid_bill_progression_figure(
                     y=vals,
                     name=label,
                     marker_color=color_hex,
-                    hovertemplate=f"%{{x}}<br>{label}: €%{{y:,.0f}}<extra></extra>",
+                    hovertemplate=f"%{{x}}<br>{label}: {curr_sym}%{{y:,.0f}}<extra></extra>",
                 )
             )
 
@@ -638,10 +661,10 @@ def create_monthly_grid_bill_progression_figure(
             x=months,
             y=total_line,
             mode="lines+markers",
-            name="Total Grid Bill (€)",
+            name=f"Total Grid Bill ({c_lbl})",
             line=dict(color="#F8FAFC", width=2.2),
             marker=dict(size=6, color="#F8FAFC"),
-            hovertemplate="%{x}<br>Total Grid Bill: €%{y:,.0f}<extra></extra>",
+            hovertemplate=f"%{{x}}<br>Total Grid Bill: {curr_sym}%{{y:,.0f}}<extra></extra>",
         )
     )
 
@@ -658,7 +681,7 @@ def create_monthly_grid_bill_progression_figure(
             x=0.0,
         ),
         yaxis=dict(
-            title="Monthly Cost (€)",
+            title=f"Monthly Cost ({c_lbl})",
             gridcolor="rgba(148, 163, 184, 0.12)",
             rangemode="tozero",
         ),

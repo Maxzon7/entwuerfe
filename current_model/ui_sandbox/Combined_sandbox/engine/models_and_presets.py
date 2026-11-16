@@ -264,6 +264,7 @@ class CombinedFinancialConfig:
     generator_capex_eur: float = 22000.0
     generator_lump_sum_capex_eur: float = 0.0
     generator_rental_eur_month: float = 1200.0
+    generator_rental_active_months_only: bool = False
     fuel_price_eur_per_unit: float = 1.45
     generator_maintenance_eur_per_hour: float = 4.50
     generator_lump_sum_service_opex_eur_year: float = 0.0
