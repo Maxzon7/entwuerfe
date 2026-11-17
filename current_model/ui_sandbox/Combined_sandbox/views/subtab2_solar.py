@@ -15,6 +15,7 @@ from .state_and_helpers import (
     CombinedSystemConfig,
     get_unit_solar_generation_profile,
     derive_solar_sizing_and_formula,
+    compute_synced_solar_pair,
     _activate_module_callback,
     _apply_solar_quick_share,
 )
@@ -108,6 +109,11 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
     with st.container(border=True):
         st.markdown("##### :material/solar_power: Solar Settings")
 
+        pending_loc_sync = st.session_state.pop("comb_pending_solar_loc_sync", None)
+        if isinstance(pending_loc_sync, dict):
+            for sk, sv in pending_loc_sync.items():
+                st.session_state[sk] = sv
+
         curr_lat = float(st.session_state.get("comb_solar_lat", 52.3676))
         curr_lon = float(st.session_state.get("comb_solar_lon", 4.9041))
 
@@ -134,7 +140,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     key="comb_solar_preset_select",
                 )
 
-            gps_c1, gps_c2, loc_btn = st.columns([1.2, 1.2, 1.0])
+            gps_c1, gps_c2, ws_c1, ws_c2, loc_btn = st.columns([1.0, 1.0, 1.5, 0.75, 0.95])
             with gps_c1:
                 lat_input = st.number_input(
                     "Latitude (°N)",
@@ -154,6 +160,30 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     step=0.01,
                     format="%.4f",
                     disabled=not is_active,
+                )
+            with ws_c1:
+                ws_opts = ["Specific Year (Solar Data)", "Typical Year (PVGIS TMY)"]
+                cur_w_mode = str(getattr(cur_sys, "solar_weather_mode", "single_year") or "single_year")
+                ws_idx = 0 if cur_w_mode == "single_year" else 1
+                weather_src_choice = st.selectbox(
+                    "Weather Data Source",
+                    options=ws_opts,
+                    index=ws_idx,
+                    disabled=not is_active,
+                    key="comb_solar_weather_mode_sel",
+                    help="Specific Year uses actual historical weather for the selected year (good for checking against real meter data). TMY uses a multi-year typical average.",
+                )
+            with ws_c2:
+                yr_opts = [2025, 2024, 2023, 2022, 2021, 2020]
+                cur_w_yr = int(getattr(cur_sys, "solar_weather_year", 2025) or 2025)
+                yr_idx = yr_opts.index(cur_w_yr) if cur_w_yr in yr_opts else 0
+                weather_year_choice = st.selectbox(
+                    "Year",
+                    options=yr_opts,
+                    index=yr_idx,
+                    disabled=not is_active,
+                    key="comb_solar_weather_year_sel",
+                    help="Calendar year used when Specific Year (Solar Data) is active.",
                 )
             with loc_btn:
                 st.write("")
@@ -184,14 +214,20 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 st.session_state["comb_solar_lon"] = float(p_data["longitude"])
                 st.session_state["comb_solar_site_name"] = p_data["name"]
                 st.session_state["comb_solar_preset_choice"] = preset_choice
+                st.session_state.pop("comb_solar_search_matches", None)
+                st.session_state.pop("comb_solar_last_search", None)
             elif search_changed:
-                search_results = search_locations_open_meteo(clean_q, count=1)
+                search_results = search_locations_open_meteo(clean_q, count=8)
+                st.session_state["comb_solar_search_matches"] = list(search_results or [])
                 if search_results:
                     chosen = search_results[0]
                     st.session_state["comb_solar_lat"] = float(chosen["lat"])
                     st.session_state["comb_solar_lon"] = float(chosen["lon"])
                     st.session_state["comb_solar_site_name"] = chosen["display_name"]
                     st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
+                    st.session_state["comb_pending_solar_loc_sync"] = {
+                        "comb_solar_preset_select": "Custom GPS Coordinates",
+                    }
                 st.session_state["comb_solar_last_search"] = clean_q
             elif manual_changed:
                 st.session_state["comb_solar_lat"] = float(lat_input)
@@ -200,28 +236,128 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     f"Custom ({float(lat_input):.4f}°N, {float(lon_input):.4f}°E)"
                 )
                 st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
+                st.session_state["comb_pending_solar_loc_sync"] = {
+                    "comb_solar_preset_select": "Custom GPS Coordinates",
+                }
+                st.session_state.pop("comb_solar_search_matches", None)
             elif preset_choice in SOLAR_SITE_PRESETS:
                 p_data = SOLAR_SITE_PRESETS[preset_choice]
                 st.session_state["comb_solar_lat"] = float(p_data["latitude"])
                 st.session_state["comb_solar_lon"] = float(p_data["longitude"])
                 st.session_state["comb_solar_site_name"] = p_data["name"]
                 st.session_state["comb_solar_preset_choice"] = preset_choice
+                st.session_state.pop("comb_solar_search_matches", None)
+                st.session_state.pop("comb_solar_last_search", None)
 
+            cur_sys.solar_weather_mode = (
+                "single_year" if weather_src_choice.startswith("Specific") else "TMY"
+            )
+            cur_sys.solar_weather_year = int(weather_year_choice)
+
+            new_lat = float(st.session_state.get("comb_solar_lat", cur_sys.latitude))
+            new_lon = float(st.session_state.get("comb_solar_lon", cur_sys.longitude))
+            _, new_spec_y, _ = get_unit_solar_generation_profile(
+                latitude=new_lat,
+                longitude=new_lon,
+                tilt_deg=float(cur_sys.tilt_deg),
+                azimuth_deg=180.0 if new_lat >= 0.0 else 0.0,
+                dc_ac_ratio=float(cur_sys.dc_ac_ratio),
+                weather_mode=cur_sys.solar_weather_mode,
+                selected_year=cur_sys.solar_weather_year,
+            )
+            s_kwp, s_share = compute_synced_solar_pair(
+                sizing_method=cur_sys.solar_sizing_method,
+                direct_kwp=float(cur_sys.solar_kwp),
+                target_share_pct=float(cur_sys.target_consumption_share_pct),
+                annual_consumption_kwh=ann_kwh,
+                specific_yield_kwh_per_kwp=new_spec_y,
+                inverter_efficiency_pct=float(cur_sys.inverter_efficiency_pct),
+            )
+            cur_sys.solar_kwp = float(s_kwp)
+            cur_sys.target_consumption_share_pct = float(s_share)
+            st.session_state["comb_pending_solar_widget_sync"] = {
+                "comb_solar_target_share_num": float(s_share),
+                "comb_solar_direct_kwp_num": float(s_kwp),
+            }
             st.session_state.pop("comb_cached_excel_bytes", None)
             st.rerun()
 
         eff_lat = float(st.session_state.get("comb_solar_lat", 52.3676))
         eff_lon = float(st.session_state.get("comb_solar_lon", 4.9041))
-        _, spec_yield, _ = get_unit_solar_generation_profile(
+        eff_w_mode = str(getattr(cur_sys, "solar_weather_mode", "single_year") or "single_year")
+        eff_w_year = int(getattr(cur_sys, "solar_weather_year", 2025) or 2025)
+
+        search_matches = st.session_state.get("comb_solar_search_matches", [])
+        if is_active and isinstance(search_matches, list) and len(search_matches) > 1:
+            match_labels = [
+                f"{m.get('display_name', m.get('name', 'Place'))} ({float(m['lat']):.4f}°, {float(m['lon']):.4f}°)"
+                for m in search_matches
+            ]
+            cur_match_idx = 0
+            for idx_m, m_item in enumerate(search_matches):
+                if (
+                    abs(float(m_item["lat"]) - eff_lat) < 1e-4
+                    and abs(float(m_item["lon"]) - eff_lon) < 1e-4
+                ):
+                    cur_match_idx = idx_m
+                    break
+            m_c1, m_c2 = st.columns([3.0, 1.0])
+            with m_c1:
+                picked_label = st.selectbox(
+                    "Multiple matching places found — select the right one:",
+                    options=match_labels,
+                    index=cur_match_idx,
+                    key="comb_solar_match_pick_sel",
+                )
+            with m_c2:
+                st.write("")
+                if st.button("Use Selected Location", use_container_width=True, key="comb_solar_match_apply_btn"):
+                    picked_idx = match_labels.index(picked_label)
+                    chosen_m = search_matches[picked_idx]
+                    st.session_state["comb_solar_lat"] = float(chosen_m["lat"])
+                    st.session_state["comb_solar_lon"] = float(chosen_m["lon"])
+                    st.session_state["comb_solar_site_name"] = chosen_m["display_name"]
+                    st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
+                    st.session_state["comb_pending_solar_loc_sync"] = {
+                        "comb_solar_preset_select": "Custom GPS Coordinates",
+                    }
+                    _, m_spec_y, _ = get_unit_solar_generation_profile(
+                        latitude=float(chosen_m["lat"]),
+                        longitude=float(chosen_m["lon"]),
+                        tilt_deg=float(cur_sys.tilt_deg),
+                        azimuth_deg=180.0 if float(chosen_m["lat"]) >= 0.0 else 0.0,
+                        dc_ac_ratio=float(cur_sys.dc_ac_ratio),
+                        weather_mode=eff_w_mode,
+                        selected_year=eff_w_year,
+                    )
+                    m_kwp, m_share = compute_synced_solar_pair(
+                        sizing_method=cur_sys.solar_sizing_method,
+                        direct_kwp=float(cur_sys.solar_kwp),
+                        target_share_pct=float(cur_sys.target_consumption_share_pct),
+                        annual_consumption_kwh=ann_kwh,
+                        specific_yield_kwh_per_kwp=m_spec_y,
+                        inverter_efficiency_pct=float(cur_sys.inverter_efficiency_pct),
+                    )
+                    cur_sys.solar_kwp = float(m_kwp)
+                    cur_sys.target_consumption_share_pct = float(m_share)
+                    st.session_state["comb_pending_solar_widget_sync"] = {
+                        "comb_solar_target_share_num": float(m_share),
+                        "comb_solar_direct_kwp_num": float(m_kwp),
+                    }
+                    st.session_state.pop("comb_cached_excel_bytes", None)
+                    st.rerun()
+        _, spec_yield, solar_src_label = get_unit_solar_generation_profile(
             latitude=eff_lat,
             longitude=eff_lon,
             tilt_deg=30.0,
             azimuth_deg=180.0 if eff_lat >= 0.0 else 0.0,
             dc_ac_ratio=cur_sys.dc_ac_ratio,
+            weather_mode=eff_w_mode,
+            selected_year=eff_w_year,
         )
         site_disp = st.session_state.get("comb_solar_site_name", "Amsterdam, Netherlands")
         st.caption(
-            f"Data source: **EU PVGIS (ERA5 15-min TMY)** | Location: **{site_disp}** "
+            f"Data source: **{solar_src_label}** | Location: **{site_disp}** "
             f"(`{eff_lat:.4f}°N, {eff_lon:.4f}°E`) | Specific Yield: **{spec_yield:,.0f} kWh/kWp/year**"
         )
 
@@ -266,6 +402,11 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
             else round(preview_kwp / max(1.0, cur_sys.dc_ac_ratio), 1)
         )
 
+        pending_sol_sync = st.session_state.pop("comb_pending_solar_widget_sync", None)
+        if isinstance(pending_sol_sync, dict):
+            for sk, sv in pending_sol_sync.items():
+                st.session_state[sk] = sv
+
         with st.form("comb_solar_form"):
             sz_c1, sz_c2, sz_c3 = st.columns(3)
             with sz_c1:
@@ -278,15 +419,17 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     disabled=not is_active,
                     key="comb_solar_sizing_radio",
                 )
+                raw_share = float(cur_sys.target_consumption_share_pct)
+                safe_share = min(1000.0, max(0.1, raw_share))
                 target_share_val = st.number_input(
                     "Share of Consumption (%)",
-                    min_value=5.0,
-                    max_value=250.0,
-                    value=float(cur_sys.target_consumption_share_pct),
+                    min_value=0.1,
+                    max_value=1000.0,
+                    value=safe_share,
                     step=5.0,
                     disabled=not is_active,
                     key="comb_solar_target_share_num",
-                    help="Percentage of total annual electricity demand to be supplied by solar.",
+                    help="Target yearly solar production as a % of your total electricity use. Automatically updates when you apply Direct Size (kWp).",
                 )
             with sz_c2:
                 st.markdown("**Size & Inverter Limit:**")
@@ -301,7 +444,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     step=10.0,
                     disabled=not is_active,
                     key="comb_solar_direct_kwp_num",
-                    help="Direct nameplate DC capacity in kWp.",
+                    help="Installed solar panel capacity in kWp. Automatically updates when you apply % of Annual Consumption.",
                 )
                 raw_inv_ac = max(0.0, float(default_inv_kw))
                 max_inv_ac = max(100000.0, raw_inv_ac * 2)
@@ -314,7 +457,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     step=10.0,
                     disabled=not is_active,
                     key="comb_solar_inv_ac_limit_num",
-                    help="Maximum continuous AC feed-in power to the site/grid.",
+                    help="Maximum power the inverter can feed into your site (0 = auto-sized).",
                 )
             with sz_c3:
                 st.markdown("**Efficiency & Apply:**")
@@ -338,12 +481,25 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
 
         if sol_submitted:
             sizing_method_key = "target_share_pct" if sizing_mode_label == "% of Annual Consumption" else "direct_kwp"
+            synced_kwp, synced_share = compute_synced_solar_pair(
+                sizing_method=sizing_method_key,
+                direct_kwp=float(direct_kwp_val),
+                target_share_pct=float(target_share_val),
+                annual_consumption_kwh=ann_kwh,
+                specific_yield_kwh_per_kwp=spec_yield,
+                inverter_efficiency_pct=float(inv_eff_val),
+            )
             cur_sys.solar_sizing_method = sizing_method_key
-            cur_sys.target_consumption_share_pct = float(target_share_val)
-            cur_sys.solar_kwp = float(direct_kwp_val)
+            cur_sys.solar_kwp = float(synced_kwp)
+            cur_sys.target_consumption_share_pct = float(synced_share)
             cur_sys.inverter_ac_limit_kw = float(inv_ac_limit_val)
             cur_sys.inverter_efficiency_pct = float(inv_eff_val)
+            st.session_state["comb_pending_solar_widget_sync"] = {
+                "comb_solar_target_share_num": float(synced_share),
+                "comb_solar_direct_kwp_num": float(synced_kwp),
+            }
             st.session_state.pop("comb_cached_excel_bytes", None)
+            st.rerun()
 
         cur_sys.latitude = eff_lat
         cur_sys.longitude = eff_lon
@@ -359,8 +515,115 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
             enable_solar=True,
             inverter_ac_limit_kw=float(cur_sys.inverter_ac_limit_kw),
             inverter_efficiency_pct=float(cur_sys.inverter_efficiency_pct),
+            data_source_label=solar_src_label,
         )
-        st.info(solar_deriv.formula_text, icon=":material/calculate:")
+
+        with st.expander("Your Solar System at a Glance", expanded=True, icon=":material/calculate:"):
+            dc_ac_actual = (
+                (solar_deriv.installed_kwp / solar_deriv.inverter_ac_kw)
+                if solar_deriv.inverter_ac_kw > 0.0
+                else float(cur_sys.dc_ac_ratio)
+            )
+            w_mode_short = (
+                f"Solar Data {eff_w_year}"
+                if eff_w_mode == "single_year"
+                else "PVGIS TMY (Multi-Year Typical)"
+            )
+            summary_rows_html = "".join(
+                f'<tr style="border-bottom:1px solid #1e293b;">'
+                f'<td style="padding:8px 12px; color:#cbd5e1; font-weight:600;">{item}</td>'
+                f'<td style="padding:8px 12px; color:#f8fafc; font-weight:700; text-align:right;">{val}</td>'
+                f'<td style="padding:8px 12px; color:#94a3b8; font-size:0.86rem;">{note}</td>'
+                f'</tr>'
+                for item, val, note in [
+                    (
+                        "Weather Data Source",
+                        w_mode_short,
+                        solar_src_label,
+                    ),
+                    (
+                        "System Size",
+                        f"{solar_deriv.installed_kwp:,.1f} kWp",
+                        f"{solar_deriv.panel_count:,} panels ({solar_deriv.panel_wp:,.0f} Wp each)",
+                    ),
+                    (
+                        "Sun at Your Location",
+                        f"{solar_deriv.specific_yield_kwh_per_kwp:,.0f} kWh / kWp / yr",
+                        f"Expected yearly output per installed kWp in {site_disp}",
+                    ),
+                    (
+                        "Expected Yearly Production",
+                        f"{solar_deriv.expected_annual_yield_kwh:,.0f} kWh / yr",
+                        f"{solar_deriv.installed_kwp:,.1f} kWp &times; {solar_deriv.specific_yield_kwh_per_kwp:,.0f} kWh/kWp (at {solar_deriv.inverter_efficiency_pct:.0f}% inverter efficiency)",
+                    ),
+                    (
+                        "Covers of Your Consumption",
+                        f"{solar_deriv.effective_share_pct:,.1f}%",
+                        (
+                            f"Compared against your {ann_kwh:,.0f} kWh/yr total electricity use"
+                            if ann_kwh > 0.0
+                            else "Upload or select a consumption profile to compare against annual demand"
+                        ),
+                    ),
+                    (
+                        "Inverter Size",
+                        f"{solar_deriv.inverter_ac_kw:,.1f} kW AC",
+                        f"DC/AC ratio {dc_ac_actual:.2f} &middot; {solar_deriv.inverter_efficiency_pct:.0f}% efficiency",
+                    ),
+                ]
+            )
+            table_html = (
+                '<div style="border-radius:8px; border:1px solid #334155; overflow:hidden; margin-bottom:10px;">'
+                '<table style="width:100%; border-collapse:collapse; font-family:-apple-system, BlinkMacSystemFont, sans-serif;">'
+                '<thead><tr style="background-color:#090d16; border-bottom:1px solid #475569; color:#94a3b8; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;">'
+                '<th style="padding:8px 12px; text-align:left;">Setting / Result</th>'
+                '<th style="padding:8px 12px; text-align:right;">Value</th>'
+                '<th style="padding:8px 12px; text-align:left;">What This Means</th>'
+                '</tr></thead>'
+                f'<tbody style="background-color:#0f172a;">{summary_rows_html}</tbody>'
+                '</table>'
+                '</div>'
+            )
+            st.markdown(table_html, unsafe_allow_html=True)
+
+            flow_html = (
+                '<div style="background-color:#0b1329; border:1px solid #334155; border-radius:8px; padding:10px 14px; margin-bottom:8px; '
+                'display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px;">'
+                f'<div style="background-color:#1e293b; border-left:3px solid #FACC15; border-radius:6px; padding:6px 10px; flex:1; min-width:130px;">'
+                f'<div style="font-size:0.70rem; color:#94a3b8;">System Size</div>'
+                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{solar_deriv.installed_kwp:,.1f} kWp</div></div>'
+                '<div style="color:#64748b; font-weight:800;">&times;</div>'
+                f'<div style="background-color:#1e293b; border-left:3px solid #38BDF8; border-radius:6px; padding:6px 10px; flex:1; min-width:150px;">'
+                f'<div style="font-size:0.70rem; color:#94a3b8;">Sun at Location</div>'
+                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{solar_deriv.specific_yield_kwh_per_kwp:,.0f} kWh/kWp/yr</div></div>'
+                '<div style="color:#64748b; font-weight:800;">=</div>'
+                f'<div style="background-color:#1e293b; border-left:3px solid #22C55E; border-radius:6px; padding:6px 10px; flex:1; min-width:150px;">'
+                f'<div style="font-size:0.70rem; color:#94a3b8;">Yearly Production</div>'
+                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{solar_deriv.expected_annual_yield_kwh:,.0f} kWh/yr</div></div>'
+                '<div style="color:#38BDF8; font-weight:800;">&rarr;</div>'
+                f'<div style="background-color:#06281e; border:1.5px solid #22C55E; border-radius:6px; padding:6px 10px; flex:1; min-width:140px;">'
+                f'<div style="font-size:0.70rem; color:#86EFAC; font-weight:700;">Covers of Demand</div>'
+                f'<div style="font-size:0.95rem; color:#ffffff; font-weight:800;">{solar_deriv.effective_share_pct:,.1f}%</div></div>'
+                '</div>'
+            )
+            st.markdown(flow_html, unsafe_allow_html=True)
+
+            st.caption(
+                "Yearly production is not the same as power used directly on site — sunny midday surplus is fed into the grid "
+                "unless a battery stores it. Compare **Solar Direct (kW)** and **Solar Total Potential (kW)** in the Power Flow chart below."
+            )
+
+            if ann_kwh > 0.0 and solar_deriv.effective_share_pct > 100.0:
+                st.warning(
+                    "This system produces more energy over the year than your site consumes. "
+                    "Extra midday energy will mostly be fed into the grid unless stored.",
+                    icon=":material/info:",
+                )
+            if solar_deriv.installed_kwp > 0.0 and solar_deriv.inverter_ac_kw < solar_deriv.installed_kwp * 0.5:
+                st.warning(
+                    "The inverter limit is less than half of the panel size, so sunny midday peaks will be cut back.",
+                    icon=":material/warning:",
+                )
 
         with st.expander("How Solar Sizing & Weather Data Work", expanded=False, icon=":material/help_outline:"):
             st.markdown(
@@ -374,7 +637,9 @@ Each percentage scales the PV array so its expected **annual electricity generat
 Solar irradiance peaks around midday and during summer months, whereas electricity demand also occurs at night, early mornings, and overcast winter weeks. Without a battery or generator, daytime surpluses above your live load are exported while evening/winter peaks still require Grid, Battery, or Generator power.  
 *Tip:* In the bottom **Power Flow & Battery Level** chart, click **Solar Total Potential (kW)** in the legend to compare maximum possible PV output against **Solar Direct (kW)** actually absorbed on-site.
 
-**3. Weather Data Basis (Typical Meteorological Year — TMY)**  
-Solar generation is simulated from **EU PVGIS (ERA5) 15-minute TMY** profiles for your active GPS pin (`{eff_lat:.4f}°N, {eff_lon:.4f}°E`). A TMY dataset combines statistically typical months from multi-year satellite/reanalysis weather records to represent normal seasonal sunlight and temperature rather than a single outlier weather year.
+**3. Weather Data Basis (Specific Year vs. Typical Meteorological Year — TMY)**  
+You can switch between two solar weather datasets for your active GPS pin (`{eff_lat:.4f}°N, {eff_lon:.4f}°E`):
+- **Specific Year (Default: `2025`):** Uses historical hourly irradiance & temperature records from **Open-Meteo** for that exact calendar year (`{eff_w_year}`), interpolated to 15 minutes — ideal for checking the program directly against real meter data from that year.
+- **Typical Meteorological Year (`TMY`):** Uses **EU PVGIS (ERA5)** statistically typical months across multiple years to represent long-term average seasonal sunlight rather than one individual weather year.
                 """.strip()
             )

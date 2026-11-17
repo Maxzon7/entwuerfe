@@ -33,7 +33,7 @@ from .models_and_presets import (
 # 3. Reference Unit Solar Profile Cache & Transparent Solar Sizing Derivation
 # ======================================================================================
 
-_UNIT_SOLAR_CACHE: Dict[Tuple[float, float, float, float, float], Tuple[np.ndarray, float, str]] = {}
+_UNIT_SOLAR_CACHE: Dict[Tuple[float, float, float, float, float, str, int], Tuple[np.ndarray, float, str]] = {}
 
 
 def get_unit_solar_generation_profile(
@@ -42,18 +42,26 @@ def get_unit_solar_generation_profile(
     tilt_deg: float = 30.0,
     azimuth_deg: float = 180.0,
     dc_ac_ratio: float = 1.18,
+    weather_mode: str = "single_year",
+    selected_year: int = 2025,
 ) -> Tuple[np.ndarray, float, str]:
     """
     Computes (or retrieves from memory cache) a 35,040-step 15-minute AC generation profile
     for a reference 100 kWp array, normalized to 1.0 kWp (`unit_kw_per_kwp`).
+    Supports both concrete calendar year data (`weather_mode="single_year"`, default 2025)
+    and long-term Typical Meteorological Year (`weather_mode="TMY"`).
     """
     ratio = max(1.0, min(2.0, float(dc_ac_ratio)))
+    w_mode = "single_year" if str(weather_mode) == "single_year" else "TMY"
+    w_year = int(selected_year) if w_mode == "single_year" else 0
     key = (
         round(float(latitude), 3),
         round(float(longitude), 3),
         round(float(tilt_deg), 1),
         round(float(azimuth_deg), 1),
         round(ratio, 2),
+        w_mode,
+        w_year,
     )
     if key in _UNIT_SOLAR_CACHE:
         return _UNIT_SOLAR_CACHE[key]
@@ -74,7 +82,8 @@ def get_unit_solar_generation_profile(
         inverter_capacity_kw=inv_kw,
         tilt_deg=float(tilt_deg),
         azimuth_deg=float(azimuth_deg),
-        weather_mode="TMY",
+        weather_mode=w_mode,
+        selected_weather_year=int(selected_year),
     )
     sim_res = simulate_solar_pv_generation(config=ref_cfg, location=ref_loc)
     p_ac_100 = sim_res.df_timeseries["P_AC_kW"].to_numpy(dtype=float)
@@ -86,7 +95,12 @@ def get_unit_solar_generation_profile(
 
     unit_profile = np.maximum(0.0, p_ac_100 / 100.0)
     spec_yield = float(np.sum(unit_profile) * 0.25)
-    source_label = "EU PVGIS (ERA5 TMY, 15-min resolution)"
+    fallback_lbl = (
+        f"Solar Data {int(selected_year)} (Historical 15-min)"
+        if w_mode == "single_year"
+        else "EU PVGIS (ERA5 TMY, 15-min resolution)"
+    )
+    source_label = str(getattr(sim_res.kpis, "weather_data_source", "") or fallback_lbl)
 
     _UNIT_SOLAR_CACHE[key] = (unit_profile, round(spec_yield, 1), source_label)
     return _UNIT_SOLAR_CACHE[key]
@@ -103,6 +117,7 @@ def derive_solar_sizing_and_formula(
     enable_solar: bool = True,
     inverter_ac_limit_kw: float = 0.0,
     inverter_efficiency_pct: float = 98.0,
+    data_source_label: str = "EU PVGIS (ERA5 TMY, 15-min resolution)",
 ) -> SolarDerivationInfo:
     """
     Computes the installed Solar kWp, panel count, expected annual yield, inverter AC limit,
@@ -115,13 +130,13 @@ def derive_solar_sizing_and_formula(
     inv_eff = float(np.clip(inverter_efficiency_pct, 80.0, 100.0))
 
     source_info_text = (
-        f"Data source: EU PVGIS (ERA5 TMY, 15-min resolution) | "
+        f"Data source: {data_source_label} | "
         f"Specific Yield: {spec_yield:,.0f} kWh/kWp/year"
     )
 
     if not enable_solar:
         return SolarDerivationInfo(
-            data_source_label="EU PVGIS (ERA5 TMY, 15-min resolution)",
+            data_source_label=data_source_label,
             specific_yield_kwh_per_kwp=spec_yield,
             annual_consumption_kwh=ann_load,
             sizing_method=sizing_method,
@@ -166,7 +181,7 @@ def derive_solar_sizing_and_formula(
         inv_ac_kw = round(installed_kwp / ratio, 1)
 
     return SolarDerivationInfo(
-        data_source_label="EU PVGIS (ERA5 TMY, 15-min resolution)",
+        data_source_label=data_source_label,
         specific_yield_kwh_per_kwp=spec_yield,
         annual_consumption_kwh=ann_load,
         sizing_method=sizing_method,

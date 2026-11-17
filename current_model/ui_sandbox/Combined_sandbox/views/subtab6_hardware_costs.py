@@ -418,8 +418,8 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                     "Charge Rental Only in Active Months (Runtime > 0)",
                     value=bool(getattr(cur_fin, "generator_rental_active_months_only", False)),
                     key="comb_fin_gen_rent_active_only",
-                    disabled=not (cur_sys.enable_generator and gen_model == "Monthly Rental (OPEX)"),
-                    help="When enabled, monthly rental is only charged in months where the generator actually runs (runtime > 0 hrs). Default off = all 12 months.",
+                    disabled=not cur_sys.enable_generator,
+                    help="Applies in Monthly Rental (OPEX) mode: monthly rental is only charged in months where the generator actually runs (runtime > 0 hrs). Default off = all 12 months.",
                 )
 
                 st.markdown("---")
@@ -559,7 +559,7 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
         cur_fin.avoided_grid_upgrade_capex_eur = 0.0 if cur_fin.strict_grid_congestion_mode else float(avoided_upgrade)
         evaluate_combined_financials(sim_res, cur_fin)
         st.session_state.pop("comb_cached_excel_bytes", None)
-        st.rerun(scope="fragment")
+        st.rerun()
 
     _render_isolated_component_economics_fragment(sim_res, cur_sys)
 

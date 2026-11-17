@@ -849,6 +849,9 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("BESS Charge (kW, shown negative)", trace_names)
         self.assertIn("SoC (%)", trace_names)
         self.assertIn("Stored Energy (kWh)", trace_names)
+        if float(np.max(sim_res.unmet_overload_kw)) > 0.05:
+            self.assertIn("Grid Excess (kW)", trace_names)
+            self.assertNotIn("Remaining Deficit (kW)", trace_names)
 
         # Verify dual Y-axes on lower subplot
         self.assertIsNotNone(fig.layout.yaxis2)
@@ -1271,7 +1274,12 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(res.financial_kpis.avoided_grid_upgrade_capex_eur, 0.0)
 
         # Verify compliant vs non-compliant congestion states
-        breach_cfg = CombinedSystemConfig(grid_limit_kw=120.0, enable_financials=True)
+        breach_cfg = CombinedSystemConfig(
+            grid_limit_kw=120.0,
+            battery_power_kw=30.0,
+            generator_rated_kw=20.0,
+            enable_financials=True,
+        )
         res_breach = simulate_combined_system_dispatch(self.load_kw, self.timestamps, breach_cfg, rules_cfg)
         evaluate_combined_financials(res_breach, fin_strict)
         self.assertFalse(res_breach.financial_kpis.grid_congestion_compliant)
@@ -1604,6 +1612,8 @@ class TestCombinedSandbox(unittest.TestCase):
         )
         self.assertFalse(fin_all.generator_rental_active_months_only)
         evaluate_combined_financials(sim_res, fin_all)
+        self.assertEqual(sim_res.financial_kpis.generator_capex_eur, 0.0)
+        self.assertEqual(sim_res.financial_kpis.generator_pricing_mode, "Monthly Rental (OPEX)")
         self.assertAlmostEqual(sim_res.financial_kpis.generator_rental_cost_eur, 12.0 * 1200.0, places=2)
 
         # Active months only: True -> only months with runtime > 0 charged
@@ -1688,6 +1698,109 @@ class TestCombinedSandbox(unittest.TestCase):
                 self.assertIn("ARS", title_txt)
                 self.assertNotIn("EUR", title_txt)
                 self.assertNotIn("€", title_txt)
+
+    def test_solar_bidirectional_sizing_sync_and_summary_expander(self):
+        """Verifies two-way sync between Direct Size (kWp) and Share of Consumption (%) and summary table expander."""
+        from current_model.ui_sandbox.Combined_sandbox.views.state_and_helpers import (
+            compute_synced_solar_pair,
+        )
+
+        # Direct kWp -> Share (%)
+        kwp1, share1 = compute_synced_solar_pair(
+            sizing_method="direct_kwp",
+            direct_kwp=300.0,
+            target_share_pct=150.0,
+            annual_consumption_kwh=2150000.0,
+            specific_yield_kwh_per_kwp=2186.0,
+            inverter_efficiency_pct=98.0,
+        )
+        self.assertAlmostEqual(kwp1, 300.0, places=1)
+        self.assertAlmostEqual(share1, 30.5, places=1)
+
+        # Share (%) -> Direct kWp
+        kwp2, share2 = compute_synced_solar_pair(
+            sizing_method="target_share_pct",
+            direct_kwp=300.0,
+            target_share_pct=50.0,
+            annual_consumption_kwh=2000000.0,
+            specific_yield_kwh_per_kwp=1000.0,
+            inverter_efficiency_pct=98.0,
+        )
+        self.assertAlmostEqual(kwp2, 1000.0, places=1)
+        self.assertAlmostEqual(share2, 50.0, places=1)
+
+        sub2_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "views", "subtab2_solar.py")
+        )
+        with open(sub2_path, "r", encoding="utf-8") as f:
+            sub2_src = f.read()
+        self.assertIn("Your Solar System at a Glance", sub2_src)
+        self.assertNotIn("st.info(solar_deriv.formula_text", sub2_src)
+        self.assertIn("compute_synced_solar_pair", sub2_src)
+
+        cfg_sol = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=300.0,
+        )
+        sim_sol = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg_sol, InteractionRulesConfig())
+        fig_sol = create_combined_dispatch_soc_figure(sim_sol, timeframe="7D")
+        sol_traces = [t for t in fig_sol.data if str(getattr(t, "name", "")).startswith("Inverter Limit (")]
+        self.assertEqual(len(sol_traces), 1)
+        self.assertEqual(sol_traces[0].y.dtype, np.float32)
+
+        # Unclipped solar potential exceeds the inverter AC limit while actual solar_gen_kw stays capped
+        self.assertIsNotNone(sim_sol.solar_potential_kw)
+        inv_kw = float(sim_sol.solar_derivation.inverter_ac_kw)
+        self.assertGreater(float(np.max(sim_sol.solar_potential_kw)), inv_kw)
+        self.assertLessEqual(float(np.max(sim_sol.solar_gen_kw)), inv_kw + 1e-6)
+        pot_traces = [t for t in fig_sol.data if getattr(t, "name", "") == "Solar Total Potential (kW)"]
+        self.assertEqual(len(pot_traces), 1)
+        self.assertGreater(float(np.nanmax(pot_traces[0].y)), inv_kw)
+
+    def test_solar_weather_data_source_specific_year_and_tmy(self):
+        """Verifies default solar_weather_mode='single_year' (2025), switching to 'TMY', and fingerprint invalidation."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            get_unit_solar_generation_profile,
+        )
+        from current_model.ui_sandbox.Combined_sandbox.views.state_and_helpers import _physical_sys_tuple
+
+        default_cfg = CombinedSystemConfig()
+        self.assertEqual(default_cfg.solar_weather_mode, "single_year")
+        self.assertEqual(default_cfg.solar_weather_year, 2025)
+
+        tmy_cfg = CombinedSystemConfig(solar_weather_mode="TMY", solar_weather_year=2025)
+        self.assertNotEqual(_physical_sys_tuple(default_cfg), _physical_sys_tuple(tmy_cfg))
+
+        _, sy_2025, lbl_2025 = get_unit_solar_generation_profile(
+            latitude=52.3676,
+            longitude=4.9041,
+            weather_mode="single_year",
+            selected_year=2025,
+        )
+        _, sy_tmy, lbl_tmy = get_unit_solar_generation_profile(
+            latitude=52.3676,
+            longitude=4.9041,
+            weather_mode="TMY",
+            selected_year=2025,
+        )
+        self.assertGreater(sy_2025, 500.0)
+        self.assertGreater(sy_tmy, 500.0)
+        self.assertNotIn("TMY", lbl_2025)
+        self.assertIn("TMY", lbl_tmy)
+
+        sub2_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "views", "subtab2_solar.py")
+        )
+        with open(sub2_path, "r", encoding="utf-8") as f:
+            sub2_src = f.read()
+        self.assertIn("Weather Data Source", sub2_src)
+        self.assertIn("Specific Year (Solar Data)", sub2_src)
+        self.assertIn("Typical Year (PVGIS TMY)", sub2_src)
+        self.assertIn("search_locations_open_meteo(clean_q, count=8)", sub2_src)
+        self.assertIn("Multiple matching places found", sub2_src)
+        self.assertIn("Use Selected Location", sub2_src)
 
 
 if __name__ == "__main__":

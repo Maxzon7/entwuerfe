@@ -260,6 +260,8 @@ def _physical_sys_tuple(sys_cfg: CombinedSystemConfig) -> Tuple:
         round(float(sys_cfg.target_consumption_share_pct), 2),
         round(float(sys_cfg.inverter_ac_limit_kw), 2),
         round(float(sys_cfg.inverter_efficiency_pct), 2),
+        str(getattr(sys_cfg, "solar_weather_mode", "single_year")),
+        int(getattr(sys_cfg, "solar_weather_year", 2025)),
         bool(sys_cfg.enable_battery),
         round(float(sys_cfg.battery_capacity_kwh), 2),
         round(float(sys_cfg.battery_power_kw), 2),
@@ -316,14 +318,65 @@ def _activate_module_callback(toggle_key: str) -> None:
     st.session_state.pop("comb_cached_excel_bytes", None)
 
 
+def compute_synced_solar_pair(
+    sizing_method: str,
+    direct_kwp: float,
+    target_share_pct: float,
+    annual_consumption_kwh: float,
+    specific_yield_kwh_per_kwp: float,
+    inverter_efficiency_pct: float = 98.0,
+) -> Tuple[float, float]:
+    """
+    Synchronizes `(solar_kwp, target_share_pct)` two-way based on the active sizing mode:
+      - `target_share_pct` -> computes matching `solar_kwp`
+      - `direct_kwp` -> computes matching `target_share_pct`
+    """
+    spec_y = max(100.0, float(specific_yield_kwh_per_kwp))
+    ann_load = max(0.0, float(annual_consumption_kwh))
+    eff_factor = float(np.clip(inverter_efficiency_pct, 80.0, 100.0)) / 98.0
+    if sizing_method == "target_share_pct":
+        share = max(0.1, float(target_share_pct))
+        kwp = round(max(1.0, (ann_load * (share / 100.0)) / spec_y), 1) if ann_load > 0.0 else round(max(1.0, float(direct_kwp)), 1)
+        return kwp, round(share, 1)
+    kwp = round(max(1.0, float(direct_kwp)), 1)
+    if ann_load > 0.0:
+        share = round(min(1000.0, max(0.1, (kwp * spec_y * eff_factor / ann_load) * 100.0)), 1)
+    else:
+        share = round(max(0.1, float(target_share_pct)), 1)
+    return kwp, share
+
+
 def _apply_solar_quick_share(share_pct: float) -> None:
     """Callback for Solar quick share buttons (20%, 40%, 60%, 100%)."""
     cfg: CombinedSystemConfig = st.session_state["comb_system_cfg"]
     cfg.solar_sizing_method = "target_share_pct"
     cfg.target_consumption_share_pct = float(share_pct)
     cfg.inverter_ac_limit_kw = 0.0
+    load_series: Optional[LoadSeries2025] = st.session_state.get("comb_active_load_series")
+    ann_kwh = float(load_series.total_energy_kwh) if load_series is not None else 0.0
+    eff_lat = float(st.session_state.get("comb_solar_lat", cfg.latitude))
+    eff_lon = float(st.session_state.get("comb_solar_lon", cfg.longitude))
+    _, spec_yield, _ = get_unit_solar_generation_profile(
+        latitude=eff_lat,
+        longitude=eff_lon,
+        tilt_deg=float(cfg.tilt_deg),
+        azimuth_deg=180.0 if eff_lat >= 0.0 else 0.0,
+        dc_ac_ratio=float(cfg.dc_ac_ratio),
+        weather_mode=str(getattr(cfg, "solar_weather_mode", "single_year")),
+        selected_year=int(getattr(cfg, "solar_weather_year", 2025)),
+    )
+    synced_kwp, synced_share = compute_synced_solar_pair(
+        sizing_method="target_share_pct",
+        direct_kwp=float(cfg.solar_kwp),
+        target_share_pct=float(share_pct),
+        annual_consumption_kwh=ann_kwh,
+        specific_yield_kwh_per_kwp=spec_yield,
+        inverter_efficiency_pct=float(cfg.inverter_efficiency_pct),
+    )
+    cfg.solar_kwp = float(synced_kwp)
     st.session_state["comb_solar_sizing_radio"] = "% of Annual Consumption"
-    st.session_state["comb_solar_target_share_num"] = float(share_pct)
+    st.session_state["comb_solar_target_share_num"] = float(synced_share)
+    st.session_state["comb_solar_direct_kwp_num"] = float(synced_kwp)
     st.session_state.pop("comb_solar_inv_ac_limit_num", None)
     st.session_state.pop("comb_cached_excel_bytes", None)
 

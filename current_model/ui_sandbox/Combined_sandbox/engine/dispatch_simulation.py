@@ -628,12 +628,16 @@ def simulate_combined_system_dispatch(
 
     # 1. Solar Profile & Derivation
     azim = 180.0 if system_cfg.latitude >= 0.0 else 0.0
-    unit_solar_kw, spec_yield, _ = get_unit_solar_generation_profile(
+    w_mode = str(getattr(system_cfg, "solar_weather_mode", "single_year") or "single_year")
+    w_year = int(getattr(system_cfg, "solar_weather_year", 2025) or 2025)
+    unit_solar_kw, spec_yield, solar_src_label = get_unit_solar_generation_profile(
         latitude=system_cfg.latitude,
         longitude=system_cfg.longitude,
         tilt_deg=system_cfg.tilt_deg,
         azimuth_deg=azim,
         dc_ac_ratio=system_cfg.dc_ac_ratio,
+        weather_mode=w_mode,
+        selected_year=w_year,
     )
     if len(unit_solar_kw) != n_steps:
         reps = int(math.ceil(n_steps / max(1, len(unit_solar_kw))))
@@ -650,6 +654,7 @@ def simulate_combined_system_dispatch(
         enable_solar=system_cfg.enable_solar,
         inverter_ac_limit_kw=getattr(system_cfg, "inverter_ac_limit_kw", 0.0),
         inverter_efficiency_pct=getattr(system_cfg, "inverter_efficiency_pct", 98.0),
+        data_source_label=solar_src_label,
     )
 
     if system_cfg.enable_solar and solar_derivation.installed_kwp > 0.0:
@@ -657,8 +662,23 @@ def simulate_combined_system_dispatch(
         solar_gen_kw = unit_solar_kw * solar_derivation.installed_kwp * eff_scale
         if solar_derivation.inverter_ac_kw > 0.0:
             solar_gen_kw = np.minimum(solar_gen_kw, solar_derivation.inverter_ac_kw)
+
+        unit_potential_kw, _, _ = get_unit_solar_generation_profile(
+            latitude=system_cfg.latitude,
+            longitude=system_cfg.longitude,
+            tilt_deg=system_cfg.tilt_deg,
+            azimuth_deg=azim,
+            dc_ac_ratio=1.0,
+            weather_mode=w_mode,
+            selected_year=w_year,
+        )
+        if len(unit_potential_kw) != n_steps:
+            reps_pot = int(math.ceil(n_steps / max(1, len(unit_potential_kw))))
+            unit_potential_kw = np.tile(unit_potential_kw, reps_pot)[:n_steps]
+        solar_potential_kw = unit_potential_kw * solar_derivation.installed_kwp * eff_scale
     else:
         solar_gen_kw = np.zeros(n_steps, dtype=float)
+        solar_potential_kw = np.zeros(n_steps, dtype=float)
 
     fuel_spec = FUEL_SPECS.get(system_cfg.fuel_type, FUEL_SPECS["Diesel"])
     fuel_unit = str(fuel_spec["unit"])
@@ -855,6 +875,7 @@ def simulate_combined_system_dispatch(
         grid_import_kw=grid_import_kw,
         unmet_overload_kw=unmet_overload_kw,
         is_gap=gap_mask,
+        solar_potential_kw=solar_potential_kw,
         summary_table_df=summary_df,
         monthly_balance_df=monthly_df,
     )

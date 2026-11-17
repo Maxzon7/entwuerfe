@@ -194,7 +194,7 @@ def create_combined_dispatch_soc_figure(
           * BESS Discharge (kW) green area (#22C55E) when Battery enabled
           * BESS Charge (kW, shown negative) cyan dotted area (#06B6D4) when Battery enabled
           * Generator Output (kW) orange area (#F97316) when Generator enabled
-          * Remaining Deficit (kW) red area (#EF4444) highlighting any unmet overload
+          * Grid Excess (kW) red area (#EF4444) highlighting any unmet overload
           * Red dashed Grid Limit line (#F87171) with top-left annotation
       - Lower Subplot (Synchronized X-Axis):
           * Battery State of Charge (% and stored kWh)
@@ -209,7 +209,12 @@ def create_combined_dispatch_soc_figure(
     """
     ts = sim_res.timestamps
     p_load = np.asarray(sim_res.load_kw, dtype=np.float32)
-    p_solar_gen = np.asarray(sim_res.solar_gen_kw, dtype=np.float32)
+    raw_solar_pot = (
+        sim_res.solar_potential_kw
+        if getattr(sim_res, "solar_potential_kw", None) is not None
+        else sim_res.solar_gen_kw
+    )
+    p_solar_gen = np.asarray(raw_solar_pot, dtype=np.float32)
     p_solar_dir = np.asarray(sim_res.solar_direct_kw, dtype=np.float32)
     p_bess_dis = np.asarray(sim_res.bess_discharge_kw, dtype=np.float32)
     p_bess_chg = np.asarray(
@@ -372,19 +377,19 @@ def create_combined_dispatch_soc_figure(
             col=1,
         )
 
-    # 6. Remaining Deficit (highlighted in red)
+    # 6. Grid Excess (highlighted in red)
     if float(np.nanmax(p_unmet)) > 0.05:
         fig.add_trace(
             go.Scattergl(
                 x=ts,
                 y=p_unmet,
                 mode="lines",
-                name="Remaining Deficit (kW)",
+                name="Grid Excess (kW)",
                 connectgaps=False,
                 line=dict(color="#EF4444", width=1.8),
                 fill="tozeroy",
                 fillcolor="rgba(239, 68, 68, 0.45)",
-                hovertemplate="Remaining Deficit: <b>%{y:,.1f} kW</b><extra></extra>",
+                hovertemplate="Grid Excess: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
             col=1,
@@ -400,6 +405,27 @@ def create_combined_dispatch_soc_figure(
         annotation_position="top left",
         annotation_font_color="#F87171",
     )
+
+    # 8. Yellow dashed Inverter AC Limit line (clickable in legend to show/hide)
+    if (
+        cfg.enable_solar
+        and sim_res.solar_derivation is not None
+        and float(getattr(sim_res.solar_derivation, "inverter_ac_kw", 0.0)) > 0.0
+        and len(ts) > 0
+    ):
+        inv_kw = float(sim_res.solar_derivation.inverter_ac_kw)
+        fig.add_trace(
+            go.Scattergl(
+                x=ts,
+                y=np.full(len(ts), inv_kw, dtype=np.float32),
+                mode="lines",
+                name=f"Inverter Limit ({inv_kw:,.0f} kW)",
+                line=dict(color="#FACC15", width=1.6, dash="dash"),
+                hovertemplate="Inverter AC Limit: <b>%{y:,.1f} kW</b><extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
 
     # --- ROW 2: Battery SoC (% & kWh) & Generator Active Phases ---
     if cfg.enable_generator:

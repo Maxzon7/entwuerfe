@@ -145,6 +145,8 @@ class CombinedSystemConfig:
     target_consumption_share_pct: float = 60.0
     inverter_ac_limit_kw: float = 0.0              # 0.0 = auto from installed_kwp / dc_ac_ratio; >0 = explicit AC limit
     inverter_efficiency_pct: float = 98.0
+    solar_weather_mode: str = "single_year"        # "single_year" (concrete year e.g. 2025) | "TMY"
+    solar_weather_year: int = 2025                 # Reference year when solar_weather_mode == "single_year"
 
     # Sub-Tab 3: Battery
     enable_battery: bool = True
@@ -566,6 +568,7 @@ class CombinedSimulationResult:
     grid_import_kw: np.ndarray
     unmet_overload_kw: np.ndarray
     is_gap: np.ndarray = field(default_factory=lambda: np.zeros(35040, dtype=bool))
+    solar_potential_kw: Optional[np.ndarray] = None
 
     # Tables
     summary_table_df: pd.DataFrame = field(default_factory=pd.DataFrame)
