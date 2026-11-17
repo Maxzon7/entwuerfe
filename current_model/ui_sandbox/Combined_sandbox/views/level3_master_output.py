@@ -8,6 +8,7 @@ import numpy as np
 import streamlit as st
 
 from .state_and_helpers import (
+    DEFAULT_POWERFLOW_COLORS,
     render_kpi_card,
     create_combined_dispatch_soc_figure,
     build_combined_verification_excel_bytes,
@@ -148,7 +149,11 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
             st.write("")
             _render_excel_export_fragment(sim_res)
 
-        fig_master = create_combined_dispatch_soc_figure(sim_res=sim_res)
+        color_overrides = dict(st.session_state.get("comb_powerflow_colors") or DEFAULT_POWERFLOW_COLORS)
+        fig_master = create_combined_dispatch_soc_figure(
+            sim_res=sim_res,
+            color_overrides=color_overrides,
+        )
         st.plotly_chart(
             fig_master,
             use_container_width=True,
@@ -159,6 +164,40 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
             },
             key="comb_master_dispatch_chart",
         )
+
+        with st.expander("Customize Chart Colors", expanded=False, icon=":material/palette:"):
+            st.caption("Adjust the line and fill colors of each component in the Power Flow chart.")
+            cc1, cc2, cc3, cc4 = st.columns(4)
+            updated_colors = dict(color_overrides)
+            with cc1:
+                st.markdown("**Load & Grid**")
+                updated_colors["facility_load"] = st.color_picker("Facility Load", color_overrides["facility_load"], key="comb_clr_facility_load")
+                updated_colors["grid_import"] = st.color_picker("Grid Import", color_overrides["grid_import"], key="comb_clr_grid_import")
+                updated_colors["grid_limit"] = st.color_picker("Grid Limit", color_overrides["grid_limit"], key="comb_clr_grid_limit")
+                updated_colors["grid_excess"] = st.color_picker("Grid Excess", color_overrides["grid_excess"], key="comb_clr_grid_excess")
+            with cc2:
+                st.markdown("**Solar**")
+                updated_colors["solar_direct"] = st.color_picker("Solar Direct", color_overrides["solar_direct"], key="comb_clr_solar_direct")
+                updated_colors["solar_production"] = st.color_picker("Solar Production", color_overrides["solar_production"], key="comb_clr_solar_production")
+                updated_colors["solar_potential"] = st.color_picker("Solar Potential", color_overrides["solar_potential"], key="comb_clr_solar_potential")
+                updated_colors["inverter_limit"] = st.color_picker("Inverter Limit", color_overrides["inverter_limit"], key="comb_clr_inverter_limit")
+            with cc3:
+                st.markdown("**Battery**")
+                updated_colors["bess_discharge"] = st.color_picker("BESS Discharge", color_overrides["bess_discharge"], key="comb_clr_bess_discharge")
+                updated_colors["bess_charge"] = st.color_picker("BESS Charge", color_overrides["bess_charge"], key="comb_clr_bess_charge")
+                updated_colors["bess_soc"] = st.color_picker("Battery SoC (%)", color_overrides["bess_soc"], key="comb_clr_bess_soc")
+            with cc4:
+                st.markdown("**Generator & Reset**")
+                updated_colors["generator_output"] = st.color_picker("Generator Output", color_overrides["generator_output"], key="comb_clr_generator_output")
+                st.write("")
+                if st.button("Reset Default Colors", icon=":material/restart_alt:", use_container_width=True, key="comb_clr_reset_btn"):
+                    st.session_state["comb_powerflow_colors"] = dict(DEFAULT_POWERFLOW_COLORS)
+                    for ck, cv in DEFAULT_POWERFLOW_COLORS.items():
+                        st.session_state[f"comb_clr_{ck}"] = cv
+                    st.rerun(scope="fragment")
+            if updated_colors != st.session_state.get("comb_powerflow_colors"):
+                st.session_state["comb_powerflow_colors"] = updated_colors
+                st.rerun(scope="fragment")
 
 
 def render_level3_permanent_master_output(sim_res) -> None:

@@ -4,7 +4,7 @@ and physical summary & 12-month balance tables.
 """
 
 from dataclasses import replace
-from typing import Optional
+from typing import Any, Dict, Optional
 import math
 import numpy as np
 import pandas as pd
@@ -84,6 +84,7 @@ def compute_coordinated_mix_sizing(
         enable_solar=eff_solar_enabled,
         inverter_ac_limit_kw=system_cfg.inverter_ac_limit_kw,
         inverter_efficiency_pct=system_cfg.inverter_efficiency_pct,
+        disable_inverter_limit=bool(getattr(system_cfg, "disable_solar_inverter_limit", False)),
     )
     if eff_solar_enabled and solar_deriv.installed_kwp > 0.0:
         eff_scale = solar_deriv.inverter_efficiency_pct / 98.0
@@ -691,3 +692,89 @@ def build_monthly_balance_table(
             "Remaining Overload (kWh)": round(float(over_kwh_m[m]), 1),
         })
     return pd.DataFrame(rows)
+
+
+def compute_standalone_solar_production_summary(
+    system_cfg: CombinedSystemConfig,
+    solar_derivation: SolarDerivationInfo,
+    n_steps: int = 35040,
+    step_hours: float = 0.25,
+) -> Dict[str, Any]:
+    """
+    Computes pure, consumption-independent Solar PV AC production (respecting the active
+    Inverter AC Limit) alongside unclipped Solar Total Potential and inverter clipping KPIs.
+    """
+    dt = float(step_hours)
+    steps = max(1, int(n_steps))
+    installed_kwp = float(getattr(solar_derivation, "installed_kwp", 0.0) or 0.0)
+    inv_kw = float(getattr(solar_derivation, "inverter_ac_kw", 0.0) or 0.0)
+    inv_eff_pct = float(getattr(solar_derivation, "inverter_efficiency_pct", 98.0) or 98.0)
+
+    if not bool(getattr(system_cfg, "enable_solar", False)) or installed_kwp <= 0.0:
+        zeros = np.zeros(steps, dtype=float)
+        return {
+            "solar_production_kw": zeros,
+            "solar_potential_kw": zeros.copy(),
+            "inverter_ac_kw": 0.0,
+            "installed_kwp": 0.0,
+            "production_kwh": 0.0,
+            "potential_kwh": 0.0,
+            "clipping_loss_kwh": 0.0,
+            "clipping_loss_pct": 0.0,
+            "captured_pct": 0.0,
+            "peak_production_kw": 0.0,
+            "peak_potential_kw": 0.0,
+            "clipped_hours": 0.0,
+            "active_hours": 0.0,
+            "full_load_hours": 0.0,
+            "specific_yield_after_inv_kwh_kwp": 0.0,
+        }
+
+    lat = float(system_cfg.latitude)
+    lon = float(system_cfg.longitude)
+    azim = 180.0 if lat >= 0.0 else 0.0
+    w_mode = str(getattr(system_cfg, "solar_weather_mode", "single_year") or "single_year")
+    w_year = int(getattr(system_cfg, "solar_weather_year", 2025) or 2025)
+
+    unit_pot_kw, _, _ = get_unit_solar_generation_profile(
+        latitude=lat,
+        longitude=lon,
+        tilt_deg=float(system_cfg.tilt_deg),
+        azimuth_deg=azim,
+        dc_ac_ratio=1.0,
+        weather_mode=w_mode,
+        selected_year=w_year,
+    )
+    if len(unit_pot_kw) != steps:
+        reps = int(math.ceil(steps / max(1, len(unit_pot_kw))))
+        unit_pot_kw = np.tile(unit_pot_kw, reps)[:steps]
+
+    eff_scale = inv_eff_pct / 98.0
+    solar_pot_kw = np.maximum(0.0, unit_pot_kw * installed_kwp * eff_scale)
+    solar_prod_kw = np.minimum(solar_pot_kw, inv_kw) if inv_kw > 0.0 else solar_pot_kw.copy()
+
+    prod_kwh = float(np.sum(solar_prod_kw) * dt)
+    pot_kwh = float(np.sum(solar_pot_kw) * dt)
+    clip_arr = np.maximum(0.0, solar_pot_kw - solar_prod_kw)
+    clip_kwh = float(np.sum(clip_arr) * dt)
+    clip_pct = (clip_kwh / pot_kwh * 100.0) if pot_kwh > 0.0 else 0.0
+    captured_pct = (prod_kwh / pot_kwh * 100.0) if pot_kwh > 0.0 else 0.0
+    full_load_hrs = (prod_kwh / installed_kwp) if installed_kwp > 0.0 else 0.0
+
+    return {
+        "solar_production_kw": solar_prod_kw,
+        "solar_potential_kw": solar_pot_kw,
+        "inverter_ac_kw": round(inv_kw, 1),
+        "installed_kwp": round(installed_kwp, 1),
+        "production_kwh": round(prod_kwh, 0),
+        "potential_kwh": round(pot_kwh, 0),
+        "clipping_loss_kwh": round(clip_kwh, 0),
+        "clipping_loss_pct": round(clip_pct, 1),
+        "captured_pct": round(captured_pct, 1),
+        "peak_production_kw": round(float(np.max(solar_prod_kw)), 1),
+        "peak_potential_kw": round(float(np.max(solar_pot_kw)), 1),
+        "clipped_hours": round(float(np.sum(clip_arr > 0.05) * dt), 1),
+        "active_hours": round(float(np.sum(solar_prod_kw > 0.1) * dt), 1),
+        "full_load_hours": round(full_load_hrs, 0),
+        "specific_yield_after_inv_kwh_kwp": round(full_load_hrs, 0),
+    }

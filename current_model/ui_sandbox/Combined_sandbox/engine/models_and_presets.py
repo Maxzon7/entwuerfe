@@ -144,6 +144,7 @@ class CombinedSystemConfig:
     dc_ac_ratio: float = 1.18
     target_consumption_share_pct: float = 60.0
     inverter_ac_limit_kw: float = 0.0              # 0.0 = auto from installed_kwp / dc_ac_ratio; >0 = explicit AC limit
+    disable_solar_inverter_limit: bool = False     # True = no AC clipping limit (100% unclipped output)
     inverter_efficiency_pct: float = 98.0
     solar_weather_mode: str = "single_year"        # "single_year" (concrete year e.g. 2025) | "TMY"
     solar_weather_year: int = 2025                 # Reference year when solar_weather_mode == "single_year"

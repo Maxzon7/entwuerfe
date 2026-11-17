@@ -3,7 +3,7 @@ Interactive Plotly visualizations for baseline consumption, synchronized 15-minu
 dispatch & battery SoC, supply mix donut, and component utilization bars.
 """
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -13,6 +13,41 @@ from ..combined_sandbox_engine import (
     CombinedSimulationResult,
     SystemUtilizationDiagnostics,
 )
+
+DEFAULT_POWERFLOW_COLORS: Dict[str, str] = {
+    "facility_load": "#94A3B8",
+    "grid_import": "#3B82F6",
+    "grid_limit": "#F87171",
+    "grid_excess": "#EF4444",
+    "solar_direct": "#FACC15",
+    "solar_production": "#F59E0B",
+    "solar_potential": "#E879F9",
+    "inverter_limit": "#FACC15",
+    "bess_discharge": "#22C55E",
+    "bess_charge": "#06B6D4",
+    "bess_soc": "#A78BFA",
+    "generator_output": "#F97316",
+}
+
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    h = str(hex_color or "").strip().lstrip("#")
+    if len(h) == 6:
+        try:
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            return f"rgba({r}, {g}, {b}, {alpha:.2f})"
+        except ValueError:
+            pass
+    return f"rgba(148, 163, 184, {alpha:.2f})"
+
+
+def _resolve_colors(color_overrides: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    merged = dict(DEFAULT_POWERFLOW_COLORS)
+    if isinstance(color_overrides, dict):
+        for k, v in color_overrides.items():
+            if k in merged and isinstance(v, str) and v.startswith("#"):
+                merged[k] = v
+    return merged
 
 def _resolve_window_slice(
     timestamps: pd.DatetimeIndex,
@@ -183,6 +218,7 @@ def create_combined_dispatch_soc_figure(
     initial_range: Optional[List[Any]] = None,
     timeframe: Optional[str] = None,
     height: int = 780,
+    color_overrides: Optional[Dict[str, str]] = None,
 ) -> go.Figure:
     """
     Creates the Synchronized 2-in-1 15-Minute Master Chart matching BESS Sandbox Standard:
@@ -190,7 +226,8 @@ def create_combined_dispatch_soc_figure(
           * Facility Load (kW) line (#94A3B8)
           * Grid Import (kW) line (#3B82F6) capped at Grid Limit
           * Solar Direct (kW) yellow area (#FACC15) when Solar enabled
-          * Solar Total Potential (kW) dashed amber line (#F59E0B), hidden by default
+          * Solar Production (kW) solid amber-gold line (#F59E0B), respecting Inverter Limit, hidden by default
+          * Solar Total Potential (kW) dashed orchid line (#E879F9), unclipped max, hidden by default
           * BESS Discharge (kW) green area (#22C55E) when Battery enabled
           * BESS Charge (kW, shown negative) cyan dotted area (#06B6D4) when Battery enabled
           * Generator Output (kW) orange area (#F97316) when Generator enabled
@@ -214,7 +251,8 @@ def create_combined_dispatch_soc_figure(
         if getattr(sim_res, "solar_potential_kw", None) is not None
         else sim_res.solar_gen_kw
     )
-    p_solar_gen = np.asarray(raw_solar_pot, dtype=np.float32)
+    p_solar_prod = np.asarray(sim_res.solar_gen_kw, dtype=np.float32)
+    p_solar_pot = np.asarray(raw_solar_pot, dtype=np.float32)
     p_solar_dir = np.asarray(sim_res.solar_direct_kw, dtype=np.float32)
     p_bess_dis = np.asarray(sim_res.bess_discharge_kw, dtype=np.float32)
     p_bess_chg = np.asarray(
@@ -235,7 +273,8 @@ def create_combined_dispatch_soc_figure(
     if is_gap is not None and np.any(is_gap):
         gap_b = np.asarray(is_gap, dtype=bool)
         p_load = np.where(gap_b, np.nan, p_load)
-        p_solar_gen = np.where(gap_b, np.nan, p_solar_gen)
+        p_solar_prod = np.where(gap_b, np.nan, p_solar_prod)
+        p_solar_pot = np.where(gap_b, np.nan, p_solar_pot)
         p_solar_dir = _mask_gap_for_webgl_fill(p_solar_dir, gap_b)
         p_bess_dis = _mask_gap_for_webgl_fill(p_bess_dis, gap_b)
         p_bess_chg = _mask_gap_for_webgl_fill(p_bess_chg, gap_b)
@@ -248,6 +287,7 @@ def create_combined_dispatch_soc_figure(
 
     cfg = sim_res.system_config
     rules = sim_res.rules_config
+    c = _resolve_colors(color_overrides)
 
     fig = make_subplots(
         rows=2,
@@ -271,7 +311,7 @@ def create_combined_dispatch_soc_figure(
             mode="lines",
             name="Facility Load (kW)",
             connectgaps=False,
-            line=dict(color="#94A3B8", width=1.0),
+            line=dict(color=c["facility_load"], width=1.0),
             hovertemplate="Load: <b>%{y:,.1f} kW</b><extra></extra>",
         ),
         row=1,
@@ -286,14 +326,14 @@ def create_combined_dispatch_soc_figure(
             mode="lines",
             name="Grid Import (kW)",
             connectgaps=False,
-            line=dict(color="#3B82F6", width=1.4),
+            line=dict(color=c["grid_import"], width=1.4),
             hovertemplate="Grid: <b>%{y:,.1f} kW</b><extra></extra>",
         ),
         row=1,
         col=1,
     )
 
-    # 3. Solar Direct & Total Potential (when enabled)
+    # 3. Solar Direct, Production & Total Potential (when enabled)
     if cfg.enable_solar:
         fig.add_trace(
             go.Scattergl(
@@ -302,9 +342,9 @@ def create_combined_dispatch_soc_figure(
                 mode="lines",
                 name="Solar Direct (kW)",
                 connectgaps=False,
-                line=dict(color="#FACC15", width=1.0),
+                line=dict(color=c["solar_direct"], width=1.0),
                 fill="tozeroy",
-                fillcolor="rgba(250, 204, 21, 0.25)",
+                fillcolor=_hex_to_rgba(c["solar_direct"], 0.25),
                 hovertemplate="Solar Direct: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
@@ -313,13 +353,27 @@ def create_combined_dispatch_soc_figure(
         fig.add_trace(
             go.Scattergl(
                 x=ts,
-                y=p_solar_gen,
+                y=p_solar_prod,
+                mode="lines",
+                name="Solar Production (kW)",
+                connectgaps=False,
+                line=dict(color=c["solar_production"], width=1.8),
+                visible="legendonly",
+                hovertemplate="Solar Production (AC, w/ Inverter Limit): <b>%{y:,.1f} kW</b><extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scattergl(
+                x=ts,
+                y=p_solar_pot,
                 mode="lines",
                 name="Solar Total Potential (kW)",
                 connectgaps=False,
-                line=dict(color="#F59E0B", width=1.2, dash="dash"),
+                line=dict(color=c["solar_potential"], width=1.5, dash="dash"),
                 visible="legendonly",
-                hovertemplate="Solar Total Potential: <b>%{y:,.1f} kW</b><extra></extra>",
+                hovertemplate="Solar Total Potential (Unclipped): <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
             col=1,
@@ -334,9 +388,9 @@ def create_combined_dispatch_soc_figure(
                 mode="lines",
                 name="BESS Discharge (kW)",
                 connectgaps=False,
-                line=dict(color="#22C55E", width=1.0),
+                line=dict(color=c["bess_discharge"], width=1.0),
                 fill="tozeroy",
-                fillcolor="rgba(34, 197, 94, 0.25)",
+                fillcolor=_hex_to_rgba(c["bess_discharge"], 0.25),
                 hovertemplate="Discharge: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
@@ -350,9 +404,9 @@ def create_combined_dispatch_soc_figure(
                 mode="lines",
                 name="BESS Charge (kW, shown negative)",
                 connectgaps=False,
-                line=dict(color="#06B6D4", width=1.0, dash="dot"),
+                line=dict(color=c["bess_charge"], width=1.0, dash="dot"),
                 fill="tozeroy",
-                fillcolor="rgba(6, 182, 212, 0.18)",
+                fillcolor=_hex_to_rgba(c["bess_charge"], 0.18),
                 hovertemplate="Charge: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
@@ -368,9 +422,9 @@ def create_combined_dispatch_soc_figure(
                 mode="lines",
                 name="Generator Output (kW)",
                 connectgaps=False,
-                line=dict(color="#F97316", width=1.1),
+                line=dict(color=c["generator_output"], width=1.1),
                 fill="tozeroy",
-                fillcolor="rgba(249, 115, 22, 0.35)",
+                fillcolor=_hex_to_rgba(c["generator_output"], 0.35),
                 hovertemplate="Generator Output: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
@@ -386,9 +440,9 @@ def create_combined_dispatch_soc_figure(
                 mode="lines",
                 name="Grid Excess (kW)",
                 connectgaps=False,
-                line=dict(color="#EF4444", width=1.8),
+                line=dict(color=c["grid_excess"], width=1.8),
                 fill="tozeroy",
-                fillcolor="rgba(239, 68, 68, 0.45)",
+                fillcolor=_hex_to_rgba(c["grid_excess"], 0.45),
                 hovertemplate="Grid Excess: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
@@ -400,10 +454,10 @@ def create_combined_dispatch_soc_figure(
         y=cfg.grid_limit_kw,
         row=1,
         col=1,
-        line=dict(color="#F87171", width=1.6, dash="dash"),
+        line=dict(color=c["grid_limit"], width=1.6, dash="dash"),
         annotation_text=f"Grid Limit {cfg.grid_limit_kw:,.0f} kW",
         annotation_position="top left",
-        annotation_font_color="#F87171",
+        annotation_font_color=c["grid_limit"],
     )
 
     # 8. Yellow dashed Inverter AC Limit line (clickable in legend to show/hide)
@@ -420,7 +474,7 @@ def create_combined_dispatch_soc_figure(
                 y=np.full(len(ts), inv_kw, dtype=np.float32),
                 mode="lines",
                 name=f"Inverter Limit ({inv_kw:,.0f} kW)",
-                line=dict(color="#FACC15", width=1.6, dash="dash"),
+                line=dict(color=c["inverter_limit"], width=1.6, dash="dash"),
                 hovertemplate="Inverter AC Limit: <b>%{y:,.1f} kW</b><extra></extra>",
             ),
             row=1,
@@ -436,9 +490,9 @@ def create_combined_dispatch_soc_figure(
                 mode="lines",
                 name="Generator Active",
                 connectgaps=False,
-                line=dict(width=0.0, color="rgba(249, 115, 22, 0.0)"),
+                line=dict(width=0.0, color=_hex_to_rgba(c["generator_output"], 0.0)),
                 fill="tozeroy",
-                fillcolor="rgba(249, 115, 22, 0.22)",
+                fillcolor=_hex_to_rgba(c["generator_output"], 0.22),
                 hovertemplate="Generator Active: %{y:.0f}%<extra></extra>",
             ),
             row=2,
@@ -455,9 +509,9 @@ def create_combined_dispatch_soc_figure(
                 mode="lines",
                 name="SoC (%)",
                 connectgaps=False,
-                line=dict(color="#A78BFA", width=1.6),
+                line=dict(color=c["bess_soc"], width=1.6),
                 fill="tozeroy",
-                fillcolor="rgba(167, 139, 250, 0.15)",
+                fillcolor=_hex_to_rgba(c["bess_soc"], 0.15),
                 hovertemplate="SoC: <b>%{y:.1f} %</b><extra></extra>",
             ),
             row=2,
@@ -810,5 +864,85 @@ def create_component_utilization_bars_figure(
             bgcolor="rgba(0,0,0,0)",
             font=dict(size=11),
         ),
+    )
+    return fig
+
+
+def create_solar_production_figure(
+    timestamps: pd.DatetimeIndex,
+    solar_production_kw: np.ndarray,
+    solar_potential_kw: np.ndarray,
+    inverter_ac_kw: float = 0.0,
+    initial_range: Optional[List[Any]] = None,
+    height: int = 430,
+    color_overrides: Optional[Dict[str, str]] = None,
+) -> go.Figure:
+    """
+    Standalone consumption-independent WebGL chart comparing Solar Production (kW),
+    unclipped Solar Total Potential (kW), and optional Inverter Limit (kW).
+    """
+    ts = timestamps
+    prod_arr = np.asarray(solar_production_kw, dtype=np.float32)
+    pot_arr = np.asarray(solar_potential_kw, dtype=np.float32)
+    c = _resolve_colors(color_overrides)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scattergl(
+            x=ts,
+            y=prod_arr,
+            mode="lines",
+            name="Solar Production (kW)",
+            line=dict(color=c["solar_production"], width=2.0),
+            fill="tozeroy",
+            fillcolor=_hex_to_rgba(c["solar_production"], 0.16),
+            hovertemplate="Solar Production (Usable AC): <b>%{y:,.1f} kW</b><extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scattergl(
+            x=ts,
+            y=pot_arr,
+            mode="lines",
+            name="Solar Total Potential (kW)",
+            line=dict(color=c["solar_potential"], width=1.6, dash="dash"),
+            hovertemplate="Solar Total Potential (Unclipped): <b>%{y:,.1f} kW</b><extra></extra>",
+        )
+    )
+    inv_kw = float(inverter_ac_kw or 0.0)
+    if inv_kw > 0.0 and len(ts) > 0:
+        fig.add_trace(
+            go.Scattergl(
+                x=ts,
+                y=np.full(len(ts), inv_kw, dtype=np.float32),
+                mode="lines",
+                name=f"Inverter Limit ({inv_kw:,.0f} kW)",
+                line=dict(color=c["inverter_limit"], width=1.6, dash="dash"),
+                hovertemplate="Inverter AC Limit: <b>%{y:,.1f} kW</b><extra></extra>",
+            )
+        )
+
+    focus_range = initial_range or compute_focus_range_for_timestamps(ts, pot_arr if len(pot_arr) > 0 else prod_arr, days=7.0)
+    fig.update_layout(
+        template="plotly_dark", height=height, hovermode="x unified",
+        paper_bgcolor="rgba(15, 23, 42, 0.0)", plot_bgcolor="rgba(15, 23, 42, 0.45)",
+        margin=dict(l=55, r=25, t=65, b=45),
+        title=dict(text="Solar Production vs. Unclipped Solar Potential (kW)", font=dict(size=14, color="#F8FAFC"), x=0.0),
+        xaxis=dict(
+            title="Time (15-min intervals)", gridcolor="rgba(148, 163, 184, 0.12)", range=focus_range,
+            rangeselector=dict(
+                buttons=[
+                    dict(count=1, label="1 Day", step="day", stepmode="backward"),
+                    dict(count=7, label="1 Week", step="day", stepmode="backward"),
+                    dict(count=14, label="2 Weeks", step="day", stepmode="backward"),
+                    dict(count=1, label="1 Month", step="month", stepmode="backward"),
+                    dict(step="all", label="Full Year"),
+                ],
+                bgcolor="rgba(30, 41, 59, 0.85)", activecolor="#F59E0B", font=dict(color="#E2E8F0"),
+            ),
+            rangeslider=dict(visible=True, thickness=0.06),
+        ),
+        yaxis=dict(title="Power (kW)", gridcolor="rgba(148, 163, 184, 0.12)", rangemode="tozero"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)"),
     )
     return fig

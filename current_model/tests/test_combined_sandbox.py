@@ -1803,6 +1803,167 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("Use Selected Location", sub2_src)
         self.assertNotIn("Quick Sizing Presets (% of Annual Consumption):", sub2_src)
 
+    def test_battery_quick_size_clears_05c_lock_and_clear_table(self):
+        """Verifies _apply_bess_quick_size clears 0.5 C lock, Block 1 summary table renders, and Rule 2 banner skips Reserve % for peak_shaving_only."""
+        sub3_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "views", "subtab3_battery.py")
+        )
+        helpers_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "views", "state_and_helpers.py")
+        )
+        with open(sub3_path, "r", encoding="utf-8") as f:
+            sub3_src = f.read()
+        with open(helpers_path, "r", encoding="utf-8") as f:
+            helpers_src = f.read()
+
+        self.assertIn('st.session_state["comb_bess_lock_05c"] = False', helpers_src)
+        self.assertIn('st.session_state["comb_bess_lock_05c_box"] = False', helpers_src)
+        self.assertIn("comb_pending_bess_widget_sync", sub3_src)
+        self.assertIn("Total Battery Size Needed", sub3_src)
+        self.assertIn("Longest Peak Period", sub3_src)
+        self.assertIn('if cur_rules_ref.rule2_battery_strategy == "self_consumption_reserve"', sub3_src)
+
+    def test_standalone_solar_production_view_and_inverter_clipping(self):
+        """Verifies standalone Solar Production KPIs/chart are load-independent, respect explicit Inverter AC Limit symmetrically, and keep distinct colors/lines."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            derive_solar_sizing_and_formula,
+            compute_standalone_solar_production_summary,
+        )
+        from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
+            create_solar_production_figure,
+        )
+
+        # Tighten inverter AC limit vs loosen inverter AC limit above 1.18 ratio on 300 kWp
+        cfg_tight = CombinedSystemConfig(
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=300.0,
+            inverter_ac_limit_kw=180.0,
+        )
+        cfg_wide = CombinedSystemConfig(
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=300.0,
+            inverter_ac_limit_kw=280.0,
+        )
+
+        deriv_tight_zero_load = derive_solar_sizing_and_formula(
+            annual_consumption_kwh=0.0,
+            specific_yield_kwh_per_kwp=1000.0,
+            sizing_method="direct_kwp",
+            direct_kwp=300.0,
+            target_share_pct=60.0,
+            enable_solar=True,
+            inverter_ac_limit_kw=180.0,
+        )
+        deriv_tight_high_load = derive_solar_sizing_and_formula(
+            annual_consumption_kwh=5_000_000.0,
+            specific_yield_kwh_per_kwp=1000.0,
+            sizing_method="direct_kwp",
+            direct_kwp=300.0,
+            target_share_pct=60.0,
+            enable_solar=True,
+            inverter_ac_limit_kw=180.0,
+        )
+
+        sum_zero = compute_standalone_solar_production_summary(cfg_tight, deriv_tight_zero_load, n_steps=len(self.timestamps))
+        sum_high = compute_standalone_solar_production_summary(cfg_tight, deriv_tight_high_load, n_steps=len(self.timestamps))
+        self.assertEqual(sum_zero["production_kwh"], sum_high["production_kwh"])
+        self.assertEqual(sum_zero["clipping_loss_kwh"], sum_high["clipping_loss_kwh"])
+        self.assertLessEqual(sum_zero["peak_production_kw"], 180.05)
+        self.assertGreater(sum_zero["peak_potential_kw"], 180.0)
+        self.assertGreater(sum_zero["clipping_loss_kwh"], 0.0)
+        self.assertGreater(sum_zero["clipped_hours"], 0.0)
+
+        # Wider explicit inverter limit (280 kW > 300/1.18 = 254.2 kW) raises AC peak above 254.2 kW
+        sim_wide = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg_wide, InteractionRulesConfig())
+        if float(np.max(sim_wide.solar_potential_kw)) > 255.0:
+            self.assertGreater(float(np.max(sim_wide.solar_gen_kw)), 255.0)
+        self.assertLessEqual(float(np.max(sim_wide.solar_gen_kw)), 280.05)
+
+        # Independent lines & distinct colors in standalone Solar Production chart and Master Dispatch chart
+        fig_prod = create_solar_production_figure(
+            timestamps=self.timestamps,
+            solar_production_kw=sum_zero["solar_production_kw"],
+            solar_potential_kw=sum_zero["solar_potential_kw"],
+            inverter_ac_kw=sum_zero["inverter_ac_kw"],
+        )
+        prod_traces = {t.name: t for t in fig_prod.data}
+        self.assertIn("Solar Production (kW)", prod_traces)
+        self.assertIn("Solar Total Potential (kW)", prod_traces)
+        self.assertIn("Inverter Limit (180 kW)", prod_traces)
+        self.assertNotEqual(prod_traces["Solar Production (kW)"].line.color, prod_traces["Solar Total Potential (kW)"].line.color)
+        self.assertEqual(prod_traces["Solar Total Potential (kW)"].line.dash, "dash")
+
+        sim_tight = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg_tight, InteractionRulesConfig())
+        fig_master = create_combined_dispatch_soc_figure(sim_tight, timeframe="7D")
+        master_traces = {t.name: t for t in fig_master.data}
+        self.assertIn("Solar Production (kW)", master_traces)
+        self.assertIn("Solar Total Potential (kW)", master_traces)
+        self.assertNotEqual(master_traces["Solar Production (kW)"].line.color, master_traces["Solar Total Potential (kW)"].line.color)
+
+        sub2_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "ui_sandbox", "Combined_sandbox", "views", "subtab2_solar.py")
+        )
+        with open(sub2_path, "r", encoding="utf-8") as f:
+            sub2_src = f.read()
+        self.assertIn('st.expander("Solar Production"', sub2_src)
+        self.assertIn("_render_solar_production_fragment", sub2_src)
+
+    def test_disable_solar_inverter_limit_and_powerflow_color_overrides(self):
+        """Verifies disable_solar_inverter_limit makes 100% of solar potential usable and color_overrides updates trace colors."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            compute_standalone_solar_production_summary,
+        )
+        from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
+            create_solar_production_figure,
+        )
+
+        cfg_no_inv = CombinedSystemConfig(
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=300.0,
+            inverter_ac_limit_kw=180.0,
+            disable_solar_inverter_limit=True,
+        )
+        sim_no_inv = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg_no_inv, InteractionRulesConfig())
+        self.assertEqual(sim_no_inv.solar_derivation.inverter_ac_kw, 0.0)
+        np.testing.assert_allclose(sim_no_inv.solar_gen_kw, sim_no_inv.solar_potential_kw, rtol=1e-6, atol=1e-6)
+
+        summary_no_inv = compute_standalone_solar_production_summary(
+            cfg_no_inv, sim_no_inv.solar_derivation, n_steps=len(self.timestamps)
+        )
+        self.assertEqual(summary_no_inv["clipping_loss_kwh"], 0.0)
+        self.assertEqual(summary_no_inv["captured_pct"], 100.0)
+
+        custom_colors = {
+            "facility_load": "#112233",
+            "grid_import": "#223344",
+            "solar_direct": "#334455",
+            "solar_production": "#445566",
+            "solar_potential": "#556677",
+        }
+        fig_m = create_combined_dispatch_soc_figure(sim_no_inv, timeframe="7D", color_overrides=custom_colors)
+        m_traces = {t.name: t for t in fig_m.data}
+        self.assertEqual(m_traces["Facility Load (kW)"].line.color, "#112233")
+        self.assertEqual(m_traces["Grid Import (kW)"].line.color, "#223344")
+        self.assertEqual(m_traces["Solar Direct (kW)"].line.color, "#334455")
+        self.assertEqual(m_traces["Solar Production (kW)"].line.color, "#445566")
+        self.assertEqual(m_traces["Solar Total Potential (kW)"].line.color, "#556677")
+        self.assertFalse(any(str(t.name).startswith("Inverter Limit (") for t in fig_m.data))
+
+        fig_p = create_solar_production_figure(
+            timestamps=self.timestamps,
+            solar_production_kw=summary_no_inv["solar_production_kw"],
+            solar_potential_kw=summary_no_inv["solar_potential_kw"],
+            inverter_ac_kw=summary_no_inv["inverter_ac_kw"],
+            color_overrides=custom_colors,
+        )
+        p_traces = {t.name: t for t in fig_p.data}
+        self.assertEqual(p_traces["Solar Production (kW)"].line.color, "#445566")
+        self.assertEqual(p_traces["Solar Total Potential (kW)"].line.color, "#556677")
+        self.assertFalse(any(str(t.name).startswith("Inverter Limit (") for t in fig_p.data))
+
 
 if __name__ == "__main__":
     unittest.main()

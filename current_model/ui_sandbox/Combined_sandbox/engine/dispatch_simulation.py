@@ -655,14 +655,11 @@ def simulate_combined_system_dispatch(
         inverter_ac_limit_kw=getattr(system_cfg, "inverter_ac_limit_kw", 0.0),
         inverter_efficiency_pct=getattr(system_cfg, "inverter_efficiency_pct", 98.0),
         data_source_label=solar_src_label,
+        disable_inverter_limit=bool(getattr(system_cfg, "disable_solar_inverter_limit", False)),
     )
 
     if system_cfg.enable_solar and solar_derivation.installed_kwp > 0.0:
         eff_scale = solar_derivation.inverter_efficiency_pct / 98.0
-        solar_gen_kw = unit_solar_kw * solar_derivation.installed_kwp * eff_scale
-        if solar_derivation.inverter_ac_kw > 0.0:
-            solar_gen_kw = np.minimum(solar_gen_kw, solar_derivation.inverter_ac_kw)
-
         unit_potential_kw, _, _ = get_unit_solar_generation_profile(
             latitude=system_cfg.latitude,
             longitude=system_cfg.longitude,
@@ -676,6 +673,10 @@ def simulate_combined_system_dispatch(
             reps_pot = int(math.ceil(n_steps / max(1, len(unit_potential_kw))))
             unit_potential_kw = np.tile(unit_potential_kw, reps_pot)[:n_steps]
         solar_potential_kw = unit_potential_kw * solar_derivation.installed_kwp * eff_scale
+        if solar_derivation.inverter_ac_kw > 0.0:
+            solar_gen_kw = np.minimum(solar_potential_kw, solar_derivation.inverter_ac_kw)
+        else:
+            solar_gen_kw = solar_potential_kw.copy()
     else:
         solar_gen_kw = np.zeros(n_steps, dtype=float)
         solar_potential_kw = np.zeros(n_steps, dtype=float)

@@ -118,6 +118,7 @@ def derive_solar_sizing_and_formula(
     inverter_ac_limit_kw: float = 0.0,
     inverter_efficiency_pct: float = 98.0,
     data_source_label: str = "EU PVGIS (ERA5 TMY, 15-min resolution)",
+    disable_inverter_limit: bool = False,
 ) -> SolarDerivationInfo:
     """
     Computes the installed Solar kWp, panel count, expected annual yield, inverter AC limit,
@@ -175,7 +176,9 @@ def derive_solar_sizing_and_formula(
             f"({eff_share_pct:.1f}% of consumption)"
         )
 
-    if inverter_ac_limit_kw and float(inverter_ac_limit_kw) > 0.0:
+    if disable_inverter_limit:
+        inv_ac_kw = 0.0
+    elif inverter_ac_limit_kw and float(inverter_ac_limit_kw) > 0.0:
         inv_ac_kw = round(float(inverter_ac_limit_kw), 1)
     else:
         inv_ac_kw = round(installed_kwp / ratio, 1)
@@ -555,6 +558,7 @@ def compute_dual_battery_sizing(
             enable_solar=True,
             inverter_ac_limit_kw=system_cfg.inverter_ac_limit_kw,
             inverter_efficiency_pct=system_cfg.inverter_efficiency_pct,
+            disable_inverter_limit=bool(getattr(system_cfg, "disable_solar_inverter_limit", False)),
         )
         p_solar = unit_solar_kw * deriv.installed_kwp * (deriv.inverter_efficiency_pct / 98.0)
         if deriv.inverter_ac_kw > 0.0:

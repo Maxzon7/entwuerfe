@@ -81,6 +81,7 @@ from ..combined_sandbox_engine import (
     SystemUtilizationDiagnostics,
     get_unit_solar_generation_profile,
     derive_solar_sizing_and_formula,
+    compute_standalone_solar_production_summary,
     determine_smart_modular_units,
     compute_dual_battery_sizing,
     refresh_bottleneck_table_configured_status,
@@ -97,8 +98,10 @@ from ..combined_sandbox_engine import (
     scale_eur_hardware_defaults_to_currency,
 )
 from ..combined_charts import (
+    DEFAULT_POWERFLOW_COLORS,
     create_consumption_baseline_figure,
     create_combined_dispatch_soc_figure,
+    create_solar_production_figure,
     create_financial_cost_comparison_figure,
     create_financial_tco_trajectory_figure,
     create_financial_waterfall_bridge_figure,
@@ -259,6 +262,7 @@ def _physical_sys_tuple(sys_cfg: CombinedSystemConfig) -> Tuple:
         round(float(sys_cfg.dc_ac_ratio), 3),
         round(float(sys_cfg.target_consumption_share_pct), 2),
         round(float(sys_cfg.inverter_ac_limit_kw), 2),
+        bool(getattr(sys_cfg, "disable_solar_inverter_limit", False)),
         round(float(sys_cfg.inverter_efficiency_pct), 2),
         str(getattr(sys_cfg, "solar_weather_mode", "single_year")),
         int(getattr(sys_cfg, "solar_weather_year", 2025)),
@@ -387,6 +391,8 @@ def _apply_bess_quick_size(cap_kwh: float, p_kw: float) -> None:
     cfg.battery_capacity_kwh = max(10.0, float(cap_kwh))
     cfg.battery_power_kw = max(5.0, float(p_kw))
     units, unit_kwh = determine_smart_modular_units(cfg.battery_capacity_kwh)
+    st.session_state["comb_bess_lock_05c"] = False
+    st.session_state["comb_bess_lock_05c_box"] = False
     st.session_state["comb_bess_unit_count"] = units
     st.session_state["comb_bess_unit_kwh"] = unit_kwh
     st.session_state["comb_bess_unit_count_num"] = units

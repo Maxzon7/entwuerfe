@@ -53,28 +53,28 @@ def _sync_bess_include_gen_from_b3() -> None:
 
 @st.fragment
 def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_active: bool) -> None:
-    """Renders the interactive Mode A / Mode B reference box inside an isolated fragment to prevent full app reruns."""
+    """Renders the interactive Battery Size Recommendation box inside an isolated fragment."""
     st.markdown("##### :material/battery_charging_full: 1. Recommended Battery Size")
     st.caption(
-        "Minimum battery size needed to avoid exceeding the Grid Limit."
+        "Smallest battery needed so your site stays below the Grid Limit all year."
     )
 
     include_gen = bool(st.session_state.get("comb_bess_include_gen", False))
     mode_options = [
-        "Mode A – Standalone (Battery only)",
+        "Battery Alone (No Solar or Generator)",
         (
-            "Mode B – Coupled (With active Solar + Generator & Rules)"
+            "With Your Active Solar + Generator & Rules"
             if include_gen
-            else "Mode B – Coupled (With active Solar & Rules — Without Generator)"
+            else "With Your Active Solar & Rules (Without Generator)"
         ),
     ]
-    cur_mode = st.session_state.get("comb_bess_ref_mode", "Mode B")
-    sel_idx = 0 if str(cur_mode).startswith("Mode A") else 1
+    cur_mode = st.session_state.get("comb_bess_ref_mode", "With Your Active")
+    sel_idx = 0 if (str(cur_mode).startswith("Mode A") or str(cur_mode).startswith("Battery Alone")) else 1
 
     r_col1, r_col2 = st.columns([1.3, 1.0])
     with r_col1:
         selected_mode = st.radio(
-            "Quick-Sizing Reference Mode",
+            "Calculate For",
             options=mode_options,
             index=sel_idx,
             horizontal=True,
@@ -88,14 +88,13 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
                 "With Generator Backup" if include_gen else "Without Generator (Default)"
             )
         st.radio(
-            "Generator in Battery Calculation",
+            "Include Generator in Calculation?",
             options=gen_switch_options,
             horizontal=True,
             key="comb_bess_include_gen_radio_b1",
             on_change=_sync_bess_include_gen_from_b1,
             help=(
-                "Without Generator (Default): Calculates the battery size needed without relying on a Generator "
-                "(recommended when adding/modifying a BESS or prioritizing Battery first). "
+                "Without Generator (Default): Calculates the battery size needed without relying on a Generator. "
                 "With Generator Backup: Subtracts active Generator capacity from the battery requirement."
             ),
         )
@@ -103,7 +102,7 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         st.rerun()
 
     st.session_state["comb_bess_ref_mode"] = selected_mode
-    is_sa = selected_mode.startswith("Mode A")
+    is_sa = selected_mode.startswith("Battery Alone")
 
     req_gross = dual_bess.standalone_100_kwh if is_sa else dual_bess.coupled_100_kwh
     req_usable = dual_bess.standalone_usable_kwh if is_sa else dual_bess.coupled_usable_kwh
@@ -116,6 +115,11 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         r1_lbl = RULE1_OPTIONS.get(cur_rules_ref.rule1_peak_priority, cur_rules_ref.rule1_peak_priority)
         r2_lbl = RULE2_OPTIONS.get(cur_rules_ref.rule2_battery_strategy, cur_rules_ref.rule2_battery_strategy)
         r3_lbl = RULE3_OPTIONS.get(cur_rules_ref.rule3_charging_sources, cur_rules_ref.rule3_charging_sources)
+        r2_detail = (
+            f" (Reserve {cur_rules_ref.peak_reserve_soc_pct:.0f}%)"
+            if cur_rules_ref.rule2_battery_strategy == "self_consumption_reserve"
+            else ""
+        )
         active_partners: List[str] = []
         if cur_sys_ref.enable_solar:
             active_partners.append("Solar")
@@ -129,47 +133,65 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         )
         st.info(
             f"**Active Sizing Assumptions ({partners_str}{gen_mode_note}):** "
-            f"**Rule 1:** {r1_lbl} | **Rule 2:** {r2_lbl} "
-            f"(Reserve {cur_rules_ref.peak_reserve_soc_pct:.0f}%) | **Rule 3:** {r3_lbl}",
+            f"**Rule 1:** {r1_lbl} | **Rule 2:** {r2_lbl}{r2_detail} | **Rule 3:** {r3_lbl}",
             icon=":material/rule:",
         )
 
-    # 4 Metric Cards (1:1 with Screenshot 2)
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric(
-            label="Min. Required Gross Capacity",
-            value=f"{req_gross:,.1f} kWh",
-            help="Minimum nameplate storage capacity required to bridge the worst multi-peak deficit cluster.",
-        )
-    with m2:
-        st.metric(
-            label="Min. Required Usable Energy",
-            value=f"{req_usable:,.1f} kWh",
-            help="Net chemical energy needed across the worst consecutive peak cluster.",
-        )
-    with m3:
-        st.metric(
-            label="Min. Required Discharge Power",
-            value=f"{req_power:,.1f} kW",
-            help="Continuous inverter discharge power required to shave the highest peak overload down to the grid limit.",
-        )
-    with m4:
-        st.metric(
-            label="Worst Multi-Peak Cluster Duration",
-            value=f"{req_duration:.1f} hrs",
-            help="Duration of the most demanding overload sequence until battery fully recharges below grid limit.",
-        )
+    # Clear Summary Table (Matching Solar At-a-Glance Standard)
+    min_soc_disp = float(cur_sys_ref.min_soc_pct) if cur_sys_ref is not None else 10.0
+    max_soc_disp = float(cur_sys_ref.max_soc_pct) if cur_sys_ref is not None else 90.0
+    bess_rows_html = "".join(
+        f'<tr style="border-bottom:1px solid #1e293b;">'
+        f'<td style="padding:8px 12px; color:#cbd5e1; font-weight:600;">{item}</td>'
+        f'<td style="padding:8px 12px; color:#f8fafc; font-weight:700; text-align:right;">{val}</td>'
+        f'<td style="padding:8px 12px; color:#94a3b8; font-size:0.86rem;">{note}</td>'
+        f'</tr>'
+        for item, val, note in [
+            (
+                "Total Battery Size Needed",
+                f"{req_gross:,.1f} kWh",
+                f"Full nameplate size including charge limits ({min_soc_disp:.0f}%–{max_soc_disp:.0f}% usable window)",
+            ),
+            (
+                "Usable Energy Needed",
+                f"{req_usable:,.1f} kWh",
+                "Actual energy discharged across the longest period above your Grid Limit",
+            ),
+            (
+                "Inverter Power Needed",
+                f"{req_power:,.1f} kW",
+                "Discharge power needed to cut the highest single peak down to the Grid Limit",
+            ),
+            (
+                "Longest Peak Period",
+                f"{req_duration:.1f} hrs",
+                "Longest continuous period above the Grid Limit before the battery can recharge",
+            ),
+        ]
+    )
+    bess_table_html = (
+        '<div style="border-radius:8px; border:1px solid #334155; overflow:hidden; margin-bottom:10px;">'
+        '<table style="width:100%; border-collapse:collapse; font-family:-apple-system, BlinkMacSystemFont, sans-serif;">'
+        '<thead><tr style="background-color:#090d16; border-bottom:1px solid #475569; color:#94a3b8; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;">'
+        '<th style="padding:8px 12px; text-align:left;">Requirement</th>'
+        '<th style="padding:8px 12px; text-align:right;">Recommended Value</th>'
+        '<th style="padding:8px 12px; text-align:left;">What This Means</th>'
+        '</tr></thead>'
+        f'<tbody style="background-color:#0f172a;">{bess_rows_html}</tbody>'
+        '</table>'
+        '</div>'
+    )
+    st.markdown(bess_table_html, unsafe_allow_html=True)
 
     # Quick Apply Buttons (100%, 80%, 50% capacity while keeping 100% required discharge power kW)
     coupled_scope = (
-        "Coupled: With active Solar + Generator"
+        "With Solar + Generator"
         if include_gen
-        else "Coupled: With active Solar (Without Generator)"
+        else "With Solar (Without Generator)"
     )
     st.caption(
-        f"Apply Quick Size ({'Standalone: Battery alone' if is_sa else coupled_scope} — "
-        "80% / 50% scales kWh storage while preserving 100% peak power kW):"
+        f"**Quick Size ({'Battery Alone' if is_sa else coupled_scope}):** "
+        "80% / 50% shrinks the battery kWh for lower cost while keeping 100% peak power kW (rare long peaks may need Generator backup)."
     )
     q_col1, q_col2, q_col3 = st.columns(3)
     with q_col1:
@@ -187,7 +209,7 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         q80_kwh = round(req_gross * 0.80, 1)
         q80_kw = float(req_power)
         if st.button(
-            f"Apply 80% Quick-Size ({q80_kwh:,.0f} kWh / {q80_kw:,.1f} kW)",
+            f"Apply 80% Compact ({q80_kwh:,.0f} kWh / {q80_kw:,.1f} kW)",
             use_container_width=True,
             disabled=not is_active,
             key="comb_bess_btn_apply_80",
@@ -198,7 +220,7 @@ def _render_battery_reference_fragment(dual_bess: DualBatterySizingResult, is_ac
         q50_kwh = round(req_gross * 0.50, 1)
         q50_kw = float(req_power)
         if st.button(
-            f"Apply 50% Quick-Size ({q50_kwh:,.0f} kWh / {q50_kw:,.1f} kW)",
+            f"Apply 50% Peak Shaver ({q50_kwh:,.0f} kWh / {q50_kw:,.1f} kW)",
             use_container_width=True,
             disabled=not is_active,
             key="comb_bess_btn_apply_50",
@@ -251,6 +273,8 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
         round(float(cur_sys.target_consumption_share_pct), 2),
         round(float(cur_sys.inverter_ac_limit_kw), 2),
         round(float(cur_sys.inverter_efficiency_pct), 2),
+        str(getattr(cur_sys, "solar_weather_mode", "single_year")),
+        int(getattr(cur_sys, "solar_weather_year", 2025)),
         bool(cur_sys.enable_generator),
         round(float(cur_sys.generator_rated_kw), 2),
         round(float(cur_sys.generator_min_load_pct), 2),
@@ -293,6 +317,11 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
         _render_battery_reference_fragment(dual_bess=dual_bess, is_active=is_active)
 
     # Block 2: Battery Hardware & Operating Limits Form
+    pending_bess_sync = st.session_state.pop("comb_pending_bess_widget_sync", None)
+    if isinstance(pending_bess_sync, dict):
+        for sk, sv in pending_bess_sync.items():
+            st.session_state[sk] = sv
+
     with st.container(border=True):
         st.markdown("##### :material/tune: 2. Battery Size & Settings")
         with st.form("comb_battery_form"):
@@ -301,6 +330,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                 value=st.session_state.get("comb_bess_lock_05c", False),
                 disabled=not is_active,
                 key="comb_bess_lock_05c_box",
+                help="When checked, applying this form automatically sets Battery Power (kW) to half of total kWh. Turned off automatically when you click a Quick-Size button.",
             )
             col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
@@ -351,6 +381,8 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                     key="comb_battery_power_kw_num",
                     help="Unified bidirectional power rating for charging and discharging.",
                 )
+                if st.session_state.get("comb_bess_lock_05c", False):
+                    st.caption("Locked to **0.5 C**: Power updates to half of total kWh when you apply. Uncheck above to set power freely.")
                 rte_val = st.slider(
                     "Round-Trip Efficiency (RTE %)",
                     min_value=70,
@@ -433,6 +465,11 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
                 dual_bess = dual_with_gen if include_gen else dual_no_gen
                 st.session_state["comb_cached_dual_bess"] = dual_bess
             st.session_state.pop("comb_cached_excel_bytes", None)
+            if lock_05c and abs(float(bat_kw) - float(new_kw)) > 0.05:
+                st.session_state["comb_pending_bess_widget_sync"] = {
+                    "comb_battery_power_kw_num": float(new_kw),
+                }
+                st.rerun()
 
     # Block 3: Simultaneous Bottleneck Audit & Physical Constraints
     with st.container(border=True):

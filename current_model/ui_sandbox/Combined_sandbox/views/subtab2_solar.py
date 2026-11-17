@@ -15,7 +15,10 @@ from .state_and_helpers import (
     CombinedSystemConfig,
     get_unit_solar_generation_profile,
     derive_solar_sizing_and_formula,
+    compute_standalone_solar_production_summary,
     compute_synced_solar_pair,
+    render_kpi_card,
+    create_solar_production_figure,
     _activate_module_callback,
     _apply_solar_quick_share,
 )
@@ -73,6 +76,88 @@ def _render_solar_map_fragment(eff_lat: float, eff_lon: float, site_disp: str, i
                 cur_sys_ref.longitude = c_lon
             st.session_state.pop("comb_cached_excel_bytes", None)
             st.rerun()
+
+
+@st.fragment
+def _render_solar_production_fragment(
+    timestamps,
+    cur_sys: CombinedSystemConfig,
+    solar_deriv,
+    is_active: bool,
+) -> None:
+    """Renders standalone, consumption-independent Solar Production KPIs and comparison chart."""
+    if not is_active:
+        st.info(
+            "Activate Solar above to inspect standalone **Solar Production** and inverter clipping metrics.",
+            icon=":material/info:",
+        )
+        return
+
+    prod_summary = compute_standalone_solar_production_summary(
+        system_cfg=cur_sys,
+        solar_derivation=solar_deriv,
+        n_steps=len(timestamps) if timestamps is not None and len(timestamps) > 0 else 35040,
+    )
+    inv_kw = float(prod_summary["inverter_ac_kw"])
+    prod_kwh = float(prod_summary["production_kwh"])
+    pot_kwh = float(prod_summary["potential_kwh"])
+    clip_kwh = float(prod_summary["clipping_loss_kwh"])
+    clip_pct = float(prod_summary["clipping_loss_pct"])
+    clip_hrs = float(prod_summary["clipped_hours"])
+    peak_prod = float(prod_summary["peak_production_kw"])
+    peak_pot = float(prod_summary["peak_potential_kw"])
+    flh = float(prod_summary["full_load_hours"])
+    active_hrs = float(prod_summary["active_hours"])
+    cap_pct = float(prod_summary["captured_pct"])
+
+    st.caption(
+        "Shows usable AC solar generation independent of facility consumption or load meter gaps, "
+        "comparing inverter-clipped **Solar Production (kW)** against unclipped **Solar Total Potential (kW)**."
+    )
+
+    sp1, sp2, sp3, sp4 = st.columns(4)
+    with sp1:
+        render_kpi_card(
+            title="Solar Production",
+            value=f"{prod_kwh:,.0f} kWh/yr",
+            subtext=f"{cap_pct:.1f}% of {pot_kwh:,.0f} kWh unclipped potential",
+            status="ok",
+        )
+    with sp2:
+        render_kpi_card(
+            title="Peak Solar Production",
+            value=f"{peak_prod:,.1f} kW AC",
+            subtext=f"Inverter Limit: {inv_kw:,.1f} kW | Potential Peak: {peak_pot:,.1f} kW" if inv_kw > 0.0 else f"Inverter Limit: Disabled (Unclipped) | Potential Peak: {peak_pot:,.1f} kW",
+            status="default",
+        )
+    with sp3:
+        render_kpi_card(
+            title="Inverter Clipping Loss",
+            value=f"{clip_kwh:,.0f} kWh/yr",
+            subtext=f"{clip_pct:.1f}% of potential across {clip_hrs:,.1f} hrs/yr at limit",
+            status="alert" if clip_pct >= 5.0 else "default",
+        )
+    with sp4:
+        render_kpi_card(
+            title="Full-Load / Sun Hours",
+            value=f"{flh:,.0f} hrs/yr",
+            subtext=f"{prod_summary['specific_yield_after_inv_kwh_kwp']:,.0f} kWh/kWp | Active: {active_hrs:,.0f} hrs/yr",
+            status="default",
+        )
+
+    fig_prod = create_solar_production_figure(
+        timestamps=timestamps,
+        solar_production_kw=prod_summary["solar_production_kw"],
+        solar_potential_kw=prod_summary["solar_potential_kw"],
+        inverter_ac_kw=inv_kw,
+        color_overrides=st.session_state.get("comb_powerflow_colors"),
+    )
+    st.plotly_chart(
+        fig_prod,
+        use_container_width=True,
+        config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
+        key="comb_solar_production_chart",
+    )
 
 
 def render_subtab2_solar(load_series: LoadSeries2025) -> None:
@@ -427,6 +512,13 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     key="comb_solar_direct_kwp_num",
                     help="Installed solar panel capacity in kWp. Automatically updates when you apply % of Annual Consumption.",
                 )
+                disable_inv_val = st.checkbox(
+                    "Disable Inverter AC Limit (100% Unclipped Output)",
+                    value=bool(getattr(cur_sys, "disable_solar_inverter_limit", False)),
+                    disabled=not is_active,
+                    key="comb_solar_disable_inv_limit_chk",
+                    help="When enabled, no AC ceiling is applied so 100% of solar potential is usable without clipping.",
+                )
                 raw_inv_ac = max(0.0, float(default_inv_kw))
                 max_inv_ac = max(100000.0, raw_inv_ac * 2)
                 safe_inv_ac = min(max_inv_ac, max(0.0, raw_inv_ac))
@@ -436,7 +528,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     max_value=max_inv_ac,
                     value=safe_inv_ac,
                     step=10.0,
-                    disabled=not is_active,
+                    disabled=(not is_active) or disable_inv_val,
                     key="comb_solar_inv_ac_limit_num",
                     help="Maximum power the inverter can feed into your site (0 = auto-sized).",
                 )
@@ -473,6 +565,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
             cur_sys.solar_sizing_method = sizing_method_key
             cur_sys.solar_kwp = float(synced_kwp)
             cur_sys.target_consumption_share_pct = float(synced_share)
+            cur_sys.disable_solar_inverter_limit = bool(disable_inv_val)
             cur_sys.inverter_ac_limit_kw = float(inv_ac_limit_val)
             cur_sys.inverter_efficiency_pct = float(inv_eff_val)
             st.session_state["comb_pending_solar_widget_sync"] = {
@@ -497,6 +590,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
             inverter_ac_limit_kw=float(cur_sys.inverter_ac_limit_kw),
             inverter_efficiency_pct=float(cur_sys.inverter_efficiency_pct),
             data_source_label=solar_src_label,
+            disable_inverter_limit=bool(getattr(cur_sys, "disable_solar_inverter_limit", False)),
         )
 
         with st.expander("Your Solar System at a Glance", expanded=True, icon=":material/calculate:"):
@@ -548,8 +642,16 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     ),
                     (
                         "Inverter Size",
-                        f"{solar_deriv.inverter_ac_kw:,.1f} kW AC",
-                        f"DC/AC ratio {dc_ac_actual:.2f} &middot; {solar_deriv.inverter_efficiency_pct:.0f}% efficiency",
+                        (
+                            f"{solar_deriv.inverter_ac_kw:,.1f} kW AC"
+                            if solar_deriv.inverter_ac_kw > 0.0
+                            else "No AC Limit (Unclipped)"
+                        ),
+                        (
+                            f"DC/AC ratio {dc_ac_actual:.2f} &middot; {solar_deriv.inverter_efficiency_pct:.0f}% efficiency"
+                            if solar_deriv.inverter_ac_kw > 0.0
+                            else f"100% of solar potential usable (AC clipping disabled) &middot; {solar_deriv.inverter_efficiency_pct:.0f}% efficiency"
+                        ),
                     ),
                 ]
             )
@@ -591,7 +693,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
 
             st.caption(
                 "Yearly production is not the same as power used directly on site — sunny midday surplus is fed into the grid "
-                "unless a battery stores it. Compare **Solar Direct (kW)** and **Solar Total Potential (kW)** in the Power Flow chart below."
+                "unless a battery stores it. Inspect pure PV output in **Solar Production** below or compare against load in the **Power Flow** chart."
             )
 
             if ann_kwh > 0.0 and solar_deriv.effective_share_pct > 100.0:
@@ -606,6 +708,14 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     icon=":material/warning:",
                 )
 
+        with st.expander("Solar Production", expanded=False, icon=":material/solar_power:"):
+            _render_solar_production_fragment(
+                timestamps=load_series.timestamps,
+                cur_sys=cur_sys,
+                solar_deriv=solar_deriv,
+                is_active=is_active,
+            )
+
         with st.expander("How Solar Sizing & Weather Data Work", expanded=False, icon=":material/help_outline:"):
             st.markdown(
                 f"""
@@ -617,7 +727,7 @@ In **Direct Size (kWp)** mode, you set the panel capacity directly and the match
 
 **2. Why 100% Annual Solar Does Not Mean 100% Direct Self-Consumption**  
 Solar irradiance peaks around midday and during summer months, whereas electricity demand also occurs at night, early mornings, and overcast winter weeks. Without a battery or generator, daytime surpluses above your live load are exported while evening/winter peaks still require Grid, Battery, or Generator power.  
-*Tip:* In the bottom **Power Flow & Battery Level** chart, click **Solar Total Potential (kW)** in the legend to compare maximum possible PV output against **Solar Direct (kW)** actually absorbed on-site.
+*Tip:* Open the **Solar Production** expander above (or toggle **Solar Production (kW)** / **Solar Total Potential (kW)** in the bottom **Power Flow & Battery Level** chart) to compare usable inverter-clipped PV generation against unclipped maximum potential and on-site **Solar Direct (kW)**.
 
 **3. Weather Data Basis (Specific Year vs. Typical Meteorological Year — TMY)**  
 You can switch between two solar weather datasets for your active GPS pin (`{eff_lat:.4f}°N, {eff_lon:.4f}°E`):

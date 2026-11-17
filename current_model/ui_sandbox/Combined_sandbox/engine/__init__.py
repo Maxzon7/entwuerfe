@@ -50,6 +50,7 @@ from .utilization_and_tables import (
     compute_system_utilization_diagnostics,
     build_component_summary_table,
     build_monthly_balance_table,
+    compute_standalone_solar_production_summary,
 )
 from .financial_engine import (
     _calculate_irr,
