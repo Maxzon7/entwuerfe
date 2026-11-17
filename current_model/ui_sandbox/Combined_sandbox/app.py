@@ -44,6 +44,7 @@ try:
         render_subtab4_generator,
         render_subtab5_interaction_rules,
         render_subtab6_financials,
+        render_subtab7_scenario_comparison,
         render_level3_permanent_master_output,
     )
 except ImportError:
@@ -64,6 +65,7 @@ except ImportError:
         render_subtab4_generator,
         render_subtab5_interaction_rules,
         render_subtab6_financials,
+        render_subtab7_scenario_comparison,
         render_level3_permanent_master_output,
     )
 
@@ -85,7 +87,7 @@ def main() -> None:
     # LEVEL 1: System Overview Bar (Top)
     render_level1_overview_bar(load_series, load_label)
 
-    # LEVEL 2: 6 Modular Sub-Tabs (Middle)
+    # LEVEL 2: 7 Modular Sub-Tabs (Middle)
     subtabs = st.tabs(
         [
             ":material/analytics: 1. Consumption",
@@ -94,6 +96,7 @@ def main() -> None:
             ":material/power: 4. Generator",
             ":material/tune: 5. System Mix & Rules",
             ":material/payments: 6. Financials",
+            ":material/compare_arrows: 7. Scenario Comparison",
         ]
     )
 
@@ -147,6 +150,9 @@ def main() -> None:
 
     with subtabs[5]:
         render_subtab6_financials(sim_res)
+
+    with subtabs[6]:
+        render_subtab7_scenario_comparison(sim_res, load_series)
 
     # LEVEL 3: Permanent Master Output (Bottom — outside subtabs so always visible)
     render_level3_permanent_master_output(sim_res)

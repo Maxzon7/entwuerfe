@@ -75,10 +75,12 @@ from ..combined_sandbox_engine import (
     CombinedSystemConfig,
     InteractionRulesConfig,
     CombinedFinancialConfig,
+    CombinedSimulationResult,
     DualBatterySizingResult,
     DualGeneratorSizingResult,
     CoordinatedMixRecommendation,
     SystemUtilizationDiagnostics,
+    CombinedScenarioSnapshot,
     get_unit_solar_generation_profile,
     derive_solar_sizing_and_formula,
     compute_standalone_solar_production_summary,
@@ -96,6 +98,13 @@ from ..combined_sandbox_engine import (
     apply_utility_tariff_presets,
     sync_financial_config_from_status_quo,
     scale_eur_hardware_defaults_to_currency,
+    format_currency_value,
+    build_baseline_tariff_fingerprint,
+    capture_scenario_snapshot,
+    recalculate_snapshot_on_active_load,
+    generate_quick_ab_preset_snapshots,
+    build_restore_widget_sync_payload,
+    build_ab_comparison_matrix_df,
 )
 from ..combined_charts import (
     DEFAULT_POWERFLOW_COLORS,
@@ -115,6 +124,9 @@ from ..combined_charts import (
     create_generator_isolated_financial_figure,
     create_supply_mix_pie_figure,
     create_component_utilization_bars_figure,
+    create_ab_15y_tco_comparison_figure,
+    create_ab_annual_cost_stack_figure,
+    create_ab_supply_and_utilization_figure,
 )
 from ..combined_excel_exporter import (
     build_combined_verification_excel_bytes,
@@ -135,11 +147,18 @@ def _init_session_defaults() -> None:
         st.session_state["comb_rules_cfg"] = InteractionRulesConfig()
     if "comb_fin_cfg" not in st.session_state:
         st.session_state["comb_fin_cfg"] = CombinedFinancialConfig()
+    if "comb_saved_scenarios" not in st.session_state:
+        st.session_state["comb_saved_scenarios"] = {}
 
-    pending_sync = st.session_state.pop("comb_pending_mix_widget_sync", None)
-    if isinstance(pending_sync, dict):
-        for sk, sv in pending_sync.items():
-            st.session_state[sk] = sv
+    for _pending_key in (
+        "comb_pending_mix_widget_sync",
+        "comb_pending_solar_widget_sync",
+        "comb_pending_fin_widget_sync",
+    ):
+        pending_sync = st.session_state.pop(_pending_key, None)
+        if isinstance(pending_sync, dict):
+            for sk, sv in pending_sync.items():
+                st.session_state[sk] = sv
 
     defaults = {
         "tab1_active_source": "csv",

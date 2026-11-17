@@ -140,6 +140,7 @@ def _render_sub_ledger_html(
     accent_color: str = "#38BDF8",
     is_enabled: bool = True,
     currency_code: str = "EUR",
+    left_aligned_cols: int = 2,
 ) -> str:
     """
     Renders a dark-themed HTML Sub-Ledger table showing how bill items add up.
@@ -153,7 +154,7 @@ def _render_sub_ledger_html(
     status_badge = "" if is_enabled else f" &mdash; [INACTIVE: {zero_lbl}]"
 
     hdr_cells_html = "".join(
-        f'<th style="padding:7px 9px; text-align:{"left" if i < 2 else "right"}; white-space:nowrap;">{col}</th>'
+        f'<th style="padding:7px 9px; text-align:{"left" if i < left_aligned_cols else "right"}; white-space:nowrap;">{col}</th>'
         for i, col in enumerate(columns)
     )
 
@@ -179,11 +180,11 @@ def _render_sub_ledger_html(
         row_td: List[str] = []
         for i, cell in enumerate(cells):
             if dimmed:
-                align = "left" if i < 2 else "right"
+                align = "left" if i < left_aligned_cols else "right"
                 style = f"padding:6px 9px; text-align:{align}; color:#64748b; font-size:0.80rem; font-style:italic;"
             elif i == 0:
                 style = "padding:6px 9px; color:#f1f5f9; font-size:0.82rem; font-weight:500;"
-            elif i == 1:
+            elif i < left_aligned_cols:
                 style = "padding:6px 9px; color:#cbd5e1; font-size:0.78rem; font-family:monospace;"
             elif hl and i == len(cells) - 1:
                 style = f"padding:6px 9px; text-align:right; color:{hl}; font-size:0.83rem; font-weight:700; white-space:nowrap;"

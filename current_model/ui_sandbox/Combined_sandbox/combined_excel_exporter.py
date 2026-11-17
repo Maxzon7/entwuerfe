@@ -3,19 +3,21 @@
 Combined System Excel Verification Exporter (ui_sandbox/Combined_sandbox/combined_excel_exporter.py)
 ========================================================================================
 
-Generates a complete 4-sheet Excel workbook (.xlsx via openpyxl) for mathematical
-verification and auditing:
+Generates a 4-sheet (or 5-sheet when scenarios are saved) Excel workbook (.xlsx via openpyxl)
+for mathematical verification and auditing:
   - Sheet 1 (`Summary & KPIs`): Model parameters, interaction rules, technical & financial KPIs,
     Component Summary Table, and 4-Criterion BESS Bottleneck Table
   - Sheet 2 (`15-Min Dispatch`): All 35,040 15-minute intervals of the year
   - Sheet 3 (`Monthly Balance`): 12-month mirror of energy, peak demand, and generator metrics
   - Sheet 4 (`Cost & Tariffs`): Monthly & annual comparison of 4-Pillar tariffs, OPEX, savings,
     and 15-Year Lifecycle Cashflow Table
+  - Sheet 5 (`Scenario Comparison`, optional): Side-by-side Current Situation vs. Scenario A vs.
+    Scenario B technical & financial comparison matrix when snapshots exist
 ========================================================================================
 """
 
 import io
-from typing import List, Any
+from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 import openpyxl
@@ -26,7 +28,9 @@ from .combined_sandbox_engine import (
     RULE3_OPTIONS,
     CombinedSimulationResult,
     CombinedFinancialConfig,
+    CombinedScenarioSnapshot,
     evaluate_combined_financials,
+    build_ab_comparison_matrix_df,
 )
 
 
@@ -41,10 +45,12 @@ def _append_df_to_ws(ws: Any, df: pd.DataFrame) -> None:
 
 def build_combined_verification_excel_bytes(
     sim_res: CombinedSimulationResult,
+    saved_scenarios: Optional[Dict[str, CombinedScenarioSnapshot]] = None,
 ) -> bytes:
     """
-    Constructs the 4-sheet `.xlsx` verification workbook in memory using openpyxl's
-    fast streaming `write_only=True` mode and returns raw bytes.
+    Constructs the `.xlsx` verification workbook (4 sheets by default, or 5 sheets including
+    `Scenario Comparison` when `saved_scenarios` contains at least one snapshot) in memory
+    using openpyxl's fast streaming `write_only=True` mode and returns raw bytes.
     Respects Lazy Financials: only calls `evaluate_combined_financials` if
     `sim_res.system_config.enable_financials` is True.
     """
@@ -176,6 +182,19 @@ def build_combined_verification_excel_bytes(
             _append_df_to_ws(ws4, sim_res.cashflow_15y_df)
     else:
         _append_df_to_ws(ws4, pd.DataFrame([{"Status": "Financials disabled"}]))
+
+    # Optional Sheet 5: Scenario Comparison (when at least one snapshot is saved)
+    if isinstance(saved_scenarios, dict) and any(v is not None for v in saved_scenarios.values()):
+        snap_a = saved_scenarios.get("A")
+        snap_b = saved_scenarios.get("B")
+        if snap_a is None and snap_b is None:
+            non_empty = [v for v in saved_scenarios.values() if v is not None]
+            snap_a = non_empty[0] if len(non_empty) >= 1 else None
+            snap_b = non_empty[1] if len(non_empty) >= 2 else None
+        df_comp = build_ab_comparison_matrix_df(snap_a, snap_b)
+        if not df_comp.empty:
+            ws5 = wb.create_sheet(title="Scenario Comparison")
+            _append_df_to_ws(ws5, df_comp)
 
     buffer = io.BytesIO()
     wb.save(buffer)

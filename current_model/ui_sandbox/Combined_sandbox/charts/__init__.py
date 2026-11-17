@@ -28,3 +28,8 @@ from .financial_isolated_charts import (
     create_generator_isolated_financial_figure,
     create_tax_isolated_breakdown_figure,
 )
+from .scenario_comparison_charts import (
+    create_ab_15y_tco_comparison_figure,
+    create_ab_annual_cost_stack_figure,
+    create_ab_supply_and_utilization_figure,
+)

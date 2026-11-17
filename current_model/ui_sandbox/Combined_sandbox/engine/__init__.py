@@ -24,6 +24,7 @@ from .models_and_presets import (
     DualGeneratorSizingResult,
     CoordinatedMixRecommendation,
     SystemUtilizationDiagnostics,
+    CombinedScenarioSnapshot,
 )
 from .solar_and_sizing import (
     get_unit_solar_generation_profile,
@@ -66,4 +67,16 @@ from .tariff_presets import (
     apply_utility_tariff_presets,
     sync_financial_config_from_status_quo,
     scale_eur_hardware_defaults_to_currency,
+)
+from .scenario_comparison_engine import (
+    format_currency_value,
+    build_load_fingerprint_from_series,
+    build_baseline_tariff_fingerprint,
+    build_physical_snapshot_fingerprint,
+    sync_baseline_tariff_fields,
+    capture_scenario_snapshot,
+    recalculate_snapshot_on_active_load,
+    generate_quick_ab_preset_snapshots,
+    build_restore_widget_sync_payload,
+    build_ab_comparison_matrix_df,
 )

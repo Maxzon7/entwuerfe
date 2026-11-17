@@ -20,4 +20,5 @@ from .subtab3_battery import render_subtab3_battery
 from .subtab4_generator import render_subtab4_generator
 from .subtab5_mix_and_rules import render_subtab5_interaction_rules
 from .subtab6_financials_overview import render_subtab6_financials
+from .subtab7_scenario_comparison import render_subtab7_scenario_comparison
 from .level3_master_output import render_level3_permanent_master_output

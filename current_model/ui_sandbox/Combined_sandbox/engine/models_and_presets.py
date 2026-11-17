@@ -775,3 +775,28 @@ class SystemUtilizationDiagnostics:
     grid_limit_kw: float
     grid_peak_import_kw: float
     grid_utilization_pct: float
+
+
+@dataclass
+class CombinedScenarioSnapshot:
+    """
+    Lightweight (< 50 KB) scenario snapshot storing configs, KPIs, and summary tables
+    without duplicating 35,040-step NumPy dispatch arrays in RAM.
+    """
+    slot_id: str
+    name: str
+    created_at: str
+    load_fingerprint: Tuple[int, float, float]
+    baseline_tariff_fingerprint: Tuple
+    physical_fingerprint: Tuple
+    system_config: CombinedSystemConfig
+    rules_config: InteractionRulesConfig
+    financial_config: CombinedFinancialConfig
+    solar_derivation: SolarDerivationInfo
+    kpis: CombinedTechnicalKPIs
+    financial_kpis: CombinedFinancialKPIs
+    utilization_diagnostics: SystemUtilizationDiagnostics
+    monthly_balance_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    monthly_cost_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    cashflow_15y_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+

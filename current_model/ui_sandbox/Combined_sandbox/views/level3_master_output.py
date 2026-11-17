@@ -21,6 +21,20 @@ from .state_and_helpers import (
 @st.fragment
 def _render_excel_export_fragment(sim_res) -> None:
     """Renders the on-demand Excel export button without blocking normal simulation reruns."""
+    saved_scenarios = st.session_state.get("comb_saved_scenarios")
+    scen_sig = (
+        tuple(
+            (k, getattr(v, "name", ""), getattr(v, "created_at", ""), getattr(v, "physical_fingerprint", ()))
+            for k, v in sorted(saved_scenarios.items())
+            if v is not None
+        )
+        if isinstance(saved_scenarios, dict)
+        else ()
+    )
+    if st.session_state.get("comb_cached_excel_scen_sig") != scen_sig:
+        st.session_state.pop("comb_cached_excel_bytes", None)
+        st.session_state["comb_cached_excel_scen_sig"] = scen_sig
+
     if "comb_cached_excel_bytes" not in st.session_state:
         if st.button(
             "Prepare Excel (.xlsx)",
@@ -28,7 +42,10 @@ def _render_excel_export_fragment(sim_res) -> None:
             use_container_width=True,
             key="comb_btn_prep_excel",
         ):
-            st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(sim_res)
+            st.session_state["comb_cached_excel_bytes"] = build_combined_verification_excel_bytes(
+                sim_res,
+                saved_scenarios=saved_scenarios if isinstance(saved_scenarios, dict) and saved_scenarios else None,
+            )
 
     if "comb_cached_excel_bytes" in st.session_state:
         st.download_button(

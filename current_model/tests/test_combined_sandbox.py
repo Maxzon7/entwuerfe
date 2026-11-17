@@ -1964,6 +1964,287 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(p_traces["Solar Total Potential (kW)"].line.color, "#556677")
         self.assertFalse(any(str(t.name).startswith("Inverter Limit (") for t in fig_p.data))
 
+    def test_lazy_financials_snapshot_capture(self):
+        """Verifies capture_scenario_snapshot populates full financials and utilization without mutating live sim_res or storing 35,040-step arrays."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            CombinedScenarioSnapshot,
+            build_load_fingerprint_from_series,
+            capture_scenario_snapshot,
+        )
+
+        cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_kwp=120.0,
+            enable_battery=True,
+            battery_capacity_kwh=200.0,
+            battery_power_kw=100.0,
+            enable_generator=False,
+            enable_financials=False,
+        )
+        rules = InteractionRulesConfig()
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg, rules)
+        self.assertIsNone(sim_res.financial_kpis)
+
+        fin_cfg = CombinedFinancialConfig(currency_code="EUR", solar_turnkey_eur_kwp=900.0)
+        load_fp = build_load_fingerprint_from_series(self.load_series)
+        snap = capture_scenario_snapshot(
+            sim_res=sim_res,
+            fin_cfg=fin_cfg,
+            slot_id="A",
+            custom_name="Lazy Financials Check",
+            load_fp=load_fp,
+        )
+
+        self.assertIsInstance(snap, CombinedScenarioSnapshot)
+        # Live sim_res must remain untouched (Lazy Financials preserved)
+        self.assertIsNone(sim_res.financial_kpis)
+        self.assertTrue(sim_res.cashflow_15y_df.empty)
+        # Snapshot must have complete 4-Pillar, 15-Year TCO, and Utilization metrics
+        self.assertIsNotNone(snap.financial_kpis)
+        self.assertGreater(snap.financial_kpis.total_capex_eur, 0.0)
+        self.assertGreater(snap.financial_kpis.tco_15y_baseline_eur, 0.0)
+        self.assertEqual(len(snap.cashflow_15y_df), 16)
+        self.assertEqual(len(snap.monthly_cost_df), 12)
+        self.assertEqual(len(snap.monthly_balance_df), 12)
+        self.assertIsInstance(snap.utilization_diagnostics, SystemUtilizationDiagnostics)
+        # Lightweight check: snapshot holds no 35,040-step dispatch arrays
+        for attr_val in snap.__dict__.values():
+            if isinstance(attr_val, np.ndarray):
+                self.assertLess(len(attr_val), 35040)
+
+    def test_zero_simulation_overhead_comparison(self):
+        """Verifies Quick-Generate A/B preset pair, comparison matrix, and all 3 Plotly figures run rapidly with zero dispatch calls."""
+        import time
+        import unittest.mock as mock
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            generate_quick_ab_preset_snapshots,
+            build_ab_comparison_matrix_df,
+        )
+        from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
+            create_ab_15y_tco_comparison_figure,
+            create_ab_annual_cost_stack_figure,
+            create_ab_supply_and_utilization_figure,
+        )
+
+        base_cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_sizing_method="target_share_pct",
+            target_consumption_share_pct=60.0,
+            enable_battery=False,
+            enable_generator=False,
+        )
+        base_rules = InteractionRulesConfig()
+        fin_cfg = CombinedFinancialConfig()
+
+        snap_a, snap_b = generate_quick_ab_preset_snapshots(
+            load_series=self.load_series,
+            base_sys_cfg=base_cfg,
+            base_rules_cfg=base_rules,
+            fin_cfg=fin_cfg,
+        )
+        self.assertEqual(snap_a.slot_id, "A")
+        self.assertEqual(snap_b.slot_id, "B")
+        self.assertFalse(snap_a.system_config.enable_generator)
+        self.assertTrue(snap_a.system_config.enable_battery)
+        self.assertLessEqual(snap_a.kpis.remaining_overload_hours, 0.05)
+        self.assertTrue(snap_b.system_config.enable_battery)
+        self.assertLessEqual(snap_b.kpis.remaining_overload_hours, 0.05)
+
+        with mock.patch(
+            "current_model.ui_sandbox.Combined_sandbox.engine.dispatch_simulation.simulate_combined_system_dispatch",
+            side_effect=AssertionError("Dispatch simulation must not be called during comparison rendering!"),
+        ):
+            t0 = time.perf_counter()
+            df_comp = build_ab_comparison_matrix_df(snap_a, snap_b)
+            fig_tco = create_ab_15y_tco_comparison_figure(snap_a, snap_b)
+            fig_stack = create_ab_annual_cost_stack_figure(snap_a, snap_b)
+            fig_util = create_ab_supply_and_utilization_figure(snap_a, snap_b)
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        self.assertFalse(df_comp.empty)
+        self.assertIn("Current Situation", df_comp.columns)
+        self.assertIn("Scenario A", df_comp.columns)
+        self.assertIn("Scenario B", df_comp.columns)
+        self.assertIn("Delta (B vs. A)", df_comp.columns)
+        self.assertGreaterEqual(len(fig_tco.data), 3)
+        self.assertGreaterEqual(len(fig_stack.data), 7)
+        self.assertGreaterEqual(len(fig_util.data), 7)
+        self.assertLess(elapsed_ms, 500.0)
+
+    def test_round_trip_restore_widget_sync_and_baseline_recalc(self):
+        """Verifies full snapshot restore payload (Level 1 + Sub-Tabs 2-6) and baseline tariff recalculation."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            build_load_fingerprint_from_series,
+            capture_scenario_snapshot,
+            build_restore_widget_sync_payload,
+            recalculate_snapshot_on_active_load,
+        )
+
+        custom_cfg = CombinedSystemConfig(
+            grid_limit_kw=160.0,
+            enable_financials=True,
+            enable_solar=True,
+            site_preset="Spain / Madrid",
+            latitude=40.4168,
+            longitude=-3.7038,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=210.0,
+            inverter_ac_limit_kw=175.0,
+            disable_solar_inverter_limit=False,
+            inverter_efficiency_pct=97.0,
+            solar_weather_mode="TMY",
+            solar_weather_year=2024,
+            enable_battery=True,
+            battery_capacity_kwh=250.0,
+            battery_power_kw=110.0,
+            min_soc_pct=15.0,
+            max_soc_pct=85.0,
+            round_trip_efficiency_pct=90.0,
+            enable_generator=True,
+            generator_rated_kw=95.0,
+            generator_min_load_pct=30.0,
+            fuel_type="HVO",
+        )
+        custom_rules = InteractionRulesConfig(
+            rule1_peak_priority="generator_first",
+            rule2_battery_strategy="self_consumption_reserve",
+            peak_reserve_soc_pct=45.0,
+            rule3_charging_sources="all_sources",
+        )
+        custom_fin = CombinedFinancialConfig(
+            currency_code="USD",
+            market_mode="custom",
+            enable_pillar_1_supplier=True,
+            enable_pillar_2_dso=True,
+            enable_pillar_3_metering=False,
+            enable_pillar_4_taxes=True,
+            supplier_pricing_mode="dual_tou",
+            supplier_peak_ht_eur_kwh=0.19,
+            supplier_offpeak_nt_eur_kwh=0.11,
+            solar_lump_sum_capex_eur=145000.0,
+            battery_lump_sum_capex_eur=82000.0,
+            generator_cost_model="Monthly Rental (OPEX)",
+            generator_rental_eur_month=950.0,
+            generator_rental_active_months_only=True,
+            strict_grid_congestion_mode=True,
+            discount_rate_pct=7.5,
+        )
+
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, custom_cfg, custom_rules)
+        load_fp = build_load_fingerprint_from_series(self.load_series)
+        snap = capture_scenario_snapshot(sim_res, custom_fin, "A", "Custom Madrid Hybrid", load_fp)
+
+        payload = build_restore_widget_sync_payload(snap, current_dso_tou_v=4)
+        self.assertEqual(payload["system_config"].grid_limit_kw, 160.0)
+        self.assertEqual(payload["system_config"].fuel_type, "HVO")
+        self.assertEqual(payload["rules_config"].rule1_peak_priority, "generator_first")
+        self.assertEqual(payload["rules_config"].rule3_charging_sources, "all_sources")
+        self.assertEqual(payload["financial_config"].solar_lump_sum_capex_eur, 145000.0)
+
+        mix_sync = payload["comb_pending_mix_widget_sync"]
+        sol_sync = payload["comb_pending_solar_widget_sync"]
+        fin_sync = payload["comb_pending_fin_widget_sync"]
+
+        self.assertTrue(mix_sync["comb_enable_solar_toggle"])
+        self.assertTrue(mix_sync["comb_enable_battery_toggle"])
+        self.assertTrue(mix_sync["comb_enable_generator_toggle"])
+        self.assertTrue(mix_sync["comb_enable_financials_toggle"])
+        self.assertEqual(mix_sync["comb_grid_limit_input"], 160.0)
+        self.assertEqual(mix_sync["comb_rule1_select"], "generator_first")
+        self.assertEqual(mix_sync["comb_rule2_reserve_slider"], 45)
+        self.assertEqual(mix_sync["comb_generator_fuel_type_select"], "HVO")
+
+        self.assertEqual(sol_sync["comb_solar_preset_choice"], "Spain / Madrid")
+        self.assertEqual(sol_sync["comb_solar_sizing_radio"], "Direct Size (kWp)")
+        self.assertEqual(sol_sync["comb_solar_direct_kwp_num"], 210.0)
+        self.assertEqual(sol_sync["comb_solar_weather_mode_sel"], "Typical Year (PVGIS TMY)")
+
+        self.assertEqual(fin_sync["comb_fin_curr_sel"], "USD")
+        self.assertEqual(fin_sync["comb_fin_bill_mode_sel"], "Custom Bill Parts")
+        self.assertEqual(fin_sync["comb_fin_sol_lump_capex"], 145000.0)
+        self.assertEqual(fin_sync["comb_fin_bat_lump_capex"], 82000.0)
+        self.assertEqual(fin_sync["comb_fin_gen_model"], "Monthly Rental (OPEX)")
+        self.assertTrue(fin_sync["comb_fin_gen_rent_active_only"])
+        self.assertTrue(fin_sync["comb_strict_congestion_toggle"])
+        self.assertEqual(fin_sync["comb_fin_dso_tou_v"], 5)
+
+        # Recalculating on new load + tariff must update baseline tariff fingerprint while keeping custom hardware quotes
+        new_load = synthesize_benchmark_load_profile_2025(nominal_peak_kw=310.0)
+        new_tariff = CombinedFinancialConfig(currency_code="EUR", supplier_energy_price_eur_kwh=0.22)
+        recalc_snap = recalculate_snapshot_on_active_load(snap, new_load, active_fin_cfg=new_tariff)
+        self.assertEqual(recalc_snap.load_fingerprint, build_load_fingerprint_from_series(new_load))
+        self.assertEqual(recalc_snap.financial_config.currency_code, "EUR")
+        self.assertEqual(recalc_snap.financial_config.supplier_energy_price_eur_kwh, 0.22)
+        self.assertEqual(recalc_snap.financial_config.solar_lump_sum_capex_eur, 145000.0)
+
+    def test_excel_exporter_5th_sheet_and_subtab7_fragment_contract(self):
+        """Verifies 4-sheet vs 5-sheet Excel export, Sub-Tab 7 fragment/form contract, and zero Streamlit imports in scenario engine."""
+        import ast
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            generate_quick_ab_preset_snapshots,
+        )
+
+        cfg = CombinedSystemConfig(grid_limit_kw=180.0, enable_solar=True, solar_kwp=120.0, enable_battery=True, enable_financials=True)
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg, InteractionRulesConfig())
+        evaluate_combined_financials(sim_res, CombinedFinancialConfig())
+
+        # Without saved scenarios -> 4 sheets
+        xlsx_4 = build_combined_verification_excel_bytes(sim_res)
+        wb_4 = openpyxl.load_workbook(io.BytesIO(xlsx_4), read_only=True)
+        self.assertEqual(wb_4.sheetnames, ["Summary & KPIs", "15-Min Dispatch", "Monthly Balance", "Cost & Tariffs"])
+        wb_4.close()
+
+        # With saved scenarios -> 5 sheets including Scenario Comparison
+        snap_a, snap_b = generate_quick_ab_preset_snapshots(
+            load_series=self.load_series,
+            base_sys_cfg=cfg,
+            base_rules_cfg=InteractionRulesConfig(),
+            fin_cfg=CombinedFinancialConfig(),
+        )
+        xlsx_5 = build_combined_verification_excel_bytes(sim_res, saved_scenarios={"A": snap_a, "B": snap_b})
+        wb_5 = openpyxl.load_workbook(io.BytesIO(xlsx_5), read_only=True)
+        self.assertEqual(
+            wb_5.sheetnames,
+            ["Summary & KPIs", "15-Min Dispatch", "Monthly Balance", "Cost & Tariffs", "Scenario Comparison"],
+        )
+        ws_comp = wb_5["Scenario Comparison"]
+        comp_rows = list(ws_comp.iter_rows(values_only=True))
+        self.assertEqual(
+            list(comp_rows[0]),
+            ["Category", "Metric / KPI", "Current Situation", "Scenario A", "Scenario B", "Delta (B vs. A)"],
+        )
+        self.assertGreater(len(comp_rows), 20)
+        wb_5.close()
+
+        # Verify pure Python scenario_comparison_engine has zero Streamlit imports
+        engine_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "ui_sandbox",
+                "Combined_sandbox",
+                "engine",
+                "scenario_comparison_engine.py",
+            )
+        )
+        with open(engine_path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=engine_path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertNotIn("streamlit", alias.name)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                self.assertNotIn("streamlit", node.module)
+
+        # Verify Sub-Tab 7 fragment & form isolation contract
+        code = self._read_combined_ui_source()
+        self.assertIn("@st.fragment\ndef render_subtab7_scenario_comparison", code)
+        self.assertIn("@st.fragment\ndef _render_ab_chart_gallery_fragment", code)
+        self.assertIn('st.form(f"comb_save_slot_{slot_id}_form")', code)
+        self.assertIn('st.rerun(scope="app")', code)
+
 
 if __name__ == "__main__":
     unittest.main()

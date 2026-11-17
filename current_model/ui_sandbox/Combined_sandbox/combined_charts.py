@@ -29,4 +29,7 @@ from .charts import (
     create_battery_isolated_financial_figure,
     create_generator_isolated_financial_figure,
     create_tax_isolated_breakdown_figure,
+    create_ab_15y_tco_comparison_figure,
+    create_ab_annual_cost_stack_figure,
+    create_ab_supply_and_utilization_figure,
 )
