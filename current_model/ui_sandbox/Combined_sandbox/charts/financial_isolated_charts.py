@@ -50,6 +50,10 @@ def create_dso_isolated_breakdown_figure(
         segments.append(
             ("Transformer Rental", [fk.baseline_dso_transformer_rent_eur, fk.combined_dso_transformer_rent_eur], "#A855F7")
         )
+    if abs(fk.baseline_dso_regulatory_adj_eur) > 0.0 or abs(fk.combined_dso_regulatory_adj_eur) > 0.0:
+        segments.append(
+            ("Regulatory Adjustments", [fk.baseline_dso_regulatory_adj_eur, fk.combined_dso_regulatory_adj_eur], "#EC4899")
+        )
 
     cum_base = [0.0, 0.0]
     for label, vals, color in segments:
@@ -128,13 +132,13 @@ def create_dso_isolated_breakdown_figure(
         barmode="group",
         template="plotly_dark",
         height=height,
-        margin=dict(l=45, r=45, t=65, b=40),
+        margin=dict(l=45, r=45, t=65, b=70),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
         plot_bgcolor="rgba(15, 23, 42, 0.45)",
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.16,
+            y=-0.22,
             xanchor="center",
             x=0.5,
             bgcolor="rgba(0,0,0,0)",

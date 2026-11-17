@@ -1386,6 +1386,13 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertAlmostEqual(fk.baseline_vat_eur, sq_res.total_vat_amount, delta=50.0)
         self.assertAlmostEqual(fk.baseline_total_gross_eur, sq_res.total_status_quo_gross, delta=50.0)
 
+        from current_model.ui_sandbox.Combined_sandbox.combined_charts import create_dso_isolated_breakdown_figure
+        fig_dso = create_dso_isolated_breakdown_figure(sim_res)
+        dso_stack_traces = [t for t in fig_dso.data if getattr(t, "offsetgroup", None) == "dso_annual_stack"]
+        self.assertIn("Regulatory Adjustments", [t.name for t in dso_stack_traces])
+        self.assertAlmostEqual(sum(float(t.y[0]) for t in dso_stack_traces), fk.baseline_pillar2_dso_eur, delta=1.0)
+        self.assertAlmostEqual(sum(float(t.y[1]) for t in dso_stack_traces), fk.combined_pillar2_dso_eur, delta=1.0)
+
         # Also test direct StatusQuoConfig2025 -> CombinedFinancialConfig sync helper
         fin_synced = sync_financial_config_from_status_quo(sq_cfg, CombinedFinancialConfig())
         evaluate_combined_financials(sim_res, fin_synced)
