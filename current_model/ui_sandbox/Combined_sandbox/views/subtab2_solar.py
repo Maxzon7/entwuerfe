@@ -371,26 +371,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
 
         st.markdown("---")
 
-        # 2. Dual Quick-Sizing & Manual Input (st.form encapsulated)
-        st.caption("Quick Sizing Presets (% of Annual Consumption):")
-        qb1, qb2, qb3, qb4 = st.columns(4)
-        qb1.button(
-            "20%", use_container_width=True, disabled=not is_active,
-            key="comb_sol_q20", on_click=_apply_solar_quick_share, args=(20.0,),
-        )
-        qb2.button(
-            "40%", use_container_width=True, disabled=not is_active,
-            key="comb_sol_q40", on_click=_apply_solar_quick_share, args=(40.0,),
-        )
-        qb3.button(
-            "60%", use_container_width=True, disabled=not is_active,
-            key="comb_sol_q60", on_click=_apply_solar_quick_share, args=(60.0,),
-        )
-        qb4.button(
-            "100%", use_container_width=True, disabled=not is_active,
-            key="comb_sol_q100", on_click=_apply_solar_quick_share, args=(100.0,),
-        )
-
+        # 2. Dual Sizing & Manual Input (st.form encapsulated)
         preview_kwp = (
             round((ann_kwh * (float(cur_sys.target_consumption_share_pct) / 100.0)) / max(100.0, spec_yield), 1)
             if cur_sys.solar_sizing_method == "target_share_pct"
@@ -628,10 +609,11 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         with st.expander("How Solar Sizing & Weather Data Work", expanded=False, icon=":material/help_outline:"):
             st.markdown(
                 f"""
-**1. Quick Sizing Presets (`20% / 40% / 60% / 100%`)**  
-Each percentage scales the PV array so its expected **annual electricity generation** equals that share of your annual facility consumption (`{ann_kwh:,.0f} kWh/yr`):
+**1. Sizing Modes (`% of Annual Consumption` vs. `Direct Size (kWp)`)**  
+In **% of Annual Consumption** mode, the array is scaled so its expected yearly production matches that share of your annual electricity use (`{ann_kwh:,.0f} kWh/yr`):
 - `Target Solar Generation (kWh/yr) = Annual Consumption (kWh/yr) × Target Share (%)`
 - `Required PV Size (kWp) = Target Solar Generation / Specific Yield ({spec_yield:,.0f} kWh/kWp/yr)`
+In **Direct Size (kWp)** mode, you set the panel capacity directly and the matching consumption share is calculated automatically after applying.
 
 **2. Why 100% Annual Solar Does Not Mean 100% Direct Self-Consumption**  
 Solar irradiance peaks around midday and during summer months, whereas electricity demand also occurs at night, early mornings, and overcast winter weeks. Without a battery or generator, daytime surpluses above your live load are exported while evening/winter peaks still require Grid, Battery, or Generator power.  

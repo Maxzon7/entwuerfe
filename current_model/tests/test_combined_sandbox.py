@@ -1801,6 +1801,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("search_locations_open_meteo(clean_q, count=8)", sub2_src)
         self.assertIn("Multiple matching places found", sub2_src)
         self.assertIn("Use Selected Location", sub2_src)
+        self.assertNotIn("Quick Sizing Presets (% of Annual Consumption):", sub2_src)
 
 
 if __name__ == "__main__":
