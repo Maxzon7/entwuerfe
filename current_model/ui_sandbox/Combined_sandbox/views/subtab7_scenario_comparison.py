@@ -291,13 +291,150 @@ def _render_side_by_side_charts(
             )
 
 
+def _render_supply_mix_tab(
+    active_items: List[Tuple[str, CombinedScenarioSnapshot]],
+    chart_cfg: Dict[str, Any],
+) -> None:
+    """Renders Sub-Tab 5 Supply Mix Donut + mini table and System Usage bars side by side."""
+    st.caption("Direct comparison using the Sub-Tab 5 Supply Mix Donut and System Usage bars.")
+    mix_cols = st.columns(len(active_items))
+    for col, (s_id, snap) in zip(mix_cols, active_items):
+        with col:
+            st.markdown(f"**Scenario {s_id}: {snap.name}**")
+            st.plotly_chart(
+                create_supply_mix_pie_figure(snap.utilization_diagnostics, height=320),
+                use_container_width=True,
+                config=chart_cfg,
+                key=f"comb_ab_sub5_pie_{s_id}",
+            )
+            st.dataframe(
+                _build_supply_mix_mini_df(snap),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Energy (MWh/yr)": st.column_config.NumberColumn(format="%.1f MWh"),
+                    "Share (%)": st.column_config.NumberColumn(format="%.1f%%"),
+                    "Peak (kW)": st.column_config.NumberColumn(format="%.1f kW"),
+                },
+            )
+    st.markdown("###### How Much of Your System You Actually Use")
+    _render_side_by_side_charts(
+        active_items,
+        lambda s: create_component_utilization_bars_figure(s.utilization_diagnostics, height=310),
+        chart_key_prefix="comb_ab_sub5_util",
+    )
+
+
+def _render_financial_tabs(
+    snap_a: Optional[CombinedScenarioSnapshot],
+    snap_b: Optional[CombinedScenarioSnapshot],
+    fin_items: List[Tuple[str, CombinedScenarioSnapshot]],
+    load_series: Optional[LoadSeries2025],
+    chart_cfg: Dict[str, Any],
+) -> None:
+    """Renders Sub-Tab 6.3 Financial charts inside 4 instant client-side inner st.tabs."""
+    ft_tco, ft_wf, ft_stack, ft_mcf = st.tabs([
+        ":material/trending_up: 15-Year TCO & Payback",
+        ":material/stacked_bar_chart: Annual Cost Bridge",
+        ":material/bar_chart: 4-Pillar Annual Cost",
+        ":material/calendar_month: 12-Month Cashflow",
+    ])
+    with ft_tco:
+        st.plotly_chart(
+            create_ab_15y_tco_comparison_figure(snap_a, snap_b, height=390),
+            use_container_width=True,
+            config=chart_cfg,
+            key="comb_ab_fin_tco_shared",
+        )
+        _render_side_by_side_charts(
+            fin_items,
+            lambda s: create_financial_tco_trajectory_figure(snapshot_to_sim_view(s, load_series)),
+            chart_key_prefix="comb_ab_fin_amort",
+            sync_axes=("yaxis", "yaxis2"),
+        )
+    with ft_wf:
+        _render_side_by_side_charts(
+            fin_items,
+            lambda s: create_financial_waterfall_bridge_figure(snapshot_to_sim_view(s, load_series)),
+            chart_key_prefix="comb_ab_fin_wf",
+            sync_axes=("yaxis",),
+        )
+    with ft_stack:
+        st.plotly_chart(
+            create_ab_annual_cost_stack_figure(snap_a, snap_b, height=430),
+            use_container_width=True,
+            config=chart_cfg,
+            key="comb_ab_fin_cost_stack",
+        )
+    with ft_mcf:
+        _render_side_by_side_charts(
+            fin_items,
+            lambda s: create_financial_monthly_cashflow_figure(snapshot_to_sim_view(s, load_series)),
+            chart_key_prefix="comb_ab_fin_monthly",
+            sync_axes=("yaxis", "yaxis2"),
+        )
+
+
+@st.fragment
+def _render_power_flow_lazy_fragment(
+    snap_a: Optional[CombinedScenarioSnapshot],
+    snap_b: Optional[CombinedScenarioSnapshot],
+    active_items: List[Tuple[str, CombinedScenarioSnapshot]],
+    load_series: Optional[LoadSeries2025],
+    chart_cfg: Dict[str, Any],
+) -> None:
+    """Lazy-loaded fragment for heavy 35,040-step WebGL Power Flow comparison charts."""
+    st.caption(
+        "Enable a chart below to inspect 15-minute data (35,040 steps). "
+        "Keeping these off by default keeps tab switching and snapshot saving fast."
+    )
+    tg1, tg2 = st.columns(2)
+    with tg1:
+        show_overlay = st.toggle(
+            "Show Direct Grid Load & Battery SoC Overlay (35,040 steps)",
+            value=False,
+            key="comb_ab_show_overlay_pf",
+        )
+    with tg2:
+        show_sbs = st.toggle(
+            "Show Full Power Flow & Battery Level Side by Side (35,040 steps)",
+            value=False,
+            key="comb_ab_show_side_by_side_pf",
+        )
+
+    if show_overlay:
+        st.plotly_chart(
+            create_ab_load_profile_overlay_figure(
+                snap_a,
+                snap_b,
+                baseline_load_kw=getattr(load_series, "power_kw", None),
+                timestamps=getattr(load_series, "timestamps", None),
+                timeframe="Full Year",
+            ),
+            use_container_width=True,
+            config=chart_cfg,
+            key="comb_ab_pf_overlay",
+        )
+
+    if show_sbs:
+        if any(getattr(s, "dispatch_f32_dict", None) is None for _, s in active_items):
+            st.caption("Tip: Re-save older snapshots once to display full Solar, Battery, and Generator traces.")
+        clr = dict(st.session_state.get("comb_powerflow_colors") or DEFAULT_POWERFLOW_COLORS)
+        _render_side_by_side_charts(
+            active_items,
+            lambda s: create_combined_dispatch_soc_figure(snapshot_to_sim_view(s, load_series), color_overrides=clr),
+            chart_key_prefix="comb_ab_lvl3_pf",
+            sync_axes=("yaxis",),
+        )
+
+
 @st.fragment
 def _render_ab_chart_gallery_fragment(
     snap_a: Optional[CombinedScenarioSnapshot],
     snap_b: Optional[CombinedScenarioSnapshot],
     load_series: Optional[LoadSeries2025] = None,
 ) -> None:
-    """Zone 3: Visual scenario comparison built directly on the Sub-Tab 5, Sub-Tab 6.3, and Level 3 single-scenario diagrams."""
+    """Zone 3: Instant client-side st.tabs visual comparison + lazy Power Flow fragment."""
     active_items: List[Tuple[str, CombinedScenarioSnapshot]] = []
     if snap_a is not None:
         active_items.append(("A", snap_a))
@@ -307,144 +444,38 @@ def _render_ab_chart_gallery_fragment(
         return
 
     any_fin = any(bool(getattr(s.system_config, "enable_financials", False) and s.financial_kpis is not None) for _, s in active_items)
-    domain_opts = (
-        ["Supply Mix & System Usage", "Financial Charts", "Power Flow & Battery Level"]
-        if any_fin
-        else ["Supply Mix & System Usage", "Power Flow & Battery Level"]
-    )
     chart_cfg = {"scrollZoom": False, "displayModeBar": "hover", "responsive": True}
 
     with st.container(border=True):
         st.markdown("##### :material/analytics: Visual Scenario Comparison")
-        selected_domain = st.radio(
-            "Comparison View",
-            options=domain_opts,
-            index=0,
-            horizontal=True,
-            key="comb_ab_chart_domain_fin" if any_fin else "comb_ab_chart_domain_tech",
-            label_visibility="collapsed",
-        )
-
-        if selected_domain == "Supply Mix & System Usage":
-            st.caption("Direct comparison using the Sub-Tab 5 Supply Mix Donut and System Usage bars.")
-            mix_cols = st.columns(len(active_items))
-            for col, (s_id, snap) in zip(mix_cols, active_items):
-                with col:
-                    st.markdown(f"**Scenario {s_id}: {snap.name}**")
-                    st.plotly_chart(
-                        create_supply_mix_pie_figure(snap.utilization_diagnostics, height=320),
-                        use_container_width=True,
-                        config=chart_cfg,
-                        key=f"comb_ab_sub5_pie_{s_id}",
-                    )
-                    st.dataframe(
-                        _build_supply_mix_mini_df(snap),
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Energy (MWh/yr)": st.column_config.NumberColumn(format="%.1f MWh"),
-                            "Share (%)": st.column_config.NumberColumn(format="%.1f%%"),
-                            "Peak (kW)": st.column_config.NumberColumn(format="%.1f kW"),
-                        },
-                    )
-            st.markdown("###### How Much of Your System You Actually Use")
-            _render_side_by_side_charts(
-                active_items,
-                lambda s: create_component_utilization_bars_figure(s.utilization_diagnostics, height=310),
-                chart_key_prefix="comb_ab_sub5_util",
-            )
-
-        elif selected_domain == "Financial Charts":
-            fin_items = [
-                (s_id, s)
-                for s_id, s in active_items
-                if getattr(s.system_config, "enable_financials", False) and s.financial_kpis is not None
-            ]
-            if len(fin_items) < len(active_items):
-                st.caption("Financials are off on one saved slot — showing charts for the slot with Financials enabled.")
-            fin_choice = st.radio(
-                "Financial Chart View",
-                options=[
-                    "15-Year Cumulative TCO & Break-Even Trajectory",
-                    "Annual Cost Bridge (Waterfall)",
-                    "4-Pillar Annual Cost Comparison",
-                    "12-Month Seasonal Cashflow",
-                ],
-                index=0,
-                horizontal=True,
-                key="comb_ab_chart_gallery_sel_fin",
-                label_visibility="collapsed",
-            )
-            if fin_choice == "15-Year Cumulative TCO & Break-Even Trajectory":
-                st.plotly_chart(
-                    create_ab_15y_tco_comparison_figure(snap_a, snap_b, height=390),
-                    use_container_width=True,
-                    config=chart_cfg,
-                    key="comb_ab_fin_tco_shared",
-                )
-                _render_side_by_side_charts(
-                    fin_items,
-                    lambda s: create_financial_tco_trajectory_figure(snapshot_to_sim_view(s, load_series)),
-                    chart_key_prefix="comb_ab_fin_amort",
-                    sync_axes=("yaxis", "yaxis2"),
-                )
-            elif fin_choice == "Annual Cost Bridge (Waterfall)":
-                _render_side_by_side_charts(
-                    fin_items,
-                    lambda s: create_financial_waterfall_bridge_figure(snapshot_to_sim_view(s, load_series)),
-                    chart_key_prefix="comb_ab_fin_wf",
-                    sync_axes=("yaxis",),
-                )
-            elif fin_choice == "4-Pillar Annual Cost Comparison":
-                st.plotly_chart(
-                    create_ab_annual_cost_stack_figure(snap_a, snap_b, height=430),
-                    use_container_width=True,
-                    config=chart_cfg,
-                    key="comb_ab_fin_cost_stack",
-                )
-            else:
-                _render_side_by_side_charts(
-                    fin_items,
-                    lambda s: create_financial_monthly_cashflow_figure(snapshot_to_sim_view(s, load_series)),
-                    chart_key_prefix="comb_ab_fin_monthly",
-                    sync_axes=("yaxis", "yaxis2"),
-                )
-
+        if any_fin:
+            tab_mix, tab_fin, tab_pf = st.tabs([
+                ":material/donut_large: Supply Mix & System Usage",
+                ":material/account_balance: Financial Charts",
+                ":material/monitoring: Power Flow & Battery Level",
+            ])
+            with tab_mix:
+                _render_supply_mix_tab(active_items, chart_cfg)
+            with tab_fin:
+                fin_items = [
+                    (s_id, s)
+                    for s_id, s in active_items
+                    if getattr(s.system_config, "enable_financials", False) and s.financial_kpis is not None
+                ]
+                if len(fin_items) < len(active_items):
+                    st.caption("Financials are off on one saved slot — showing charts for the slot with Financials enabled.")
+                _render_financial_tabs(snap_a, snap_b, fin_items, load_series, chart_cfg)
+            with tab_pf:
+                _render_power_flow_lazy_fragment(snap_a, snap_b, active_items, load_series, chart_cfg)
         else:
-            pf_choice = st.radio(
-                "Power Flow View",
-                options=[
-                    "Full Power Flow & Battery Level (Side by Side)",
-                    "Direct Grid Load & Battery SoC Overlay",
-                ],
-                index=0,
-                horizontal=True,
-                key="comb_ab_chart_gallery_sel_tech",
-                label_visibility="collapsed",
-            )
-            if pf_choice == "Full Power Flow & Battery Level (Side by Side)":
-                if any(getattr(s, "dispatch_f32_dict", None) is None for _, s in active_items):
-                    st.caption("Tip: Re-save older snapshots once to display full Solar, Battery, and Generator traces in the Power Flow chart.")
-                clr = dict(st.session_state.get("comb_powerflow_colors") or DEFAULT_POWERFLOW_COLORS)
-                _render_side_by_side_charts(
-                    active_items,
-                    lambda s: create_combined_dispatch_soc_figure(snapshot_to_sim_view(s, load_series), color_overrides=clr),
-                    chart_key_prefix="comb_ab_lvl3_pf",
-                    sync_axes=("yaxis",),
-                )
-            else:
-                st.plotly_chart(
-                    create_ab_load_profile_overlay_figure(
-                        snap_a,
-                        snap_b,
-                        baseline_load_kw=getattr(load_series, "power_kw", None),
-                        timestamps=getattr(load_series, "timestamps", None),
-                        timeframe="Full Year",
-                    ),
-                    use_container_width=True,
-                    config=chart_cfg,
-                    key="comb_ab_pf_overlay",
-                )
+            tab_mix, tab_pf = st.tabs([
+                ":material/donut_large: Supply Mix & System Usage",
+                ":material/monitoring: Power Flow & Battery Level",
+            ])
+            with tab_mix:
+                _render_supply_mix_tab(active_items, chart_cfg)
+            with tab_pf:
+                _render_power_flow_lazy_fragment(snap_a, snap_b, active_items, load_series, chart_cfg)
 
 
 def _highlight_delta_color(metric_low: str, delta_txt: str) -> Optional[str]:
