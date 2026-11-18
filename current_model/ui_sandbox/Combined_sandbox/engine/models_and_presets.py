@@ -799,4 +799,8 @@ class CombinedScenarioSnapshot:
     monthly_balance_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     monthly_cost_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     cashflow_15y_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    grid_import_kw_f32: Optional[np.ndarray] = None
+    bess_soc_pct_f32: Optional[np.ndarray] = None
+    unmet_overload_kw_f32: Optional[np.ndarray] = None
+    dispatch_f32_dict: Optional[Dict[str, np.ndarray]] = None
 

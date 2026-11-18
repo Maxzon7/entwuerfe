@@ -63,6 +63,8 @@ from .engine import (
     apply_utility_tariff_presets,
     sync_financial_config_from_status_quo,
     scale_eur_hardware_defaults_to_currency,
+    SCENARIO_COMPARISON_PALETTE,
+    normalize_scenario_list,
     format_currency_value,
     build_load_fingerprint_from_series,
     build_baseline_tariff_fingerprint,
@@ -73,4 +75,9 @@ from .engine import (
     generate_quick_ab_preset_snapshots,
     build_restore_widget_sync_payload,
     build_ab_comparison_matrix_df,
+    build_multi_scenario_leaderboard_df,
+    compute_snapshot_bwl_extensions,
+    compute_incremental_bwl_evaluation,
+    build_segmented_comparison_tables,
+    snapshot_to_sim_view,
 )

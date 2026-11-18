@@ -105,6 +105,13 @@ from ..combined_sandbox_engine import (
     generate_quick_ab_preset_snapshots,
     build_restore_widget_sync_payload,
     build_ab_comparison_matrix_df,
+    SCENARIO_COMPARISON_PALETTE,
+    normalize_scenario_list,
+    build_multi_scenario_leaderboard_df,
+    compute_snapshot_bwl_extensions,
+    compute_incremental_bwl_evaluation,
+    build_segmented_comparison_tables,
+    snapshot_to_sim_view,
 )
 from ..combined_charts import (
     DEFAULT_POWERFLOW_COLORS,
@@ -127,6 +134,11 @@ from ..combined_charts import (
     create_ab_15y_tco_comparison_figure,
     create_ab_annual_cost_stack_figure,
     create_ab_supply_and_utilization_figure,
+    create_ab_monthly_peak_and_grid_import_figure,
+    create_ab_energy_flow_balance_figure,
+    create_ab_capex_vs_opex_shift_figure,
+    create_ab_load_profile_overlay_figure,
+    sync_side_by_side_yaxis,
 )
 from ..combined_excel_exporter import (
     build_combined_verification_excel_bytes,

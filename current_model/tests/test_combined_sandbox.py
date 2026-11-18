@@ -2008,23 +2008,51 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertEqual(len(snap.monthly_cost_df), 12)
         self.assertEqual(len(snap.monthly_balance_df), 12)
         self.assertIsInstance(snap.utilization_diagnostics, SystemUtilizationDiagnostics)
-        # Lightweight check: snapshot holds no 35,040-step dispatch arrays
-        for attr_val in snap.__dict__.values():
+        # Lightweight check: snapshot only stores compact np.float32 vectors (zero float64 dispatch arrays)
+        allowed_f32_arrays = {"grid_import_kw_f32", "bess_soc_pct_f32", "unmet_overload_kw_f32"}
+        total_array_bytes = 0
+        for attr_name, attr_val in snap.__dict__.items():
             if isinstance(attr_val, np.ndarray):
-                self.assertLess(len(attr_val), 35040)
+                self.assertIn(attr_name, allowed_f32_arrays)
+                self.assertEqual(attr_val.dtype, np.float32)
+                total_array_bytes += int(attr_val.nbytes)
+        if snap.dispatch_f32_dict is not None:
+            for d_arr in snap.dispatch_f32_dict.values():
+                self.assertEqual(d_arr.dtype, np.float32)
+                total_array_bytes += int(d_arr.nbytes)
+        self.assertLessEqual(total_array_bytes, 1_500_000)
 
     def test_zero_simulation_overhead_comparison(self):
-        """Verifies Quick-Generate A/B preset pair, comparison matrix, and all 3 Plotly figures run rapidly with zero dispatch calls."""
+        """Verifies Quick-Generate A/B pair, 5 segmented tables, snapshot_to_sim_view, sync_side_by_side_yaxis, and all comparison/single-scenario charts run with zero dispatch calls."""
+        import copy
         import time
         import unittest.mock as mock
         from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
             generate_quick_ab_preset_snapshots,
             build_ab_comparison_matrix_df,
+            build_multi_scenario_leaderboard_df,
+            normalize_scenario_list,
+            SCENARIO_COMPARISON_PALETTE,
+            compute_snapshot_bwl_extensions,
+            compute_incremental_bwl_evaluation,
+            build_segmented_comparison_tables,
+            snapshot_to_sim_view,
         )
         from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
+            create_supply_mix_pie_figure,
+            create_component_utilization_bars_figure,
+            create_combined_dispatch_soc_figure,
+            create_financial_tco_trajectory_figure,
+            create_financial_waterfall_bridge_figure,
+            create_financial_monthly_cashflow_figure,
             create_ab_15y_tco_comparison_figure,
             create_ab_annual_cost_stack_figure,
             create_ab_supply_and_utilization_figure,
+            create_ab_monthly_peak_and_grid_import_figure,
+            create_ab_energy_flow_balance_figure,
+            create_ab_capex_vs_opex_shift_figure,
+            create_ab_load_profile_overlay_figure,
+            sync_side_by_side_yaxis,
         )
 
         base_cfg = CombinedSystemConfig(
@@ -2034,6 +2062,7 @@ class TestCombinedSandbox(unittest.TestCase):
             target_consumption_share_pct=60.0,
             enable_battery=False,
             enable_generator=False,
+            enable_financials=True,
         )
         base_rules = InteractionRulesConfig()
         fin_cfg = CombinedFinancialConfig()
@@ -2051,6 +2080,18 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertLessEqual(snap_a.kpis.remaining_overload_hours, 0.05)
         self.assertTrue(snap_b.system_config.enable_battery)
         self.assertLessEqual(snap_b.kpis.remaining_overload_hours, 0.05)
+        self.assertIsNotNone(snap_a.grid_import_kw_f32)
+        self.assertEqual(snap_a.grid_import_kw_f32.dtype, np.float32)
+        self.assertEqual(len(snap_a.grid_import_kw_f32), 35040)
+        self.assertIsNotNone(snap_a.bess_soc_pct_f32)
+        self.assertIsNotNone(snap_a.unmet_overload_kw_f32)
+
+        # Build a lightweight 3rd snapshot to test native 1..N readiness across engine & charts
+        snap_c = copy.deepcopy(snap_b)
+        snap_c.slot_id = "C"
+        snap_c.name = "Scenario C: Tight Hybrid Reserve"
+        self.assertGreaterEqual(len(SCENARIO_COMPARISON_PALETTE), 4)
+        self.assertEqual(len(normalize_scenario_list(snap_a, snap_b, scenarios=[snap_a, snap_b, snap_c])), 3)
 
         with mock.patch(
             "current_model.ui_sandbox.Combined_sandbox.engine.dispatch_simulation.simulate_combined_system_dispatch",
@@ -2058,20 +2099,123 @@ class TestCombinedSandbox(unittest.TestCase):
         ):
             t0 = time.perf_counter()
             df_comp = build_ab_comparison_matrix_df(snap_a, snap_b)
+            df_multi = build_ab_comparison_matrix_df(scenarios=[snap_a, snap_b, snap_c])
+            lb_fin = build_multi_scenario_leaderboard_df([snap_a, snap_b, snap_c])
+            seg_fin = build_segmented_comparison_tables(snap_a, snap_b)
+            bwl_inc = compute_incremental_bwl_evaluation(snap_a, snap_b)
+            bwl_ext_a = compute_snapshot_bwl_extensions(snap_a)
+
             fig_tco = create_ab_15y_tco_comparison_figure(snap_a, snap_b)
             fig_stack = create_ab_annual_cost_stack_figure(snap_a, snap_b)
             fig_util = create_ab_supply_and_utilization_figure(snap_a, snap_b)
+            fig_monthly = create_ab_monthly_peak_and_grid_import_figure(snap_a, snap_b)
+            fig_flow = create_ab_energy_flow_balance_figure(snap_a, snap_b)
+            fig_shift = create_ab_capex_vs_opex_shift_figure(snap_a, snap_b)
+
+            fig_prof_all = create_ab_load_profile_overlay_figure(
+                snap_a, snap_b, baseline_load_kw=self.load_kw, timestamps=self.timestamps, timeframe="Full Year"
+            )
+
+            # 1..N multi-scenario execution on all 7 charts + single-scenario diagram adapter & Y-axis sync
+            seg_multi = build_segmented_comparison_tables(scenarios=[snap_a, snap_b, snap_c])
+            bwl_inc_multi = compute_incremental_bwl_evaluation(scenarios=[snap_a, snap_b, snap_c])
+            sim_view_a = snapshot_to_sim_view(snap_a, self.load_series)
+            sim_view_b = snapshot_to_sim_view(snap_b, self.load_series)
+            fig_pie_a = create_supply_mix_pie_figure(snap_a.utilization_diagnostics)
+            fig_util_a = create_component_utilization_bars_figure(snap_a.utilization_diagnostics)
+            fig_disp_a = create_combined_dispatch_soc_figure(sim_view_a)
+            fig_disp_b = create_combined_dispatch_soc_figure(sim_view_b)
+            sync_side_by_side_yaxis(fig_disp_a, fig_disp_b, axes=("yaxis",))
+            fig_wf_a = create_financial_waterfall_bridge_figure(sim_view_a)
+            fig_wf_b = create_financial_waterfall_bridge_figure(sim_view_b)
+            sync_side_by_side_yaxis(fig_wf_a, fig_wf_b, axes=("yaxis",))
+            fig_amort_a = create_financial_tco_trajectory_figure(sim_view_a)
+            fig_amort_b = create_financial_tco_trajectory_figure(sim_view_b)
+            sync_side_by_side_yaxis(fig_amort_a, fig_amort_b, axes=("yaxis", "yaxis2"))
+            fig_mcf_a = create_financial_monthly_cashflow_figure(sim_view_a)
+            fig_mcf_b = create_financial_monthly_cashflow_figure(sim_view_b)
+            sync_side_by_side_yaxis(fig_mcf_a, fig_mcf_b, axes=("yaxis", "yaxis2"))
+
+            multi_figs = [
+                create_ab_15y_tco_comparison_figure(scenarios=[snap_a, snap_b, snap_c]),
+                create_ab_annual_cost_stack_figure(scenarios=[snap_a, snap_b, snap_c]),
+                create_ab_supply_and_utilization_figure(scenarios=[snap_a, snap_b, snap_c]),
+                create_ab_monthly_peak_and_grid_import_figure(scenarios=[snap_a, snap_b, snap_c]),
+                create_ab_energy_flow_balance_figure(scenarios=[snap_a, snap_b, snap_c]),
+                create_ab_capex_vs_opex_shift_figure(scenarios=[snap_a, snap_b, snap_c]),
+                create_ab_load_profile_overlay_figure(
+                    scenarios=[snap_a, snap_b, snap_c], baseline_load_kw=self.load_kw, timestamps=self.timestamps, timeframe="Full Year"
+                ),
+            ]
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
         self.assertFalse(df_comp.empty)
-        self.assertIn("Current Situation", df_comp.columns)
-        self.assertIn("Scenario A", df_comp.columns)
-        self.assertIn("Scenario B", df_comp.columns)
-        self.assertIn("Delta (B vs. A)", df_comp.columns)
+        self.assertFalse(df_multi.empty)
+        self.assertEqual(list(df_comp.columns), ["Category", "Metric / KPI", "Current Situation", "Scenario A", "Scenario B", "Delta (B vs. A)"])
+        self.assertEqual(set(seg_fin.keys()), {"sizing_rules", "grid_balance", "utilization_dead_cap", "capex_y1_pnl", "bwl_15y_metrics"})
+        self.assertEqual(set(seg_multi.keys()), {"sizing_rules", "grid_balance", "utilization_dead_cap", "capex_y1_pnl", "bwl_15y_metrics"})
+        self.assertIn("Unused Battery Value", set(seg_fin["utilization_dead_cap"]["df"]["Metric / KPI"]))
+        self.assertIn("Savings per kWh vs. Grid", set(seg_fin["bwl_15y_metrics"]["df"]["Metric / KPI"]))
+        self.assertIn("Yearly Savings per 1,000 Invested", set(seg_fin["bwl_15y_metrics"]["df"]["Metric / KPI"]))
+        self.assertIn("15-Year Cost Split (Upfront vs. Running)", set(seg_fin["bwl_15y_metrics"]["df"]["Metric / KPI"]))
+        self.assertIsNotNone(bwl_inc)
+        self.assertIsNotNone(bwl_inc_multi)
+        self.assertGreaterEqual(bwl_inc["delta_capex_eur"], 0.0)
+        self.assertTrue(bwl_ext_a["has_financials"])
+        self.assertEqual(fig_wf_a.layout.yaxis.range, fig_wf_b.layout.yaxis.range)
+        self.assertEqual(fig_disp_a.layout.yaxis.range, fig_disp_b.layout.yaxis.range)
+        self.assertEqual(fig_amort_a.layout.yaxis.range, fig_amort_b.layout.yaxis.range)
+        self.assertEqual(fig_mcf_a.layout.yaxis2.range, fig_mcf_b.layout.yaxis2.range)
+        self.assertGreater(len(fig_pie_a.data), 0)
+        self.assertGreater(len(fig_util_a.data), 0)
+        metrics_set = set(df_comp["Metric / KPI"])
+        for expected_metric in (
+            "Peak Demand Shaved (kW)",
+            "Overload Eliminated (%)",
+            "On-Site Autarky Share (%)",
+            "Annual Residual Grid Import (MWh/yr)",
+            "Solar Exported Surplus (MWh/yr)",
+            "Battery Min SoC / Unused Reserve",
+            "On-Site System LCOE (per kWh)",
+            "Annualized Cost per Shaved Peak kW",
+        ):
+            self.assertIn(expected_metric, metrics_set)
+
+        self.assertEqual(len(lb_fin), 3)
+        self.assertEqual(list(lb_fin["Rank"]), [1, 2, 3])
+        self.assertIn("15-Year TCO", lb_fin.columns)
+
         self.assertGreaterEqual(len(fig_tco.data), 3)
         self.assertGreaterEqual(len(fig_stack.data), 7)
         self.assertGreaterEqual(len(fig_util.data), 7)
-        self.assertLess(elapsed_ms, 500.0)
+        self.assertGreaterEqual(len(fig_monthly.data), 6)
+        self.assertGreaterEqual(len(fig_flow.data), 7)
+        self.assertGreaterEqual(len(fig_shift.data), 6)
+        self.assertGreaterEqual(len(fig_prof_all.data), 5)
+        for m_fig in multi_figs:
+            self.assertGreater(len(m_fig.data), 0)
+        self.assertLess(elapsed_ms, 1500.0)
+
+        # When Financials is disabled on all snapshots, comparison matrix omits Economics rows & financial charts stay disabled
+        snap_a.system_config.enable_financials = False
+        snap_b.system_config.enable_financials = False
+        snap_c.system_config.enable_financials = False
+        df_tech = build_ab_comparison_matrix_df(snap_a, snap_b)
+        lb_tech = build_multi_scenario_leaderboard_df([snap_a, snap_b, snap_c])
+        seg_tech = build_segmented_comparison_tables(snap_a, snap_b)
+        self.assertEqual(set(seg_tech.keys()), {"sizing_rules", "grid_balance", "utilization_dead_cap"})
+        self.assertIsNone(compute_incremental_bwl_evaluation(snap_a, snap_b))
+        self.assertNotIn("Economics & 15-Year Financials", set(df_tech["Category"]))
+        self.assertIn("Technical Performance", set(df_tech["Category"]))
+        self.assertNotIn("15-Year TCO", lb_tech.columns)
+        self.assertIn("On-Site Autarky (%)", lb_tech.columns)
+        self.assertEqual(len(create_ab_15y_tco_comparison_figure(snap_a, snap_b).data), 0)
+        self.assertEqual(len(create_ab_annual_cost_stack_figure(snap_a, snap_b).data), 0)
+        self.assertEqual(len(create_ab_capex_vs_opex_shift_figure(snap_a, snap_b).data), 0)
+        self.assertGreaterEqual(len(create_ab_supply_and_utilization_figure(snap_a, snap_b).data), 7)
+        self.assertGreaterEqual(len(create_ab_monthly_peak_and_grid_import_figure(snap_a, snap_b).data), 6)
+        self.assertGreaterEqual(len(create_ab_energy_flow_balance_figure(snap_a, snap_b).data), 7)
+        self.assertGreaterEqual(len(create_ab_load_profile_overlay_figure(snap_a, snap_b, baseline_load_kw=self.load_kw).data), 5)
 
     def test_round_trip_restore_widget_sync_and_baseline_recalc(self):
         """Verifies full snapshot restore payload (Level 1 + Sub-Tabs 2-6) and baseline tariff recalculation."""
@@ -2218,30 +2362,44 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertGreater(len(comp_rows), 20)
         wb_5.close()
 
-        # Verify pure Python scenario_comparison_engine has zero Streamlit imports
-        engine_path = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "ui_sandbox",
-                "Combined_sandbox",
-                "engine",
-                "scenario_comparison_engine.py",
+        # Verify pure Python comparison engines have zero Streamlit imports
+        for eng_fname in ("scenario_comparison_engine.py", "scenario_tables_and_profiles.py"):
+            engine_path = os.path.abspath(
+                os.path.join(
+                    os.path.dirname(__file__),
+                    "..",
+                    "ui_sandbox",
+                    "Combined_sandbox",
+                    "engine",
+                    eng_fname,
+                )
             )
-        )
-        with open(engine_path, "r", encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=engine_path)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    self.assertNotIn("streamlit", alias.name)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                self.assertNotIn("streamlit", node.module)
+            with open(engine_path, "r", encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=engine_path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        self.assertNotIn("streamlit", alias.name)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    self.assertNotIn("streamlit", node.module)
 
         # Verify Sub-Tab 7 fragment & form isolation contract
         code = self._read_combined_ui_source()
         self.assertIn("@st.fragment\ndef render_subtab7_scenario_comparison", code)
         self.assertIn("@st.fragment\ndef _render_ab_chart_gallery_fragment", code)
+        self.assertIn("@st.fragment\ndef _render_comparison_ledger", code)
+        self.assertIn("comb_ab_chart_gallery_sel_fin", code)
+        self.assertIn("comb_ab_chart_gallery_sel_tech", code)
+        self.assertIn("comb_ab_table_section_sel_fin", code)
+        self.assertIn("snapshot_to_sim_view", code)
+        self.assertIn("sync_side_by_side_yaxis", code)
+        self.assertIn("create_supply_mix_pie_figure", code)
+        self.assertIn("create_component_utilization_bars_figure", code)
+        self.assertIn("create_combined_dispatch_soc_figure", code)
+        self.assertIn("create_financial_tco_trajectory_figure", code)
+        self.assertIn("create_financial_waterfall_bridge_figure", code)
+        self.assertIn("create_financial_monthly_cashflow_figure", code)
+        self.assertIn("create_ab_load_profile_overlay_figure", code)
         self.assertIn('st.form(f"comb_save_slot_{slot_id}_form")', code)
         self.assertIn('st.rerun(scope="app")', code)
 

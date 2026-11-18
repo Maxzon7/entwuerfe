@@ -32,4 +32,11 @@ from .scenario_comparison_charts import (
     create_ab_15y_tco_comparison_figure,
     create_ab_annual_cost_stack_figure,
     create_ab_supply_and_utilization_figure,
+    create_ab_monthly_peak_and_grid_import_figure,
+    create_ab_energy_flow_balance_figure,
+    create_ab_capex_vs_opex_shift_figure,
+)
+from .scenario_profile_charts import (
+    create_ab_load_profile_overlay_figure,
+    sync_side_by_side_yaxis,
 )

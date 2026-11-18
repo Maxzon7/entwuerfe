@@ -7,7 +7,7 @@ Strictly Streamlit-free to guarantee unit testability and zero UI coupling.
 
 import copy
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
@@ -80,9 +80,38 @@ _BASELINE_TARIFF_FIELDS: Tuple[str, ...] = (
 )
 
 
+def _curr_sym(currency_code: str = "EUR") -> str:
+    """Returns compact currency symbol for unit-rate formatting (€, $, or ISO code)."""
+    return "€" if currency_code == "EUR" else ("$" if currency_code == "USD" else f"{currency_code} ")
+
+
+SCENARIO_COMPARISON_PALETTE: Tuple[str, ...] = (
+    "#38BDF8",
+    "#10B981",
+    "#F59E0B",
+    "#A855F7",
+    "#EC4899",
+    "#06B6D4",
+)
+
+
+def normalize_scenario_list(
+    snap_a: Optional[CombinedScenarioSnapshot] = None,
+    snap_b: Optional[CombinedScenarioSnapshot] = None,
+    scenarios: Optional[Sequence[CombinedScenarioSnapshot]] = None,
+) -> List[CombinedScenarioSnapshot]:
+    """
+    Normalizes either pairwise `(snap_a, snap_b)` or an arbitrary `1..N` sequence
+    of `CombinedScenarioSnapshot` objects into a clean ordered list for charts/tables.
+    """
+    if scenarios is not None:
+        return [s for s in scenarios if s is not None]
+    return [s for s in (snap_a, snap_b) if s is not None]
+
+
 def format_currency_value(val: float, currency_code: str = "EUR", signed: bool = False) -> str:
     """Formats a monetary value with currency prefix for plain text, DataFrames, and Excel cells."""
-    pref = "€" if currency_code == "EUR" else ("$" if currency_code == "USD" else f"{currency_code} ")
+    pref = _curr_sym(currency_code)
     if signed:
         sign = "+" if val >= 0 else "-"
         return f"{sign}{pref}{abs(val):,.0f}"
@@ -243,6 +272,25 @@ def capture_scenario_snapshot(
             if sim_eval.cashflow_15y_df is not None
             else pd.DataFrame()
         ),
+        grid_import_kw_f32=np.asarray(sim_eval.grid_import_kw, dtype=np.float32).copy() if getattr(sim_eval, "grid_import_kw", None) is not None else None,
+        bess_soc_pct_f32=np.asarray(sim_eval.bess_soc_pct, dtype=np.float32).copy() if getattr(sim_eval, "bess_soc_pct", None) is not None else None,
+        unmet_overload_kw_f32=np.asarray(sim_eval.unmet_overload_kw, dtype=np.float32).copy() if getattr(sim_eval, "unmet_overload_kw", None) is not None else None,
+        dispatch_f32_dict={
+            k_arr: np.asarray(val_arr, dtype=np.float32).copy()
+            for k_arr, val_arr in (
+                ("solar_gen_kw", getattr(sim_eval, "solar_gen_kw", None)),
+                ("solar_direct_kw", getattr(sim_eval, "solar_direct_kw", None)),
+                ("solar_potential_kw", getattr(sim_eval, "solar_potential_kw", None)),
+                ("bess_discharge_kw", getattr(sim_eval, "bess_discharge_kw", None)),
+                ("gen_output_kw", getattr(sim_eval, "gen_output_kw", None)),
+                (
+                    "bess_charge_total_kw",
+                    (np.asarray(sim_eval.bess_charge_solar_kw, dtype=np.float32) + np.asarray(sim_eval.bess_charge_grid_kw, dtype=np.float32) + np.asarray(sim_eval.bess_charge_gen_kw, dtype=np.float32))
+                    if getattr(sim_eval, "bess_charge_solar_kw", None) is not None else None,
+                ),
+            )
+            if val_arr is not None
+        },
     )
 
 
@@ -603,7 +651,8 @@ def _describe_hardware_bess(snap: CombinedScenarioSnapshot) -> str:
     cfg = snap.system_config
     if not cfg.enable_battery:
         return "Off"
-    return f"{cfg.battery_capacity_kwh:,.0f} kWh / {cfg.battery_power_kw:,.0f} kW"
+    dur_h = cfg.battery_capacity_kwh / max(1.0, cfg.battery_power_kw)
+    return f"{cfg.battery_capacity_kwh:,.0f} kWh / {cfg.battery_power_kw:,.0f} kW ({dur_h:.1f}h)"
 
 
 def _describe_hardware_gen(snap: CombinedScenarioSnapshot) -> str:
@@ -632,14 +681,20 @@ def _describe_rules(snap: CombinedScenarioSnapshot) -> str:
 
 
 def build_ab_comparison_matrix_df(
-    snap_a: Optional[CombinedScenarioSnapshot],
-    snap_b: Optional[CombinedScenarioSnapshot],
+    snap_a: Optional[CombinedScenarioSnapshot] = None,
+    snap_b: Optional[CombinedScenarioSnapshot] = None,
+    scenarios: Optional[Sequence[CombinedScenarioSnapshot]] = None,
 ) -> pd.DataFrame:
     """
     Constructs a structured comparison DataFrame across Current Situation (Baseline),
     Scenario A, Scenario B, and Delta (B vs. A) covering Dimensioning, Technical KPIs,
-    and 4-Pillar + 15-Year Financial outcomes.
+    and 4-Pillar + 15-Year Financial outcomes. Accepts optional `scenarios` list (`1..N` ready).
     """
+    if scenarios is not None and snap_a is None and snap_b is None:
+        clean_list = [s for s in scenarios if s is not None]
+        snap_a = clean_list[0] if len(clean_list) >= 1 else None
+        snap_b = clean_list[1] if len(clean_list) >= 2 else None
+
     cols = ["Category", "Metric / KPI", "Current Situation", "Scenario A", "Scenario B", "Delta (B vs. A)"]
     ref = snap_a if snap_a is not None else snap_b
     if ref is None:
@@ -710,315 +765,183 @@ def build_ab_comparison_matrix_df(
         })
 
     # 1. Dimensioning & Rules
-    add_row(
-        "Dimensioning & Rules",
-        "Scenario Name",
-        "Status Quo (No Add-On Hardware)",
-        snap_a.name if snap_a else "—",
-        snap_b.name if snap_b else "—",
-        "—",
-    )
-    add_row(
-        "Dimensioning & Rules",
-        "Contracted Grid Limit (kW)",
-        f"{ref.system_config.grid_limit_kw:,.0f} kW",
-        f"{snap_a.system_config.grid_limit_kw:,.0f} kW" if snap_a else "—",
-        f"{snap_b.system_config.grid_limit_kw:,.0f} kW" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.system_config.grid_limit_kw, "kW", 0),
-    )
-    add_row(
-        "Dimensioning & Rules",
-        "Solar PV Size",
-        "Off",
-        _describe_hardware_solar(snap_a) if snap_a else "—",
-        _describe_hardware_solar(snap_b) if snap_b else "—",
-        _fmt_num_delta(
-            lambda s: s.solar_derivation.installed_kwp if s.system_config.enable_solar else 0.0,
-            "kWp",
-            1,
-        ),
-    )
-    add_row(
-        "Dimensioning & Rules",
-        "Battery Storage (kWh / kW)",
-        "Off",
-        _describe_hardware_bess(snap_a) if snap_a else "—",
-        _describe_hardware_bess(snap_b) if snap_b else "—",
-        _fmt_num_delta(
-            lambda s: s.system_config.battery_capacity_kwh if s.system_config.enable_battery else 0.0,
-            "kWh",
-            0,
-        ),
-    )
-    add_row(
-        "Dimensioning & Rules",
-        "Peaking Generator (kW & Fuel)",
-        "Off",
-        _describe_hardware_gen(snap_a) if snap_a else "—",
-        _describe_hardware_gen(snap_b) if snap_b else "—",
-        _fmt_num_delta(
-            lambda s: s.system_config.generator_rated_kw if s.system_config.enable_generator else 0.0,
-            "kW",
-            0,
-        ),
-    )
-    add_row(
-        "Dimensioning & Rules",
-        "Operating Rules (R1 / R2 / R3)",
-        "Grid Only",
-        _describe_rules(snap_a) if snap_a else "—",
-        _describe_rules(snap_b) if snap_b else "—",
-        "—",
-    )
+    add_row("Dimensioning & Rules", "Scenario Name", "Status Quo (No Add-On Hardware)", snap_a.name if snap_a else "—", snap_b.name if snap_b else "—", "—")
+    add_row("Dimensioning & Rules", "Contracted Grid Limit (kW)", f"{ref.system_config.grid_limit_kw:,.0f} kW", f"{snap_a.system_config.grid_limit_kw:,.0f} kW" if snap_a else "—", f"{snap_b.system_config.grid_limit_kw:,.0f} kW" if snap_b else "—", _fmt_num_delta(lambda s: s.system_config.grid_limit_kw, "kW", 0))
+    add_row("Dimensioning & Rules", "Solar PV Size", "Off", _describe_hardware_solar(snap_a) if snap_a else "—", _describe_hardware_solar(snap_b) if snap_b else "—", _fmt_num_delta(lambda s: s.solar_derivation.installed_kwp if s.system_config.enable_solar else 0.0, "kWp", 1))
+    add_row("Dimensioning & Rules", "Battery Storage (kWh / kW)", "Off", _describe_hardware_bess(snap_a) if snap_a else "—", _describe_hardware_bess(snap_b) if snap_b else "—", _fmt_num_delta(lambda s: s.system_config.battery_capacity_kwh if s.system_config.enable_battery else 0.0, "kWh", 0))
+    add_row("Dimensioning & Rules", "Peaking Generator (kW & Fuel)", "Off", _describe_hardware_gen(snap_a) if snap_a else "—", _describe_hardware_gen(snap_b) if snap_b else "—", _fmt_num_delta(lambda s: s.system_config.generator_rated_kw if s.system_config.enable_generator else 0.0, "kW", 0))
+    add_row("Dimensioning & Rules", "Operating Rules (R1 / R2 / R3)", "Grid Only", _describe_rules(snap_a) if snap_a else "—", _describe_rules(snap_b) if snap_b else "—", "—")
 
     # 2. Technical Performance
+    tech_num_specs = [
+        ("Peak Grid Demand (kW)", f"{ref.kpis.original_peak_kw:,.1f} kW", lambda s: s.kpis.new_grid_peak_kw, "kW", 1, "kW"),
+        ("Peak Demand Shaved (kW)", "0.0 kW", lambda s: s.kpis.peak_reduction_kw, "kW", 1, "kW"),
+        ("Remaining Overload (hrs/yr)", f"{ref.kpis.baseline_overload_hours:,.1f} hrs", lambda s: s.kpis.remaining_overload_hours, "hrs", 1, "hrs"),
+        ("Remaining Overload Energy (kWh/yr)", f"{ref.kpis.baseline_overload_kwh:,.0f} kWh", lambda s: s.kpis.remaining_overload_kwh, "kWh", 0, "kWh"),
+        ("Overload Eliminated (%)", "0.0%", lambda s: s.kpis.overload_eliminated_pct, "%", 1, "pp"),
+        ("On-Site Autarky Share (%)", "0.0%", lambda s: max(0.0, 100.0 - s.utilization_diagnostics.grid_direct_pct), "%", 1, "pp"),
+        ("Supply Share: Grid (%)", "100.0%", lambda s: s.utilization_diagnostics.grid_direct_pct, "%", 1, "pp"),
+        ("Supply Share: Solar Direct (%)", "0.0%", lambda s: s.utilization_diagnostics.solar_direct_pct, "%", 1, "pp"),
+        ("Supply Share: Battery Discharge (%)", "0.0%", lambda s: s.utilization_diagnostics.battery_discharge_pct, "%", 1, "pp"),
+        ("Supply Share: Generator (%)", "0.0%", lambda s: s.utilization_diagnostics.generator_direct_pct, "%", 1, "pp"),
+        ("Annual Residual Grid Import (MWh/yr)", f"{ref.kpis.annual_consumption_kwh / 1000.0:,.1f} MWh", lambda s: s.kpis.grid_import_total_kwh / 1000.0, "MWh", 1, "MWh"),
+        ("Solar Exported Surplus (MWh/yr)", "0.0 MWh", lambda s: (s.kpis.solar_export_kwh / 1000.0) if s.system_config.enable_solar else 0.0, "MWh", 1, "MWh"),
+    ]
+    for m_lbl, cur_str, fn, disp_unit, dec, d_unit in tech_num_specs:
+        fmt_v = f"{{:,.{dec}f}}{disp_unit}" if disp_unit == "%" else f"{{:,.{dec}f}} {disp_unit}"
+        add_row("Technical Performance", m_lbl, cur_str, fmt_v.format(fn(snap_a)) if snap_a else "—", fmt_v.format(fn(snap_b)) if snap_b else "—", _fmt_num_delta(fn, d_unit, dec))
+
     add_row(
         "Technical Performance",
-        "Peak Grid Demand (kW)",
-        f"{ref.kpis.original_peak_kw:,.1f} kW",
-        f"{snap_a.kpis.new_grid_peak_kw:,.1f} kW" if snap_a else "—",
-        f"{snap_b.kpis.new_grid_peak_kw:,.1f} kW" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.kpis.new_grid_peak_kw, "kW", 1),
-    )
-    add_row(
-        "Technical Performance",
-        "Remaining Overload (hrs/yr)",
-        f"{ref.kpis.baseline_overload_hours:,.1f} hrs",
-        f"{snap_a.kpis.remaining_overload_hours:,.1f} hrs" if snap_a else "—",
-        f"{snap_b.kpis.remaining_overload_hours:,.1f} hrs" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.kpis.remaining_overload_hours, "hrs", 1),
-    )
-    add_row(
-        "Technical Performance",
-        "Remaining Overload Energy (kWh/yr)",
-        f"{ref.kpis.baseline_overload_kwh:,.0f} kWh",
-        f"{snap_a.kpis.remaining_overload_kwh:,.0f} kWh" if snap_a else "—",
-        f"{snap_b.kpis.remaining_overload_kwh:,.0f} kWh" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.kpis.remaining_overload_kwh, "kWh", 0),
-    )
-    add_row(
-        "Technical Performance",
-        "Supply Share: Grid (%)",
-        "100.0%",
-        f"{snap_a.utilization_diagnostics.grid_direct_pct:.1f}%" if snap_a else "—",
-        f"{snap_b.utilization_diagnostics.grid_direct_pct:.1f}%" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.utilization_diagnostics.grid_direct_pct, "pp", 1),
-    )
-    add_row(
-        "Technical Performance",
-        "Supply Share: Solar Direct (%)",
-        "0.0%",
-        f"{snap_a.utilization_diagnostics.solar_direct_pct:.1f}%" if snap_a else "—",
-        f"{snap_b.utilization_diagnostics.solar_direct_pct:.1f}%" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.utilization_diagnostics.solar_direct_pct, "pp", 1),
-    )
-    add_row(
-        "Technical Performance",
-        "Supply Share: Battery Discharge (%)",
-        "0.0%",
-        f"{snap_a.utilization_diagnostics.battery_discharge_pct:.1f}%" if snap_a else "—",
-        f"{snap_b.utilization_diagnostics.battery_discharge_pct:.1f}%" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.utilization_diagnostics.battery_discharge_pct, "pp", 1),
-    )
-    add_row(
-        "Technical Performance",
-        "Supply Share: Generator (%)",
-        "0.0%",
-        f"{snap_a.utilization_diagnostics.generator_direct_pct:.1f}%" if snap_a else "—",
-        f"{snap_b.utilization_diagnostics.generator_direct_pct:.1f}%" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.utilization_diagnostics.generator_direct_pct, "pp", 1),
+        "Solar Generation / Used On-Site",
+        "Off",
+        f"{snap_a.kpis.solar_total_generation_kwh / 1000.0:,.1f} MWh ({snap_a.utilization_diagnostics.solar_utilization_pct:.0f}% used)" if snap_a and snap_a.system_config.enable_solar else ("Off" if snap_a else "—"),
+        f"{snap_b.kpis.solar_total_generation_kwh / 1000.0:,.1f} MWh ({snap_b.utilization_diagnostics.solar_utilization_pct:.0f}% used)" if snap_b and snap_b.system_config.enable_solar else ("Off" if snap_b else "—"),
+        _fmt_num_delta(lambda s: (s.kpis.solar_total_generation_kwh / 1000.0) if s.system_config.enable_solar else 0.0, "MWh", 1),
     )
     add_row(
         "Technical Performance",
         "Battery Cycles / Capacity Used",
         "0.0 cyc",
-        (
-            f"{snap_a.kpis.battery_equivalent_cycles:.1f} cyc ({snap_a.utilization_diagnostics.bess_capacity_utilization_pct:.0f}%)"
-            if snap_a and snap_a.system_config.enable_battery
-            else ("Off" if snap_a else "—")
-        ),
-        (
-            f"{snap_b.kpis.battery_equivalent_cycles:.1f} cyc ({snap_b.utilization_diagnostics.bess_capacity_utilization_pct:.0f}%)"
-            if snap_b and snap_b.system_config.enable_battery
-            else ("Off" if snap_b else "—")
-        ),
+        f"{snap_a.kpis.battery_equivalent_cycles:.1f} cyc ({snap_a.utilization_diagnostics.bess_capacity_utilization_pct:.0f}%)" if snap_a and snap_a.system_config.enable_battery else ("Off" if snap_a else "—"),
+        f"{snap_b.kpis.battery_equivalent_cycles:.1f} cyc ({snap_b.utilization_diagnostics.bess_capacity_utilization_pct:.0f}%)" if snap_b and snap_b.system_config.enable_battery else ("Off" if snap_b else "—"),
         _fmt_num_delta(lambda s: s.kpis.battery_equivalent_cycles, "cyc", 1),
+    )
+    add_row(
+        "Technical Performance",
+        "Battery Min SoC / Unused Reserve",
+        "Off",
+        f"Min {snap_a.utilization_diagnostics.bess_min_soc_reached_pct:.0f}% ({snap_a.utilization_diagnostics.bess_unused_usable_kwh:,.0f} kWh unused)" if snap_a and snap_a.system_config.enable_battery else ("Off" if snap_a else "—"),
+        f"Min {snap_b.utilization_diagnostics.bess_min_soc_reached_pct:.0f}% ({snap_b.utilization_diagnostics.bess_unused_usable_kwh:,.0f} kWh unused)" if snap_b and snap_b.system_config.enable_battery else ("Off" if snap_b else "—"),
+        _fmt_num_delta(lambda s: s.utilization_diagnostics.bess_unused_usable_kwh if s.system_config.enable_battery else 0.0, "kWh", 0),
     )
     add_row(
         "Technical Performance",
         "Generator Runtime & Fuel",
         "0.0 hrs",
-        (
-            f"{snap_a.kpis.generator_runtime_hours:,.1f} hrs ({snap_a.kpis.generator_fuel_total:,.0f} {snap_a.kpis.generator_fuel_unit})"
-            if snap_a and snap_a.system_config.enable_generator
-            else ("Off" if snap_a else "—")
-        ),
-        (
-            f"{snap_b.kpis.generator_runtime_hours:,.1f} hrs ({snap_b.kpis.generator_fuel_total:,.0f} {snap_b.kpis.generator_fuel_unit})"
-            if snap_b and snap_b.system_config.enable_generator
-            else ("Off" if snap_b else "—")
-        ),
+        f"{snap_a.kpis.generator_runtime_hours:,.1f} hrs ({snap_a.kpis.generator_fuel_total:,.0f} {snap_a.kpis.generator_fuel_unit})" if snap_a and snap_a.system_config.enable_generator else ("Off" if snap_a else "—"),
+        f"{snap_b.kpis.generator_runtime_hours:,.1f} hrs ({snap_b.kpis.generator_fuel_total:,.0f} {snap_b.kpis.generator_fuel_unit})" if snap_b and snap_b.system_config.enable_generator else ("Off" if snap_b else "—"),
         _fmt_num_delta(lambda s: s.kpis.generator_runtime_hours, "hrs", 1),
     )
 
-    # 3. Economics & 15-Year Financials
+    # 3. Economics & 15-Year Financials (only when Financials was enabled on at least one snapshot)
+    has_fin_a = bool(snap_a is not None and getattr(snap_a.system_config, "enable_financials", False))
+    has_fin_b = bool(snap_b is not None and getattr(snap_b.system_config, "enable_financials", False))
+    if not (has_fin_a or has_fin_b):
+        return pd.DataFrame(rows, columns=cols)
+
+    fin_ref = snap_a if has_fin_a else snap_b
+    assert fin_ref is not None
+    fin_ref_curr = str(fin_ref.financial_config.currency_code or "EUR")
+
+    def _fin_curr_cell(snap: Optional[CombinedScenarioSnapshot], fn, signed: bool = False) -> str:
+        if snap is None:
+            return "—"
+        if not getattr(snap.system_config, "enable_financials", False):
+            return "Financials Off"
+        return _fmt_curr_snap(snap, fn, signed=signed)
+
+    def _fin_curr_delta_cell(fn) -> str:
+        return _fmt_curr_delta(fn) if (has_fin_a and has_fin_b) else "—"
+
+    econ_curr_specs = [
+        ("Gross Hardware CAPEX", 0.0, lambda s: s.financial_kpis.gross_capex_eur, False),
+        ("Avoided Grid Upgrade Credit", 0.0, lambda s: s.financial_kpis.avoided_grid_upgrade_capex_eur, False),
+        ("Net Upfront CAPEX", 0.0, lambda s: s.financial_kpis.total_capex_eur, False),
+        ("Year-1 Pillar 1: Energy Supply", fin_ref.financial_kpis.baseline_pillar1_supply_eur, lambda s: s.financial_kpis.combined_pillar1_supply_eur, False),
+        ("Year-1 Pillar 2: DSO Network (excl. Penalties)", max(0.0, fin_ref.financial_kpis.baseline_pillar2_dso_eur - fin_ref.financial_kpis.baseline_penalty_cost_eur), lambda s: max(0.0, s.financial_kpis.combined_pillar2_dso_eur - s.financial_kpis.combined_grid_penalty_cost_eur), False),
+        ("Year-1 Pillar 2: Overload Penalties", fin_ref.financial_kpis.baseline_penalty_cost_eur, lambda s: s.financial_kpis.combined_grid_penalty_cost_eur, False),
+        ("Year-1 Pillar 3 & 4: Metering & Taxes", fin_ref.financial_kpis.baseline_pillar3_metering_eur + fin_ref.financial_kpis.baseline_pillar4_taxes_eur, lambda s: s.financial_kpis.combined_pillar3_metering_eur + s.financial_kpis.combined_pillar4_taxes_eur, False),
+        ("Year-1 Total Grid Bill (4-Pillar)", fin_ref.financial_kpis.baseline_total_opex_eur, lambda s: s.financial_kpis.combined_grid_total_eur, False),
+        ("Year-1 Hardware O&M & Generator OPEX", 0.0, lambda s: s.financial_kpis.system_om_and_fuel_y1_eur, False),
+        ("Year-1 Solar Export Revenue", 0.0, lambda s: s.financial_kpis.solar_export_revenue_eur, False),
+        ("Year-1 Net Operating Cost (Total OPEX)", fin_ref.financial_kpis.baseline_total_opex_eur, lambda s: s.financial_kpis.total_annual_opex_eur, False),
+        ("Year-1 Net Annual Savings (vs. Current)", 0.0, lambda s: s.financial_kpis.annual_savings_eur, True),
+    ]
+    for m_lbl, cur_val, fn, signed in econ_curr_specs:
+        add_row("Economics & 15-Year Financials", m_lbl, format_currency_value(cur_val, fin_ref_curr), _fin_curr_cell(snap_a, fn, signed=signed), _fin_curr_cell(snap_b, fn, signed=signed), _fin_curr_delta_cell(fn))
+
+    add_row("Economics & 15-Year Financials", "Simple Payback Period", "—", (_opt_payback(snap_a.financial_kpis.payback_years) if has_fin_a else "Financials Off") if snap_a else "—", (_opt_payback(snap_b.financial_kpis.payback_years) if has_fin_b else "Financials Off") if snap_b else "—", _opt_payback_delta("payback_years") if (has_fin_a and has_fin_b) else "—")
+    add_row("Economics & 15-Year Financials", "Discounted Payback Period", "—", (_opt_payback(snap_a.financial_kpis.discounted_payback_years) if has_fin_a else "Financials Off") if snap_a else "—", (_opt_payback(snap_b.financial_kpis.discounted_payback_years) if has_fin_b else "Financials Off") if snap_b else "—", _opt_payback_delta("discounted_payback_years") if (has_fin_a and has_fin_b) else "—")
+
+    econ_15y_specs = [
+        ("15-Year Cumulative TCO", fin_ref.financial_kpis.tco_15y_baseline_eur, lambda s: s.financial_kpis.tco_15y_combined_eur, False),
+        ("15-Year TCO Net Savings (vs. Current)", 0.0, lambda s: s.financial_kpis.tco_15y_savings_eur, True),
+        ("15-Year Net Present Value (NPV)", 0.0, lambda s: s.financial_kpis.npv_15y_eur, True),
+    ]
+    for m_lbl, cur_val, fn, signed in econ_15y_specs:
+        add_row("Economics & 15-Year Financials", m_lbl, format_currency_value(cur_val, fin_ref_curr), _fin_curr_cell(snap_a, fn, signed=signed), _fin_curr_cell(snap_b, fn, signed=signed), _fin_curr_delta_cell(fn))
+
+    add_row("Economics & 15-Year Financials", "15-Year Internal Rate of Return (IRR)", "—", (_opt_pct(snap_a.financial_kpis.irr_15y_pct) if has_fin_a else "Financials Off") if snap_a else "—", (_opt_pct(snap_b.financial_kpis.irr_15y_pct) if has_fin_b else "Financials Off") if snap_b else "—", _opt_pct_delta("irr_15y_pct") if (has_fin_a and has_fin_b) else "—")
+    add_row("Economics & 15-Year Financials", "15-Year Benefit-Cost Ratio (BCR)", "—", (f"{snap_a.financial_kpis.benefit_cost_ratio_15y:.2f}x" if has_fin_a else "Financials Off") if snap_a else "—", (f"{snap_b.financial_kpis.benefit_cost_ratio_15y:.2f}x" if has_fin_b else "Financials Off") if snap_b else "—", _fmt_num_delta(lambda s: s.financial_kpis.benefit_cost_ratio_15y, "x", 2) if (has_fin_a and has_fin_b) else "—")
     add_row(
         "Economics & 15-Year Financials",
-        "Gross Hardware CAPEX",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.gross_capex_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.gross_capex_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.gross_capex_eur),
+        "On-Site System LCOE (per kWh)",
+        f"{_curr_sym(fin_ref_curr)}{fin_ref.financial_kpis.effective_blended_grid_rate_eur_kwh:.3f}/kWh (Grid)",
+        (f"{_curr_sym(str(snap_a.financial_config.currency_code or 'EUR'))}{snap_a.financial_kpis.system_lcoe_eur_kwh:.3f}/kWh" if has_fin_a else "Financials Off") if snap_a else "—",
+        (f"{_curr_sym(str(snap_b.financial_config.currency_code or 'EUR'))}{snap_b.financial_kpis.system_lcoe_eur_kwh:.3f}/kWh" if has_fin_b else "Financials Off") if snap_b else "—",
+        f"{snap_b.financial_kpis.system_lcoe_eur_kwh - snap_a.financial_kpis.system_lcoe_eur_kwh:+.3f}/kWh" if (has_fin_a and has_fin_b and same_curr) else "—",
     )
     add_row(
         "Economics & 15-Year Financials",
-        "Avoided Grid Upgrade Credit",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.avoided_grid_upgrade_capex_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.avoided_grid_upgrade_capex_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.avoided_grid_upgrade_capex_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Net Upfront CAPEX",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.total_capex_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.total_capex_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.total_capex_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Pillar 1: Energy Supply",
-        format_currency_value(ref.financial_kpis.baseline_pillar1_supply_eur, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.combined_pillar1_supply_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.combined_pillar1_supply_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.combined_pillar1_supply_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Pillar 2: DSO Network (excl. Penalties)",
-        format_currency_value(
-            max(0.0, ref.financial_kpis.baseline_pillar2_dso_eur - ref.financial_kpis.baseline_penalty_cost_eur),
-            ref_curr,
-        ),
-        _fmt_curr_snap(snap_a, lambda s: max(0.0, s.financial_kpis.combined_pillar2_dso_eur - s.financial_kpis.combined_grid_penalty_cost_eur)),
-        _fmt_curr_snap(snap_b, lambda s: max(0.0, s.financial_kpis.combined_pillar2_dso_eur - s.financial_kpis.combined_grid_penalty_cost_eur)),
-        _fmt_curr_delta(lambda s: max(0.0, s.financial_kpis.combined_pillar2_dso_eur - s.financial_kpis.combined_grid_penalty_cost_eur)),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Pillar 2: Overload Penalties",
-        format_currency_value(ref.financial_kpis.baseline_penalty_cost_eur, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.combined_grid_penalty_cost_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.combined_grid_penalty_cost_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.combined_grid_penalty_cost_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Pillar 3 & 4: Metering & Taxes",
-        format_currency_value(
-            ref.financial_kpis.baseline_pillar3_metering_eur + ref.financial_kpis.baseline_pillar4_taxes_eur,
-            ref_curr,
-        ),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.combined_pillar3_metering_eur + s.financial_kpis.combined_pillar4_taxes_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.combined_pillar3_metering_eur + s.financial_kpis.combined_pillar4_taxes_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.combined_pillar3_metering_eur + s.financial_kpis.combined_pillar4_taxes_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Total Grid Bill (4-Pillar)",
-        format_currency_value(ref.financial_kpis.baseline_total_opex_eur, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.combined_grid_total_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.combined_grid_total_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.combined_grid_total_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Hardware O&M & Generator OPEX",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.system_om_and_fuel_y1_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.system_om_and_fuel_y1_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.system_om_and_fuel_y1_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Solar Export Revenue",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.solar_export_revenue_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.solar_export_revenue_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.solar_export_revenue_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Net Operating Cost (Total OPEX)",
-        format_currency_value(ref.financial_kpis.baseline_total_opex_eur, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.total_annual_opex_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.total_annual_opex_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.total_annual_opex_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Year-1 Net Annual Savings (vs. Current)",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.annual_savings_eur, signed=True),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.annual_savings_eur, signed=True),
-        _fmt_curr_delta(lambda s: s.financial_kpis.annual_savings_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Simple Payback Period",
+        "Annualized Cost per Shaved Peak kW",
         "—",
-        _opt_payback(snap_a.financial_kpis.payback_years) if snap_a else "—",
-        _opt_payback(snap_b.financial_kpis.payback_years) if snap_b else "—",
-        _opt_payback_delta("payback_years"),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "Discounted Payback Period",
-        "—",
-        _opt_payback(snap_a.financial_kpis.discounted_payback_years) if snap_a else "—",
-        _opt_payback(snap_b.financial_kpis.discounted_payback_years) if snap_b else "—",
-        _opt_payback_delta("discounted_payback_years"),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "15-Year Cumulative TCO",
-        format_currency_value(ref.financial_kpis.tco_15y_baseline_eur, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.tco_15y_combined_eur),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.tco_15y_combined_eur),
-        _fmt_curr_delta(lambda s: s.financial_kpis.tco_15y_combined_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "15-Year TCO Net Savings (vs. Current)",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.tco_15y_savings_eur, signed=True),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.tco_15y_savings_eur, signed=True),
-        _fmt_curr_delta(lambda s: s.financial_kpis.tco_15y_savings_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "15-Year Net Present Value (NPV)",
-        format_currency_value(0.0, ref_curr),
-        _fmt_curr_snap(snap_a, lambda s: s.financial_kpis.npv_15y_eur, signed=True),
-        _fmt_curr_snap(snap_b, lambda s: s.financial_kpis.npv_15y_eur, signed=True),
-        _fmt_curr_delta(lambda s: s.financial_kpis.npv_15y_eur),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "15-Year Internal Rate of Return (IRR)",
-        "—",
-        _opt_pct(snap_a.financial_kpis.irr_15y_pct) if snap_a else "—",
-        _opt_pct(snap_b.financial_kpis.irr_15y_pct) if snap_b else "—",
-        _opt_pct_delta("irr_15y_pct"),
-    )
-    add_row(
-        "Economics & 15-Year Financials",
-        "15-Year Benefit-Cost Ratio (BCR)",
-        "—",
-        f"{snap_a.financial_kpis.benefit_cost_ratio_15y:.2f}x" if snap_a else "—",
-        f"{snap_b.financial_kpis.benefit_cost_ratio_15y:.2f}x" if snap_b else "—",
-        _fmt_num_delta(lambda s: s.financial_kpis.benefit_cost_ratio_15y, "x", 2),
+        (_fin_curr_cell(snap_a, lambda s: s.financial_kpis.annualized_cost_per_shaved_kw_eur) + "/kW/yr" if has_fin_a else "Financials Off") if snap_a else "—",
+        (_fin_curr_cell(snap_b, lambda s: s.financial_kpis.annualized_cost_per_shaved_kw_eur) + "/kW/yr" if has_fin_b else "Financials Off") if snap_b else "—",
+        _fin_curr_delta_cell(lambda s: s.financial_kpis.annualized_cost_per_shaved_kw_eur),
     )
 
     return pd.DataFrame(rows, columns=cols)
+
+
+def build_multi_scenario_leaderboard_df(
+    scenarios: Sequence[CombinedScenarioSnapshot],
+) -> pd.DataFrame:
+    """
+    Ranks `1..N` scenario snapshots in a decision matrix (1-to-N ready).
+    Sorts by 15-Year TCO (when financials are enabled across all scenarios in one currency)
+    or by Remaining Overload -> Grid Peak -> On-Site Autarky in technical-only mode.
+    """
+    clean = [s for s in scenarios if s is not None]
+    if not clean:
+        return pd.DataFrame()
+
+    all_fin = all(bool(getattr(s.system_config, "enable_financials", False)) for s in clean)
+    any_fin = any(bool(getattr(s.system_config, "enable_financials", False)) for s in clean)
+    same_curr = len({str(s.financial_config.currency_code or "EUR") for s in clean}) == 1
+
+    if all_fin and same_curr:
+        ranked = sorted(clean, key=lambda s: (float(s.financial_kpis.tco_15y_combined_eur), float(s.kpis.remaining_overload_hours), float(s.kpis.new_grid_peak_kw)))
+    else:
+        ranked = sorted(clean, key=lambda s: (float(s.kpis.remaining_overload_hours), float(s.kpis.new_grid_peak_kw), -(100.0 - float(s.utilization_diagnostics.grid_direct_pct))))
+
+    rows: List[Dict[str, Any]] = []
+    for idx, s in enumerate(ranked, start=1):
+        hw_parts = []
+        if s.system_config.enable_solar:
+            hw_parts.append(f"PV {s.solar_derivation.installed_kwp:,.0f} kWp")
+        if s.system_config.enable_battery:
+            hw_parts.append(f"BESS {s.system_config.battery_capacity_kwh:,.0f} kWh")
+        if s.system_config.enable_generator:
+            hw_parts.append(f"Gen {s.system_config.generator_rated_kw:,.0f} kW")
+        hw_mix = " + ".join(hw_parts) if hw_parts else "Grid Only"
+        autarky = round(max(0.0, 100.0 - float(s.utilization_diagnostics.grid_direct_pct)), 1)
+        row: Dict[str, Any] = {
+            "Rank": idx,
+            "Scenario": s.name,
+            "Hardware Mix": hw_mix,
+            "Grid Peak (kW)": round(float(s.kpis.new_grid_peak_kw), 1),
+            "Remaining Overload (hrs)": round(float(s.kpis.remaining_overload_hours), 1),
+            "On-Site Autarky (%)": autarky,
+        }
+        if any_fin:
+            has_f = bool(getattr(s.system_config, "enable_financials", False))
+            c = str(s.financial_config.currency_code or "EUR")
+            fk = s.financial_kpis
+            row["Net CAPEX"] = format_currency_value(fk.total_capex_eur, c) if has_f else "Financials Off"
+            row["Year-1 Net Savings"] = format_currency_value(fk.annual_savings_eur, c, signed=True) if has_f else "Financials Off"
+            row["Simple Payback"] = (f"{fk.payback_years:.1f} yrs" if fk.payback_years is not None else "N/A") if has_f else "Financials Off"
+            row["15-Year TCO"] = format_currency_value(fk.tco_15y_combined_eur, c) if has_f else "Financials Off"
+            row["15-Year NPV"] = format_currency_value(fk.npv_15y_eur, c, signed=True) if has_f else "Financials Off"
+        rows.append(row)
+    return pd.DataFrame(rows)
