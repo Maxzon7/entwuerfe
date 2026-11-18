@@ -328,6 +328,7 @@ def _sync_shared_load_series() -> None:
         st.session_state.pop("comb_cached_dual_bess_pair", None)
         st.session_state.pop("comb_gen_sizing_fp", None)
         st.session_state.pop("comb_cached_dual_gen", None)
+        st.session_state.pop("comb_mix_preview_bundle", None)
         st.session_state.pop("comb_cached_excel_bytes", None)
 
 
@@ -412,7 +413,7 @@ def _apply_solar_quick_share(share_pct: float) -> None:
     st.session_state["comb_solar_sizing_radio"] = "% of Annual Consumption"
     st.session_state["comb_solar_target_share_num"] = float(synced_share)
     st.session_state["comb_solar_direct_kwp_num"] = float(synced_kwp)
-    st.session_state.pop("comb_solar_inv_ac_limit_num", None)
+    st.session_state["comb_solar_inv_ac_limit_num"] = 0.0
     st.session_state.pop("comb_cached_excel_bytes", None)
 
 

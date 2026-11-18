@@ -186,7 +186,10 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
         round(float(cur_sys.solar_kwp), 2),
         round(float(cur_sys.target_consumption_share_pct), 2),
         round(float(cur_sys.inverter_ac_limit_kw), 2),
+        bool(getattr(cur_sys, "disable_solar_inverter_limit", False)),
         round(float(cur_sys.inverter_efficiency_pct), 2),
+        str(getattr(cur_sys, "solar_weather_mode", "single_year")),
+        int(getattr(cur_sys, "solar_weather_year", 2025)),
         bool(cur_sys.enable_battery),
         round(float(cur_sys.battery_capacity_kwh), 2),
         round(float(cur_sys.battery_power_kw), 2),
@@ -243,10 +246,13 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
             if p_data:
                 cur_sys.generator_rated_kw = float(p_data["kw"])
                 cur_sys.fuel_type = str(p_data["fuel"])
+                f_spec = FUEL_SPECS.get(cur_sys.fuel_type, FUEL_SPECS["Diesel"])
+                cur_sys.gen_slope_per_kwh = float(f_spec["slope_per_kwh"])
+                cur_sys.gen_intercept_per_kw_rated = float(f_spec["intercept_per_kw_rated"])
                 cur_sys.generator_min_load_pct = float(p_data["min_load"])
                 st.session_state["comb_generator_rated_kw_num"] = cur_sys.generator_rated_kw
                 st.session_state["comb_generator_fuel_type_select"] = cur_sys.fuel_type
-                st.session_state["comb_generator_min_load_num"] = cur_sys.generator_min_load_pct
+                st.session_state["comb_generator_min_load_num"] = int(round(cur_sys.generator_min_load_pct))
                 st.session_state.pop("comb_cached_excel_bytes", None)
                 st.rerun()
 
@@ -304,4 +310,7 @@ def render_subtab4_generator(load_series: LoadSeries2025) -> None:
             cur_sys.generator_rated_kw = float(gen_kw_val)
             cur_sys.generator_min_load_pct = float(gen_min_pct_val)
             cur_sys.fuel_type = str(fuel_type_val)
+            f_spec = FUEL_SPECS.get(cur_sys.fuel_type, FUEL_SPECS["Diesel"])
+            cur_sys.gen_slope_per_kwh = float(f_spec["slope_per_kwh"])
+            cur_sys.gen_intercept_per_kw_rated = float(f_spec["intercept_per_kw_rated"])
             st.session_state.pop("comb_cached_excel_bytes", None)

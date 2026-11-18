@@ -2405,6 +2405,138 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn('st.form(f"comb_save_slot_{slot_id}_form")', code)
         self.assertIn('st.rerun(scope="app")', code)
 
+    def test_stage19_audit_regression_fixes(self):
+        """Regression tests for Stage 1.9 bug & consistency fixes across engine and views."""
+        from unittest import mock
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            FUEL_SPECS,
+            resolve_generator_fuel_curve,
+            compute_dual_battery_sizing,
+            compute_coordinated_mix_sizing,
+            build_load_fingerprint_from_series,
+            capture_scenario_snapshot,
+            build_restore_widget_sync_payload,
+        )
+
+        # 1. Auto-sized solar inverter limit (0.0) must remain 0.0 on snapshot restore
+        auto_inv_cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_kwp=200.0,
+            inverter_ac_limit_kw=0.0,
+        )
+        sim_auto = simulate_combined_system_dispatch(self.load_kw, self.timestamps, auto_inv_cfg, InteractionRulesConfig())
+        snap_auto = capture_scenario_snapshot(
+            sim_auto,
+            CombinedFinancialConfig(),
+            "A",
+            "Auto Inverter Test",
+            build_load_fingerprint_from_series(self.load_series),
+        )
+        payload_auto = build_restore_widget_sync_payload(snap_auto)
+        self.assertEqual(payload_auto["comb_pending_solar_widget_sync"]["comb_solar_inv_ac_limit_num"], 0.0)
+
+        # 2. TMY weather_mode propagation in compute_dual_battery_sizing and compute_coordinated_mix_sizing
+        tmy_cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_kwp=150.0,
+            solar_weather_mode="TMY",
+            solar_weather_year=2023,
+            enable_battery=True,
+        )
+        dummy_unit = np.full(len(self.load_kw), 0.15, dtype=float)
+        with mock.patch(
+            "current_model.ui_sandbox.Combined_sandbox.engine.solar_and_sizing.get_unit_solar_generation_profile",
+            return_value=(dummy_unit, 1100.0, "PVGIS TMY"),
+        ) as m_bess_wx:
+            compute_dual_battery_sizing(self.load_kw, tmy_cfg, InteractionRulesConfig())
+            m_bess_wx.assert_called()
+            self.assertEqual(m_bess_wx.call_args.kwargs.get("weather_mode"), "TMY")
+
+        with mock.patch(
+            "current_model.ui_sandbox.Combined_sandbox.engine.utilization_and_tables.get_unit_solar_generation_profile",
+            return_value=(dummy_unit, 1100.0, "PVGIS TMY"),
+        ) as m_mix_wx:
+            compute_coordinated_mix_sizing(
+                self.load_kw,
+                tmy_cfg,
+                InteractionRulesConfig(),
+                strategy_key="hybrid_2h",
+                target_grid_limit_kw=180.0,
+                solar_share_pct=60.0,
+                solar_enabled=True,
+            )
+            m_mix_wx.assert_called()
+            self.assertEqual(m_mix_wx.call_args.kwargs.get("weather_mode"), "TMY")
+
+        # 3. FUEL_SPECS resolution for Natural Gas & HVO when dataclass slope/intercept are at Diesel defaults
+        ng_cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=False,
+            enable_battery=False,
+            enable_generator=True,
+            generator_rated_kw=100.0,
+            fuel_type="Natural Gas",
+        )
+        ng_slope, ng_int = resolve_generator_fuel_curve(ng_cfg)
+        self.assertAlmostEqual(ng_slope, FUEL_SPECS["Natural Gas"]["slope_per_kwh"])
+        self.assertAlmostEqual(ng_int, FUEL_SPECS["Natural Gas"]["intercept_per_kw_rated"])
+
+        custom_cfg = CombinedSystemConfig(
+            fuel_type="Natural Gas",
+            gen_slope_per_kwh=0.35,
+            gen_intercept_per_kw_rated=0.06,
+        )
+        c_slope, c_int = resolve_generator_fuel_curve(custom_cfg)
+        self.assertAlmostEqual(c_slope, 0.35)
+        self.assertAlmostEqual(c_int, 0.06)
+
+        dsl_cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=False,
+            enable_battery=False,
+            enable_generator=True,
+            generator_rated_kw=100.0,
+            fuel_type="Diesel",
+        )
+        res_dsl = simulate_combined_system_dispatch(self.load_kw, self.timestamps, dsl_cfg, InteractionRulesConfig())
+        res_ng = simulate_combined_system_dispatch(self.load_kw, self.timestamps, ng_cfg, InteractionRulesConfig())
+        self.assertGreater(res_ng.kpis.generator_fuel_total, res_dsl.kpis.generator_fuel_total)
+        self.assertEqual(res_ng.kpis.generator_fuel_unit, "m³")
+
+        # 4. View wiring contracts (widget keys, fingerprints, int slider cast, mix preview reset)
+        code = self._read_combined_ui_source()
+        self.assertNotIn('comb_grid_limit_num', code)
+        self.assertNotIn('st.session_state.pop("comb_mix_preview_fp"', code)
+        self.assertIn('st.session_state.pop("comb_mix_preview_bundle", None)', code)
+        self.assertIn('int(round(cur_sys.generator_min_load_pct))', code)
+        self.assertIn('pending_widgets["comb_solar_direct_kwp_num"]', code)
+        self.assertIn('pending_widgets["comb_solar_inv_ac_limit_num"]', code)
+        self.assertIn('bool(getattr(cur_sys, "disable_solar_inverter_limit", False))', code)
+
+        # 5. Dominated higher-CAPEX wording in compute_incremental_bwl_evaluation (no confusing negative wording)
+        import copy
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            compute_incremental_bwl_evaluation,
+        )
+        snap_low = capture_scenario_snapshot(sim_auto, CombinedFinancialConfig(), "B", "Low CAPEX More Savings", build_load_fingerprint_from_series(self.load_series))
+        snap_low.system_config.enable_financials = True
+        snap_high = copy.deepcopy(snap_low)
+        snap_high.slot_id = "A"
+        snap_high.name = "High CAPEX Less Savings"
+        snap_high.system_config.enable_financials = True
+        snap_high.financial_kpis.total_capex_eur += 50_000.0
+        snap_high.financial_kpis.total_annual_opex_eur += 12_000.0
+        snap_high.financial_kpis.tco_15y_combined_eur += 230_000.0
+        inc_dom = compute_incremental_bwl_evaluation(snap_high, snap_low)
+        self.assertIsNotNone(inc_dom)
+        self.assertTrue(inc_dom["never_pays_back"])
+        self.assertEqual(inc_dom["winner_name"], "Low CAPEX More Savings")
+        self.assertIn("wins on both upfront cost and yearly savings", inc_dom["verdict_title"])
+        self.assertNotIn("saves -", inc_dom["verdict_text"])
+        self.assertIn("Head-to-Head Comparison:", code)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -124,7 +124,10 @@ def render_subtab1_consumption(load_series: LoadSeries2025) -> None:
         elif apply_sc and sel_sc in REFERENCE_SCENARIOS:
             sc_info = REFERENCE_SCENARIOS[sel_sc]
             cur_sys.grid_limit_kw = float(sc_info["grid_limit_kw"])
-            st.session_state["comb_grid_limit_num"] = cur_sys.grid_limit_kw
+            st.session_state["comb_pending_mix_widget_sync"] = {
+                "comb_grid_limit_input": cur_sys.grid_limit_kw,
+                "comb_mix_grid_limit_num": cur_sys.grid_limit_kw,
+            }
             if sc_info["type"] == "edemsa_salentein":
                 bench_profile = synthesize_edemsa_salentein_load_profile_2025()
                 dso_match, tier_match = "EDEMSA Mendoza (Single-Utility)", "T2 RMT (Bodegas Salentein 430 kW)"

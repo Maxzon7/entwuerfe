@@ -21,6 +21,7 @@ except ImportError:
 from .models_and_presets import (
     _opt_njit,
     FUEL_SPECS,
+    resolve_generator_fuel_curve,
     CombinedSystemConfig,
     InteractionRulesConfig,
     SolarDerivationInfo,
@@ -542,6 +543,8 @@ def compute_dual_battery_sizing(
             tilt_deg=system_cfg.tilt_deg,
             azimuth_deg=azim,
             dc_ac_ratio=system_cfg.dc_ac_ratio,
+            weather_mode=str(getattr(system_cfg, "solar_weather_mode", "single_year") or "single_year"),
+            selected_year=int(getattr(system_cfg, "solar_weather_year", 2025) or 2025),
         )
         if len(unit_solar_kw) != n_steps:
             reps = int(math.ceil(n_steps / max(1, len(unit_solar_kw))))
@@ -767,8 +770,7 @@ def compute_dual_generator_sizing(
     sa_max_steps = _longest_true_run_steps(sa_is_over)
     sa_longest_hrs = round(float(sa_max_steps * step_hours), 1)
 
-    slope = float(system_cfg.gen_slope_per_kwh)
-    intercept = float(system_cfg.gen_intercept_per_kw_rated)
+    slope, intercept = resolve_generator_fuel_curve(system_cfg)
     sa_event_fuel = (slope * raw_over_kw + intercept * sa_100) * sa_longest_hrs
     sa_avg_kw = (sa_kwh / max(0.1, sa_runtime_hrs)) if sa_runtime_hrs > 0 else (sa_100 * 0.5)
     sa_reserve_48h = (slope * sa_avg_kw + intercept * sa_100) * 48.0

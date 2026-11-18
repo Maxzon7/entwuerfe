@@ -70,6 +70,10 @@ def _render_solar_map_fragment(eff_lat: float, eff_lon: float, site_disp: str, i
             st.session_state["comb_solar_lon"] = c_lon
             st.session_state["comb_solar_site_name"] = f"Map Pin ({c_lat:.4f}°, {c_lon:.4f}°)"
             st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
+            st.session_state["comb_pending_solar_loc_sync"] = {
+                "comb_solar_preset_select": "Custom GPS Coordinates",
+                "comb_solar_search_input": "",
+            }
             cur_sys_ref: Optional[CombinedSystemConfig] = st.session_state.get("comb_system_cfg")
             if cur_sys_ref is not None:
                 cur_sys_ref.latitude = c_lat
@@ -299,6 +303,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 st.session_state["comb_solar_lon"] = float(p_data["longitude"])
                 st.session_state["comb_solar_site_name"] = p_data["name"]
                 st.session_state["comb_solar_preset_choice"] = preset_choice
+                st.session_state["comb_pending_solar_loc_sync"] = {"comb_solar_search_input": ""}
                 st.session_state.pop("comb_solar_search_matches", None)
                 st.session_state.pop("comb_solar_last_search", None)
             elif search_changed:
@@ -323,14 +328,17 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 st.session_state["comb_solar_preset_choice"] = "Custom GPS Coordinates"
                 st.session_state["comb_pending_solar_loc_sync"] = {
                     "comb_solar_preset_select": "Custom GPS Coordinates",
+                    "comb_solar_search_input": "",
                 }
                 st.session_state.pop("comb_solar_search_matches", None)
+                st.session_state.pop("comb_solar_last_search", None)
             elif preset_choice in SOLAR_SITE_PRESETS:
                 p_data = SOLAR_SITE_PRESETS[preset_choice]
                 st.session_state["comb_solar_lat"] = float(p_data["latitude"])
                 st.session_state["comb_solar_lon"] = float(p_data["longitude"])
                 st.session_state["comb_solar_site_name"] = p_data["name"]
                 st.session_state["comb_solar_preset_choice"] = preset_choice
+                st.session_state["comb_pending_solar_loc_sync"] = {"comb_solar_search_input": ""}
                 st.session_state.pop("comb_solar_search_matches", None)
                 st.session_state.pop("comb_solar_last_search", None)
 
@@ -434,7 +442,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
         _, spec_yield, solar_src_label = get_unit_solar_generation_profile(
             latitude=eff_lat,
             longitude=eff_lon,
-            tilt_deg=30.0,
+            tilt_deg=float(cur_sys.tilt_deg),
             azimuth_deg=180.0 if eff_lat >= 0.0 else 0.0,
             dc_ac_ratio=cur_sys.dc_ac_ratio,
             weather_mode=eff_w_mode,
@@ -462,11 +470,7 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
             if cur_sys.solar_sizing_method == "target_share_pct"
             else round(float(cur_sys.solar_kwp), 1)
         )
-        default_inv_kw = (
-            float(cur_sys.inverter_ac_limit_kw)
-            if cur_sys.inverter_ac_limit_kw > 0.0
-            else round(preview_kwp / max(1.0, cur_sys.dc_ac_ratio), 1)
-        )
+        auto_inv_kw = round(preview_kwp / max(1.0, cur_sys.dc_ac_ratio), 1)
 
         pending_sol_sync = st.session_state.pop("comb_pending_solar_widget_sync", None)
         if isinstance(pending_sol_sync, dict):
@@ -519,11 +523,11 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     key="comb_solar_disable_inv_limit_chk",
                     help="When enabled, no AC ceiling is applied so 100% of solar potential is usable without clipping.",
                 )
-                raw_inv_ac = max(0.0, float(default_inv_kw))
-                max_inv_ac = max(100000.0, raw_inv_ac * 2)
+                raw_inv_ac = max(0.0, float(cur_sys.inverter_ac_limit_kw))
+                max_inv_ac = max(100000.0, raw_inv_ac * 2, auto_inv_kw * 2)
                 safe_inv_ac = min(max_inv_ac, max(0.0, raw_inv_ac))
                 inv_ac_limit_val = st.number_input(
-                    "Inverter AC Limit (kW)",
+                    "Inverter AC Limit (kW, 0 = Auto)",
                     min_value=0.0,
                     max_value=max_inv_ac,
                     value=safe_inv_ac,
@@ -532,6 +536,8 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     key="comb_solar_inv_ac_limit_num",
                     help="Maximum power the inverter can feed into your site (0 = auto-sized).",
                 )
+                if not disable_inv_val and raw_inv_ac <= 0.0:
+                    st.caption(f"Auto-sized when 0: **{auto_inv_kw:,.1f} kW AC** (DC/AC {cur_sys.dc_ac_ratio:.2f})")
             with sz_c3:
                 st.markdown("**Efficiency & Apply:**")
                 inv_eff_val = st.slider(

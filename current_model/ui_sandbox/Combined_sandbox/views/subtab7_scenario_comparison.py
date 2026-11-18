@@ -519,39 +519,63 @@ def _render_comparison_ledger(
         bwl_inc = compute_incremental_bwl_evaluation(snap_a, snap_b)
         if bwl_inc is not None:
             inc_curr = bwl_inc["currency_code"]
-            inc_pb = f"{bwl_inc['incremental_payback_years']:.1f} yrs" if bwl_inc["incremental_payback_years"] is not None else "> 15 yrs (N/A)"
+            high_n = bwl_inc["high_cap_name"]
+            low_n = bwl_inc["low_cap_name"]
+            d_cap = float(bwl_inc["delta_capex_eur"])
+            d_sav = float(bwl_inc["delta_annual_opex_savings_eur"])
+            d_tco = float(bwl_inc["delta_tco_15y_savings_eur"])
+            never_pb = bool(bwl_inc.get("never_pays_back", d_cap > 0.5 and d_sav <= 1.0))
+            if bwl_inc["incremental_payback_years"] is not None:
+                inc_pb = f"{bwl_inc['incremental_payback_years']:.1f} yrs"
+                pb_sub = "Time for extra savings to repay extra cost"
+            elif never_pb:
+                inc_pb = "Never"
+                pb_sub = f"{low_n[:24]} is cheaper upfront & saves more"
+            else:
+                inc_pb = "> 15 yrs (N/A)"
+                pb_sub = "Extra upfront cost / extra yearly savings"
             banner_fn = st.success if bwl_inc["is_upgrade_value_accretive"] else st.info
             with st.container(border=True):
-                st.markdown("##### :material/balance: Is the Higher Upfront Cost Worth It?")
+                st.markdown(f"##### :material/balance: Head-to-Head Comparison: {high_n} vs. {low_n}")
+                st.caption("Direct comparison between the two saved options (this compares them against each other, not against doing nothing).")
                 banner_fn(f"**{bwl_inc['verdict_title']}** — {bwl_inc['verdict_text']}", icon=":material/insights:")
                 m1, m2, m3, m4 = st.columns(4)
                 with m1:
                     render_kpi_card(
-                        title="Extra Upfront Cost",
-                        value=format_currency_value(bwl_inc["delta_capex_eur"], inc_curr, signed=True),
-                        subtext=f"{bwl_inc['low_cap_name'][:18]} → {bwl_inc['high_cap_name'][:18]}",
+                        title="Upfront Cost Difference",
+                        value=format_currency_value(d_cap, inc_curr, signed=True),
+                        subtext=(
+                            f"{high_n[:22]} costs more than {low_n[:22]}"
+                            if d_cap > 0.5
+                            else "Both options have the same upfront cost"
+                        ),
                         status="default",
                     )
                 with m2:
                     render_kpi_card(
-                        title="Extra Yearly Savings",
-                        value=f"{format_currency_value(bwl_inc['delta_annual_opex_savings_eur'], inc_curr, signed=True)}/yr",
-                        subtext="Additional annual bill & running cost savings",
-                        status="ok" if bwl_inc["delta_annual_opex_savings_eur"] > 0 else "alert",
+                        title="Yearly Savings Difference",
+                        value=f"{format_currency_value(d_sav, inc_curr, signed=True)}/yr",
+                        subtext=(
+                            f"{high_n[:22]} saves more/yr than {low_n[:22]}"
+                            if d_sav >= 0.0
+                            else f"{high_n[:20]} saves {format_currency_value(abs(d_sav), inc_curr)}/yr less than {low_n[:20]}"
+                        ),
+                        status="ok" if d_sav > 0 else "alert",
                     )
                 with m3:
                     render_kpi_card(
                         title="Payback on Extra Cost",
                         value=inc_pb,
-                        subtext="Extra upfront cost / extra yearly savings",
+                        subtext=pb_sub,
                         status="ok" if (bwl_inc["incremental_payback_years"] is not None and bwl_inc["incremental_payback_years"] <= 10.0) else "default",
                     )
                 with m4:
+                    winner_n = str(bwl_inc.get("winner_name") or (high_n if d_tco > 0 else low_n))
                     render_kpi_card(
                         title="15-Year Profit Difference",
-                        value=format_currency_value(bwl_inc["delta_tco_15y_savings_eur"], inc_curr, signed=True),
-                        subtext=f"NPV difference: {format_currency_value(bwl_inc['delta_npv_15y_eur'], inc_curr, signed=True)}",
-                        status="ok" if bwl_inc["delta_tco_15y_savings_eur"] > 0 else "alert",
+                        value=format_currency_value(d_tco, inc_curr, signed=True),
+                        subtext=f"{winner_n[:22]} ahead by {format_currency_value(abs(d_tco), inc_curr)} (NPV: {format_currency_value(bwl_inc['delta_npv_15y_eur'], inc_curr, signed=True)})",
+                        status="ok" if d_tco > 0 else "alert",
                     )
 
     col_a_hdr = f"Scenario A ({snap_a.name[:22]})" if snap_a else "Scenario A (Empty)"

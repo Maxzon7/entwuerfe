@@ -136,9 +136,17 @@ def _apply_system_mix_to_state(
         "comb_mix_bess_kw_num": float(cur_sys.battery_power_kw if cur_sys.enable_battery else 0.0),
         "comb_mix_gen_kw_num": float(cur_sys.generator_rated_kw if cur_sys.enable_generator else 0.0),
     }
-    if cur_sys.enable_solar and cur_sys.solar_sizing_method == "target_share_pct":
-        pending_widgets["comb_solar_sizing_radio"] = "% of Annual Consumption"
-        pending_widgets["comb_solar_target_share_num"] = float(cur_sys.target_consumption_share_pct)
+    if cur_sys.enable_solar:
+        pending_widgets["comb_solar_sizing_radio"] = (
+            "% of Annual Consumption"
+            if cur_sys.solar_sizing_method == "target_share_pct"
+            else "Direct Size (kWp)"
+        )
+        pending_widgets["comb_solar_target_share_num"] = float(
+            np.clip(cur_sys.target_consumption_share_pct, 0.1, 1000.0)
+        )
+        pending_widgets["comb_solar_direct_kwp_num"] = float(max(1.0, cur_sys.solar_kwp))
+        pending_widgets["comb_solar_inv_ac_limit_num"] = float(max(0.0, cur_sys.inverter_ac_limit_kw))
 
     st.session_state["comb_pending_mix_widget_sync"] = pending_widgets
     for cache_key in (
@@ -357,6 +365,7 @@ def render_subtab5_interaction_rules(load_series: Optional[LoadSeries2025] = Non
             np.clip(cur_sys.generator_rated_kw if cur_sys.enable_generator else 0.0, 0.0, max_gen_kw)
         )
         st.session_state["comb_mix_synced_sys_fp"] = sys_fp
+        st.session_state.pop("comb_mix_preview_bundle", None)
 
     with st.container(border=True):
         st.markdown("##### :material/tune: 2. Adjust System Mix (Right-Sizing)")
@@ -840,6 +849,6 @@ def render_subtab5_interaction_rules(load_series: Optional[LoadSeries2025] = Non
         cur_rules.rule2_battery_strategy = str(rule2_val)
         cur_rules.peak_reserve_soc_pct = float(reserve_val)
         cur_rules.rule3_charging_sources = str(rule3_val)
-        st.session_state.pop("comb_mix_preview_fp", None)
+        st.session_state.pop("comb_mix_preview_bundle", None)
         st.session_state.pop("comb_cached_excel_bytes", None)
         st.rerun()

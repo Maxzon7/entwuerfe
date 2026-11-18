@@ -67,6 +67,8 @@ def compute_coordinated_mix_sizing(
         tilt_deg=system_cfg.tilt_deg,
         azimuth_deg=azim,
         dc_ac_ratio=system_cfg.dc_ac_ratio,
+        weather_mode=str(getattr(system_cfg, "solar_weather_mode", "single_year") or "single_year"),
+        selected_year=int(getattr(system_cfg, "solar_weather_year", 2025) or 2025),
     )
     if len(unit_solar_kw) != n_steps:
         reps = int(math.ceil(n_steps / max(1, len(unit_solar_kw))))

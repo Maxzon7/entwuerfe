@@ -99,6 +99,17 @@ FUEL_SPECS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+
+def resolve_generator_fuel_curve(system_cfg: Any) -> Tuple[float, float]:
+    """Returns `(slope_per_kwh, intercept_per_kw_rated)` resolving `FUEL_SPECS` when dataclass defaults are untouched."""
+    fuel_type = str(getattr(system_cfg, "fuel_type", "Diesel") or "Diesel")
+    raw_slope = float(getattr(system_cfg, "gen_slope_per_kwh", 0.24))
+    raw_int = float(getattr(system_cfg, "gen_intercept_per_kw_rated", 0.04))
+    if fuel_type != "Diesel" and abs(raw_slope - 0.24) < 1e-6 and abs(raw_int - 0.04) < 1e-6:
+        spec = FUEL_SPECS.get(fuel_type, FUEL_SPECS["Diesel"])
+        return float(spec["slope_per_kwh"]), float(spec["intercept_per_kw_rated"])
+    return raw_slope, raw_int
+
 # Rule Option Keys and Display Labels
 RULE1_OPTIONS: Dict[str, str] = {
     "battery_first": "Battery first, Generator as backup",

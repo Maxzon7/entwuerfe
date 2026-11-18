@@ -122,11 +122,23 @@ def compute_incremental_bwl_evaluation(
         inc_payback = None
 
     accretive = bool(delta_tco_savings > 0.0)
-    if accretive and inc_payback is not None and inc_payback <= 15.0:
+    never_pays_back = bool(delta_capex > 0.5 and delta_opex_savings <= 1.0)
+    winner_name = high_cap_snap.name if accretive else low_cap_snap.name
+
+    if delta_capex > 0.5 and delta_opex_savings <= 0.0:
+        verdict_title = f"{low_cap_snap.name} wins on both upfront cost and yearly savings"
+        verdict_text = (
+            f"Both options are profitable on their own, but in a direct comparison {low_cap_snap.name} "
+            f"costs {format_currency_value(delta_capex, curr)} less upfront AND saves "
+            f"{format_currency_value(abs(delta_opex_savings), curr)}/yr more than {high_cap_snap.name} "
+            f"— finishing {format_currency_value(abs(delta_tco_savings), curr)} ahead over 15 years."
+        )
+    elif accretive and inc_payback is not None and inc_payback <= 15.0:
         verdict_title = f"{high_cap_snap.name} pays back its extra upfront cost in {inc_payback:.1f} years"
         verdict_text = (
             f"Spending an extra {format_currency_value(delta_capex, curr)} upfront for {high_cap_snap.name} "
-            f"lowers yearly running costs by {format_currency_value(delta_opex_savings, curr)}/yr, "
+            f"instead of {low_cap_snap.name} lowers yearly running costs by "
+            f"{format_currency_value(delta_opex_savings, curr)}/yr, "
             f"delivering {format_currency_value(delta_tco_savings, curr, signed=True)} higher net profit over 15 years."
         )
     elif delta_capex <= 0.5 and delta_tco_savings > 0.0:
@@ -140,7 +152,7 @@ def compute_incremental_bwl_evaluation(
         pb_txt = f"{inc_payback:.1f} years" if inc_payback is not None else "more than 15 years"
         verdict_text = (
             f"The extra {format_currency_value(delta_capex, curr)} upfront cost for {high_cap_snap.name} "
-            f"only saves {format_currency_value(delta_opex_savings, curr, signed=True)}/yr in running costs "
+            f"only saves {format_currency_value(delta_opex_savings, curr)}/yr more than {low_cap_snap.name} "
             f"(payback on extra cost: {pb_txt}), leaving {low_cap_snap.name} ahead by "
             f"{format_currency_value(abs(delta_tco_savings), curr)} over 15 years."
         )
@@ -149,6 +161,8 @@ def compute_incremental_bwl_evaluation(
         "currency_code": curr,
         "low_cap_name": low_cap_snap.name,
         "high_cap_name": high_cap_snap.name,
+        "winner_name": winner_name,
+        "never_pays_back": never_pays_back,
         "low_capex_eur": float(low_fk.total_capex_eur),
         "high_capex_eur": float(high_fk.total_capex_eur),
         "delta_capex_eur": delta_capex,

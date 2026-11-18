@@ -490,12 +490,7 @@ def build_restore_widget_sync_payload(
     sol_slider_val = int(round(np.clip(eff_sol_share if sys_cfg.enable_solar else 0.0, 0.0, 150.0)))
 
     preset_choice, site_name = _resolve_solar_site_labels(sys_cfg)
-    installed_kwp = float(getattr(snapshot.solar_derivation, "installed_kwp", sys_cfg.solar_kwp) or sys_cfg.solar_kwp)
-    default_inv_ac = (
-        float(sys_cfg.inverter_ac_limit_kw)
-        if float(sys_cfg.inverter_ac_limit_kw) > 0.0
-        else round(max(0.0, installed_kwp) / max(1.0, float(sys_cfg.dc_ac_ratio)), 1)
-    )
+    default_inv_ac = float(max(0.0, float(sys_cfg.inverter_ac_limit_kw)))
 
     mix_widget_sync: Dict[str, Any] = {
         # Level 1 Overview Bar

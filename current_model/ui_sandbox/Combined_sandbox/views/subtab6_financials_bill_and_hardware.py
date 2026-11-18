@@ -197,7 +197,7 @@ def _render_subtab6_1_bill_setup_controls(
                     _queue_fin_cfg_widget_sync(cur_fin)
                     evaluate_combined_financials(sim_res, cur_fin)
                     st.session_state.pop("comb_cached_excel_bytes", None)
-                    st.rerun(scope="fragment")
+                    st.rerun()
 
     # 2. Bill Structure & Currency Bar (Separate 4-Part vs Single Utility Argentina vs Custom)
     with st.container(border=True):
@@ -284,7 +284,7 @@ def _render_subtab6_1_bill_setup_controls(
             _queue_fin_cfg_widget_sync(cur_fin)
             evaluate_combined_financials(sim_res, cur_fin)
             st.session_state.pop("comb_cached_excel_bytes", None)
-            st.rerun(scope="fragment")
+            st.rerun()
 
     # 3. Utility Presets Expander
     with st.expander(":material/account_balance: Utility Presets", expanded=False):
@@ -377,7 +377,7 @@ def _render_subtab6_1_bill_setup_controls(
             _queue_fin_cfg_widget_sync(cur_fin)
             evaluate_combined_financials(sim_res, cur_fin)
             st.session_state.pop("comb_cached_excel_bytes", None)
-            st.rerun(scope="fragment")
+            st.rerun()
 
 
 def _render_subtab6_1_grid_tariffs(

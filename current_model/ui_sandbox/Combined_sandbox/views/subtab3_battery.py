@@ -272,6 +272,7 @@ def render_subtab3_battery(load_series: LoadSeries2025) -> None:
         round(float(cur_sys.solar_kwp), 2),
         round(float(cur_sys.target_consumption_share_pct), 2),
         round(float(cur_sys.inverter_ac_limit_kw), 2),
+        bool(getattr(cur_sys, "disable_solar_inverter_limit", False)),
         round(float(cur_sys.inverter_efficiency_pct), 2),
         str(getattr(cur_sys, "solar_weather_mode", "single_year")),
         int(getattr(cur_sys, "solar_weather_year", 2025)),

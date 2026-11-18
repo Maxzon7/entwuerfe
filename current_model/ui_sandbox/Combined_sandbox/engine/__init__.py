@@ -7,6 +7,7 @@ from .models_and_presets import (
     MONTH_NAMES_SHORT,
     SOLAR_SITE_PRESETS,
     FUEL_SPECS,
+    resolve_generator_fuel_curve,
     RULE1_OPTIONS,
     RULE2_OPTIONS,
     RULE3_OPTIONS,

@@ -17,6 +17,7 @@ except ImportError:
 from .models_and_presets import (
     _opt_njit,
     FUEL_SPECS,
+    resolve_generator_fuel_curve,
     CombinedSystemConfig,
     InteractionRulesConfig,
     CombinedTechnicalKPIs,
@@ -487,8 +488,7 @@ def _execute_coupled_dispatch_arrays(
         bess_soc_pct = np.zeros(n_steps, dtype=np.float64)
 
     gen_running_mask = gen_output_kw > 0.001
-    slope = float(system_cfg.gen_slope_per_kwh)
-    intercept = float(system_cfg.gen_intercept_per_kw_rated)
+    slope, intercept = resolve_generator_fuel_curve(system_cfg)
     gen_fuel_step = np.where(
         gen_running_mask,
         (gen_output_kw * slope + gen_rated_kw * intercept) * dt,
