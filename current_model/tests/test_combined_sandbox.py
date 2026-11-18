@@ -2540,6 +2540,103 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertNotIn("comb_ab_fin_cost_stack", code)
         self.assertNotIn("comb_ab_fin_monthly", code)
 
+    def test_dracbv_feasibility_pdf_export_and_fragment(self):
+        """Verifies DRACBV-branded Feasibility Study PDF generation, chart snapshots, and lazy fragment isolation."""
+        import io
+        from pypdf import PdfReader
+        from current_model.ui_sandbox.Combined_sandbox.pdf_report import (
+            PdfReportOptions,
+            build_combined_system_pdf_bytes,
+        )
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            CombinedFinancialConfig,
+            CombinedSystemConfig,
+            InteractionRulesConfig,
+            build_load_fingerprint_from_series,
+            capture_scenario_snapshot,
+            evaluate_combined_financials,
+            simulate_combined_system_dispatch,
+        )
+
+        # 1. Financials OFF must remain untouched (Lazy Financials guard)
+        cfg_tech = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            target_consumption_share_pct=30.0,
+            enable_battery=True,
+            battery_capacity_kwh=200.0,
+            battery_power_kw=100.0,
+            enable_generator=False,
+            enable_financials=False,
+        )
+        sim_tech = simulate_combined_system_dispatch(
+            load_kw=self.load_series.power_kw,
+            timestamps=self.load_series.timestamps,
+            system_cfg=cfg_tech,
+            rules_cfg=InteractionRulesConfig(),
+        )
+        pdf_tech = build_combined_system_pdf_bytes(
+            sim_tech,
+            options=PdfReportOptions(site_name="Tech Only Check", include_charts=False),
+        )
+        self.assertTrue(pdf_tech.startswith(b"%PDF-"))
+        self.assertFalse(sim_tech.system_config.enable_financials)
+        self.assertIsNone(sim_tech.financial_kpis)
+
+        # 2. Full Financials ON + Charts + Scenario A vs B Appendix
+        cfg_fin = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            target_consumption_share_pct=35.0,
+            enable_battery=True,
+            battery_capacity_kwh=240.0,
+            battery_power_kw=120.0,
+            enable_generator=True,
+            generator_rated_kw=150.0,
+            enable_financials=True,
+        )
+        sim_fin = simulate_combined_system_dispatch(
+            load_kw=self.load_series.power_kw,
+            timestamps=self.load_series.timestamps,
+            system_cfg=cfg_fin,
+            rules_cfg=InteractionRulesConfig(),
+        )
+        fin_cfg = CombinedFinancialConfig(currency_code="EUR")
+        evaluate_combined_financials(sim_fin, fin_cfg)
+
+        snap_a = capture_scenario_snapshot(sim_fin, fin_cfg, "A", "Solar + Hybrid", build_load_fingerprint_from_series(self.load_series))
+        snap_b = capture_scenario_snapshot(sim_fin, fin_cfg, "B", "Battery + Backup", build_load_fingerprint_from_series(self.load_series))
+
+        pdf_full = build_combined_system_pdf_bytes(
+            sim_fin,
+            saved_scenarios={"A": snap_a, "B": snap_b},
+            options=PdfReportOptions(
+                site_name="Rotterdam WKO Feasibility",
+                include_charts=True,
+                include_15y_cashflow=True,
+                include_scenario_comparison=True,
+            ),
+        )
+        self.assertTrue(pdf_full.startswith(b"%PDF-"))
+        self.assertGreater(len(pdf_full), 50_000)
+
+        reader = PdfReader(io.BytesIO(pdf_full))
+        self.assertGreaterEqual(len(reader.pages), 2)
+        all_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        self.assertIn("DRACBV Green Energy Solutions", all_text)
+        self.assertIn("FEASIBILITY STUDY REPORT", all_text.upper())
+        self.assertIn("Rotterdam WKO", all_text)
+        self.assertIn("Saved Scenario A vs. Scenario B Comparison", all_text)
+
+        # 3. Verify lazy @st.fragment integration in Sub-Tab 6.3
+        code = self._read_combined_ui_source()
+        self.assertIn("@st.fragment\ndef _render_pdf_export_fragment", code)
+        self.assertIn("comb_btn_prep_pdf", code)
+        self.assertIn("comb_btn_dl_pdf", code)
+        self.assertIn("build_combined_system_pdf_bytes", code)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -143,6 +143,10 @@ from ..combined_charts import (
 from ..combined_excel_exporter import (
     build_combined_verification_excel_bytes,
 )
+from ..pdf_report import (
+    PdfReportOptions,
+    build_combined_system_pdf_bytes,
+)
 
 def _init_session_defaults() -> None:
     """Initializes default session state values and applies any pending coordinated-mix widget sync."""

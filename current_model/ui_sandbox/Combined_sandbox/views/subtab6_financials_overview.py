@@ -10,6 +10,8 @@ from .state_and_helpers import (
     CombinedSystemConfig,
     CombinedFinancialConfig,
     SystemUtilizationDiagnostics,
+    PdfReportOptions,
+    build_combined_system_pdf_bytes,
     render_kpi_card,
     evaluate_combined_financials,
     compute_system_utilization_diagnostics,
@@ -90,6 +92,102 @@ def _render_cashflow_table_expander_fragment(sim_res) -> None:
                 use_container_width=True,
                 hide_index=True,
             )
+
+
+@st.fragment
+def _render_pdf_export_fragment(sim_res) -> None:
+    """Renders an on-demand DRACBV Feasibility Study PDF export inside a lightweight fragment."""
+    fk = getattr(sim_res, "financial_kpis", None)
+    cfg = sim_res.system_config
+    saved_scenarios = st.session_state.get("comb_saved_scenarios")
+    scen_sig = (
+        tuple(
+            (k, getattr(v, "name", ""), getattr(v, "created_at", ""), getattr(v, "physical_fingerprint", ()))
+            for k, v in sorted(saved_scenarios.items())
+            if v is not None
+        )
+        if isinstance(saved_scenarios, dict)
+        else ()
+    )
+    site_default = str(st.session_state.get("comb_active_load_label") or "Commercial Energy Facility")
+
+    with st.container(border=True):
+        st.markdown("##### :material/picture_as_pdf: Feasibility Study PDF Export (DRACBV)")
+        st.caption(
+            "Generates a DRACBV-branded A4 Feasibility Study PDF with executive KPIs, light-mode charts, "
+            "cost breakdown, 15-year cashflow, and any saved Scenario A/B comparison."
+        )
+        c_site, c_opt, c_btn = st.columns([1.8, 1.4, 1.2])
+        with c_site:
+            site_name = st.text_input(
+                "Project / Facility Name",
+                value=st.session_state.get("comb_pdf_site_name", site_default),
+                key="comb_pdf_site_name",
+            )
+        with c_opt:
+            include_charts = st.checkbox(
+                "Include Chart Snapshots",
+                value=True,
+                key="comb_pdf_include_charts",
+            )
+            include_ab = st.checkbox(
+                "Include Saved A/B Appendix",
+                value=bool(scen_sig),
+                disabled=not bool(scen_sig),
+                key="comb_pdf_include_ab",
+            )
+
+        pdf_sig = (
+            round(float(sim_res.kpis.annual_consumption_kwh), 1),
+            round(float(sim_res.kpis.new_grid_peak_kw), 2),
+            round(float(cfg.grid_limit_kw), 2),
+            bool(cfg.enable_solar),
+            bool(cfg.enable_battery),
+            bool(cfg.enable_generator),
+            round(float(getattr(fk, "total_capex_eur", 0.0)), 2) if fk is not None else None,
+            round(float(getattr(fk, "annual_savings_eur", 0.0)), 2) if fk is not None else None,
+            round(float(getattr(fk, "tco_15y_savings_eur", 0.0)), 2) if fk is not None else None,
+            getattr(fk, "currency_code", None) if fk is not None else None,
+            scen_sig if include_ab else (),
+            site_name.strip(),
+            bool(include_charts),
+        )
+        if st.session_state.get("comb_cached_pdf_sig") != pdf_sig:
+            st.session_state.pop("comb_cached_pdf_bytes", None)
+            st.session_state["comb_cached_pdf_sig"] = pdf_sig
+
+        with c_btn:
+            st.write("")
+            if "comb_cached_pdf_bytes" not in st.session_state:
+                if st.button(
+                    "Prepare Feasibility PDF",
+                    icon=":material/picture_as_pdf:",
+                    use_container_width=True,
+                    key="comb_btn_prep_pdf",
+                ):
+                    with st.spinner("Rendering DRACBV Feasibility PDF..."):
+                        opts = PdfReportOptions(
+                            site_name=(site_name or site_default).strip(),
+                            include_charts=bool(include_charts),
+                            include_15y_cashflow=True,
+                            include_scenario_comparison=bool(include_ab),
+                        )
+                        st.session_state["comb_cached_pdf_bytes"] = build_combined_system_pdf_bytes(
+                            sim_res=sim_res,
+                            saved_scenarios=saved_scenarios if isinstance(saved_scenarios, dict) else None,
+                            options=opts,
+                        )
+            if "comb_cached_pdf_bytes" in st.session_state:
+                st.download_button(
+                    label="Download Feasibility PDF",
+                    data=st.session_state["comb_cached_pdf_bytes"],
+                    file_name="DRACBV_Feasibility_Study.pdf",
+                    mime="application/pdf",
+                    icon=":material/download:",
+                    use_container_width=True,
+                    type="primary",
+                    key="comb_btn_dl_pdf",
+                )
 
 
 def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig, cur_fin: CombinedFinancialConfig) -> None:
@@ -273,6 +371,9 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
 
     # Expandable 15-Year Cashflow Table (isolated fragment)
     _render_cashflow_table_expander_fragment(sim_res)
+
+    # On-demand DRACBV Feasibility Study PDF Export (isolated fragment)
+    _render_pdf_export_fragment(sim_res)
 
 
 @st.fragment
