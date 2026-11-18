@@ -2385,6 +2385,7 @@ class TestCombinedSandbox(unittest.TestCase):
 
         # Verify Sub-Tab 7 fragment & form isolation contract
         code = self._read_combined_ui_source()
+        self.assertNotIn("load_series.annual_consumption_kwh", code)
         self.assertIn("@st.fragment\ndef render_subtab7_scenario_comparison", code)
         self.assertIn("@st.fragment\ndef _render_ab_chart_gallery_fragment", code)
         self.assertIn("@st.fragment\ndef _render_power_flow_lazy_fragment", code)

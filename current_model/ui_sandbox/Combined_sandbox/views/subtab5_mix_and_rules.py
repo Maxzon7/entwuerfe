@@ -603,9 +603,12 @@ def render_subtab5_interaction_rules(load_series: Optional[LoadSeries2025] = Non
                     tilt_deg=cand_cfg.tilt_deg,
                     azimuth_deg=azim,
                     dc_ac_ratio=cand_cfg.dc_ac_ratio,
+                    weather_mode=str(getattr(cand_cfg, "solar_weather_mode", "single_year")),
+                    selected_year=int(getattr(cand_cfg, "solar_weather_year", 2025)),
                 )
+                ann_cons_kwh = float(getattr(load_series, "total_energy_kwh", 0.0) or float(np.sum(load_series.power_kw) * 0.25))
                 s_info = derive_solar_sizing_and_formula(
-                    annual_consumption_kwh=float(load_series.annual_consumption_kwh),
+                    annual_consumption_kwh=ann_cons_kwh,
                     specific_yield_kwh_per_kwp=spec_y,
                     sizing_method="target_share_pct",
                     direct_kwp=cand_cfg.solar_kwp,
