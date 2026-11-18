@@ -562,30 +562,13 @@ def _render_comparison_ledger(
 
     col_a_hdr = f"Scenario A ({snap_a.name[:22]})" if snap_a else "Scenario A (Empty)"
     col_b_hdr = f"Scenario B ({snap_b.name[:22]})" if snap_b else "Scenario B (Empty)"
-    table_labels = [
-        ("sizing_rules", "1. System Size & Rules"),
-        ("grid_balance", "2. Grid Limit & Supply"),
-        ("utilization_dead_cap", "3. System Usage & Unused Capacity"),
-    ]
+    table_keys = ["sizing_rules", "grid_balance", "utilization_dead_cap"]
     if any_fin:
-        table_labels.extend([
-            ("capex_y1_pnl", "4. Upfront Cost & Yearly Bill"),
-            ("bwl_15y_metrics", "5. 15-Year Costs & Profit"),
-        ])
-    label_to_key = {lbl: key for key, lbl in table_labels if key in tables}
+        table_keys.extend(["capex_y1_pnl", "bwl_15y_metrics"])
+    keys_to_show = [key for key in table_keys if key in tables]
 
     with st.container(border=True):
         st.markdown("##### :material/table_chart: Detailed Comparison Tables (Expand as Needed)")
-        section_choice = st.radio(
-            "Comparison Overview Filter",
-            options=["All Overview Tables (Collapsed)"] + list(label_to_key.keys()),
-            index=0,
-            horizontal=True,
-            key="comb_ab_table_section_sel_fin" if any_fin else "comb_ab_table_section_sel_tech",
-            label_visibility="collapsed",
-        )
-        all_collapsed = (section_choice == "All Overview Tables (Collapsed)")
-        keys_to_show = list(label_to_key.values()) if all_collapsed else [label_to_key[section_choice]]
 
         for t_key in keys_to_show:
             spec = tables[t_key]
@@ -602,7 +585,7 @@ def _render_comparison_ledger(
                     ],
                     "highlight": _highlight_delta_color(str(rec["Metric / KPI"]).lower(), delta_txt),
                 })
-            with st.expander(spec["title"], expanded=(not all_collapsed)):
+            with st.expander(spec["title"], expanded=False):
                 st.markdown(
                     _render_sub_ledger_html(
                         header_title=spec["header_title"],
