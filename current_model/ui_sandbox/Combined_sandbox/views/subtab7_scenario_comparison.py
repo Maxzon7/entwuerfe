@@ -37,9 +37,7 @@ from .state_and_helpers import (
     create_component_utilization_bars_figure,
     create_financial_tco_trajectory_figure,
     create_financial_waterfall_bridge_figure,
-    create_financial_monthly_cashflow_figure,
     create_ab_15y_tco_comparison_figure,
-    create_ab_annual_cost_stack_figure,
     create_ab_load_profile_overlay_figure,
     sync_side_by_side_yaxis,
 )
@@ -332,12 +330,10 @@ def _render_financial_tabs(
     load_series: Optional[LoadSeries2025],
     chart_cfg: Dict[str, Any],
 ) -> None:
-    """Renders Sub-Tab 6.3 Financial charts inside 4 instant client-side inner st.tabs."""
-    ft_tco, ft_wf, ft_stack, ft_mcf = st.tabs([
+    """Renders Sub-Tab 6.3 Financial charts inside 2 instant client-side inner st.tabs."""
+    ft_tco, ft_wf = st.tabs([
         ":material/trending_up: 15-Year TCO & Payback",
         ":material/stacked_bar_chart: Annual Cost Bridge",
-        ":material/bar_chart: 4-Pillar Annual Cost",
-        ":material/calendar_month: 12-Month Cashflow",
     ])
     with ft_tco:
         st.plotly_chart(
@@ -358,20 +354,6 @@ def _render_financial_tabs(
             lambda s: create_financial_waterfall_bridge_figure(snapshot_to_sim_view(s, load_series)),
             chart_key_prefix="comb_ab_fin_wf",
             sync_axes=("yaxis",),
-        )
-    with ft_stack:
-        st.plotly_chart(
-            create_ab_annual_cost_stack_figure(snap_a, snap_b, height=430),
-            use_container_width=True,
-            config=chart_cfg,
-            key="comb_ab_fin_cost_stack",
-        )
-    with ft_mcf:
-        _render_side_by_side_charts(
-            fin_items,
-            lambda s: create_financial_monthly_cashflow_figure(snapshot_to_sim_view(s, load_series)),
-            chart_key_prefix="comb_ab_fin_monthly",
-            sync_axes=("yaxis", "yaxis2"),
         )
 
 

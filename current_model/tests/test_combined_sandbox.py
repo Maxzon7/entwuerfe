@@ -2536,6 +2536,8 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("wins on both upfront cost and yearly savings", inc_dom["verdict_title"])
         self.assertNotIn("saves -", inc_dom["verdict_text"])
         self.assertIn("Head-to-Head Comparison:", code)
+        self.assertNotIn("comb_ab_fin_cost_stack", code)
+        self.assertNotIn("comb_ab_fin_monthly", code)
 
 
 if __name__ == "__main__":
