@@ -1,0 +1,23 @@
+# Core UI & Numerical Stack
+streamlit==1.39.0
+pandas>=2.0.0
+numpy>=1.26.0
+plotly>=5.20.0
+
+# Geographic Solar Location Search & Interactive Maps
+requests>=2.31.0
+folium>=0.15.0
+streamlit-folium>=0.18.0
+
+# Excel & DRACBV A4 PDF Feasibility Report Exports
+openpyxl>=3.1.0
+Pillow>=10.0.0
+weasyprint>=60.0
+kaleido>=0.2.1
+pypdf>=4.0.0
+
+# Optional JIT acceleration for 35,040-step dispatch (falls back cleanly if omitted)
+numba>=0.59.0
+
+# Automated Regression Tests
+pytest>=8.0.0

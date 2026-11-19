@@ -76,6 +76,12 @@ python -m streamlit run ui_sandbox/Combined_sandbox/app.py
 ```
 *(1-Click Windows Launch: double-click [`Start_Combined_System.bat`](Start_Combined_System.bat) or the `Start Combined System.lnk` / Desktop `Combined System` icon shortcut.)*
 
+### H. DRAC Design System Blueprint Sandbox
+White & DRAC Green (`#7a9f48`) UI design blueprint reusing live `Combined_sandbox` simulations and light-mode Plotly charts:
+```bash
+python -m streamlit run ui_sandbox/Design_sandbox/app.py --theme.base light --theme.primaryColor "#7a9f48"
+```
+
 ---
 
 ## 4. Test Suite Execution

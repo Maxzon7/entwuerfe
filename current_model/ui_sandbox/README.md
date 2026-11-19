@@ -107,11 +107,19 @@ current_model/ui_sandbox/
     │   ├── subtab7_scenario_comparison.py      # Sub-tab 7: @st.fragment Scenario A vs. Scenario B vs. Current Situation comparison & Live Restore
     │   └── level3_master_output.py             # Level 3 permanent master summary, dispatch/mix charts & Excel export
     └── app.py                                  # Lean 3-Level Streamlit entrypoint wiring views/ & 15-min simulation cache
+
+└── Design_sandbox/                             # [Design Blueprint] White & DRAC Green UI Language Workbench
+    ├── __init__.py                             # Exposes DRAC White-Green theme helpers, tokens & i18n dictionary
+    ├── assets/
+    │   └── drac_logo.png                       # Transparent RGBA DRAC Green Energy Solutions logo
+    ├── i18n.py                                 # Multilingual UI dictionary (EN default, NL Dutch, ES Spanish)
+    ├── theme.py                                # DRAC_PALETTE tokens, light-mode CSS overrides, HTML components & Plotly light-theme adapter
+    └── app.py                                  # 4-tab design showcase importing live Combined_sandbox simulations & charts
 ```
 
 ---
 
-## :material/play_arrow: Quick Start: Run Any of the 6 Sandboxes Independently
+## :material/play_arrow: Quick Start: Run Any of the Sandboxes Independently
 
 ```bash
 # Scenario 1: Status Quo Baseline & 4-Pillar Contract Workbench
@@ -131,6 +139,9 @@ python -m streamlit run "ui_sandbox/SolarBESS_sandbox/app.py"
 
 # Scenario 6: Peaking Generator & Grid Congestion (Purchase CAPEX vs. Rental OPEX)
 python -m streamlit run "ui_sandbox/Generator_sandbox/app.py"
+
+# Design Blueprint: White & DRAC Green Visual Design System
+python -m streamlit run "ui_sandbox/Design_sandbox/app.py" --theme.base light --theme.primaryColor "#7a9f48"
 ```
 
 ---
@@ -348,3 +359,17 @@ The Combined System Sandbox serves as the official UX reference standard under t
     * **Collapsible Phase Event Logs & Date-Range Summaries (`_render_bess_phase_log_expander` & `_render_solar_phase_log_expander`):** Default-collapsed `st.expander` panels inside `_render_master_dispatch_chart_fragment` providing phase-type filtering (`All` / `Discharge` / `Charge`), optional `Merge pauses <= 30 min` (`merge_gap_steps=2` synchronized with chart hover & labels), date-range AC energy totals (`summarize_bess_window_energy`, `summarize_solar_window_energy`), sortable daily/event tables, and 1-click CSV export.
     * **Feasibility Banner & On-Demand Excel Export Fragment:** Prominent `Grid Limit Met (Zero Overload)` or diagnostic bottleneck/utilization banners (distinguishing inverter `kW` clipping vs capacity `kWh` depletion vs `Min SoC > 50%` oversizing), plus an isolated `@st.fragment` (`_render_excel_export_fragment`) providing on-demand `Prepare Excel (.xlsx)` -> `Download Excel (.xlsx)` generation so normal form submissions never block on 35,040-row `openpyxl` workbook construction.
   * **Compact `System Comparison` Table:** Side-by-side comparison of active components against `Current situation`.
+
+### Standalone Export Packaging (`DRACBV_energy simulator/`)
+* To export a clean, pruned, self-contained handover folder without disturbing active sandbox development inside `current_model/`, run [`scripts/build_combined_standalone_export.py`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/scripts/build_combined_standalone_export.py).
+* This populates [`DRACBV_energy simulator/`](file:///c:/Users/mwien/Documents/One%20drive2/OneDrive/Desktop/Arbeit%20prog/Web%20Development/entwuerfe/current_model/DRACBV_energy%20simulator/) with `Combined_sandbox/`, `Currentsituation_sandbox/{consumption,engine}/`, pruned `core/`, `models/`, `ui/common/`, `sample_data/market_prices/`, `tests/test_combined_sandbox.py`, root `_bootstrap.py` path/package isolation, `app.py`, `Start_DRACBV_Energy_Simulator.bat`, `requirements.txt`, `run_tests.py`, and a dedicated developer-handover `README.md`.
+
+---
+
+## :material/palette: DRAC White-Green Design Blueprint (`ui_sandbox/Design_sandbox/`)
+
+Isolated visual design-system laboratory built on the white-and-green aesthetic of the DRACBV PDF Feasibility Study template (`#7a9f48` brand green, `#5d7c34` deep green, `#f2f7ec` soft sage wash, `#f7f9f5` alabaster canvas, crisp `#ffffff` surfaces, and the transparent `DRAC` Green Energy Solutions logo):
+
+* **`i18n.py`:** Provides the Streamlit-free `TRANSLATIONS` dictionary and `t(key, lang)` lookup supporting **English (`EN`, default)**, **Dutch (`NL`)**, and **Spanish (`ES`)** across all headings, KPI cards, tabs, configuration forms, tables, and specimens.
+* **`theme.py`:** Defines `DRAC_PALETTE`, cached logo/watermark asset loaders, forced light-mode Streamlit CSS (`inject_drac_light_theme`), reusable HTML components (`render_drac_masthead`, `render_section_heading`, `render_drac_kpi_card`, `render_status_banner`, `render_drac_cost_bridge_bar`, `render_drac_table_html`, `render_drac_footer`), the centered animated DRAC loading overlay (`drac_loading_overlay`), and `apply_drac_light_chart_theme` to convert dark-mode `Combined_sandbox` Plotly figures into light-mode charts while preserving interactivity.
+* **`app.py`:** Boots directly into a populated `Combined_sandbox` reference scenario and provides a 1-click `EN / NL / ES` language bar plus live sidebar design controls (Masthead Style, Layout Density, Table Header Tone, Brand Watermark) across 4 blueprint tabs (`1. Executive Overview`, `2. System Configuration`, `3. Financials & 15-Year TCO`, `4. Design System Specimen`).
