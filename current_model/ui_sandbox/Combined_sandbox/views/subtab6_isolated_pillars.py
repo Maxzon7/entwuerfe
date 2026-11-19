@@ -8,6 +8,9 @@ import pandas as pd
 import streamlit as st
 
 from .state_and_helpers import (
+    curr_prefix,
+    fmt_num,
+    fmt_curr,
     render_kpi_card,
     create_monthly_grid_bill_progression_figure,
     create_dso_isolated_breakdown_figure,
@@ -28,23 +31,19 @@ def _get_curr_code(sim_res) -> str:
 
 
 def _curr_prefix(currency_code: str, html: bool = False) -> str:
-    """Returns formatted currency prefix string for prose or HTML sub-ledgers."""
-    if currency_code == "EUR":
-        return "&euro;" if html else "€"
-    if currency_code == "USD":
-        return "$"
-    return f"{currency_code} "
+    """Delegates to central `engine.formatting.curr_prefix`."""
+    return curr_prefix(currency_code, html=html)
 
 
-def _fmt_curr(val: float, currency_code: str = "EUR", signed: bool = False, html: bool = False) -> str:
-    """Formats a monetary value with currency prefix cleanly handling leading signs."""
-    pref = _curr_prefix(currency_code, html=html)
-    if signed:
-        sign = "+" if val >= 0 else "-"
-        return f"{sign}{pref}{abs(val):,.0f}"
-    if val < -0.5:
-        return f"-{pref}{abs(val):,.0f}"
-    return f"{pref}{val:,.0f}"
+def _fmt_curr(
+    val: float,
+    currency_code: str = "EUR",
+    signed: bool = False,
+    html: bool = False,
+    decimals: int = 0,
+) -> str:
+    """Delegates to central `engine.formatting.fmt_curr`."""
+    return fmt_curr(val, currency_code=currency_code, decimals=decimals, signed=signed, html=html)
 
 
 def _rename_df_currency_cols(df: pd.DataFrame, currency_code: str) -> pd.DataFrame:
@@ -64,7 +63,7 @@ def _render_master_cost_equation_bar(sim_res) -> str:
     curr = _get_curr_code(sim_res)
     sav_color = "#22C55E" if fk.annual_savings_eur >= 0 else "#EF4444"
     sav_bg = "#06281e" if fk.annual_savings_eur >= 0 else "#2a0e12"
-    pb_str = f"{fk.payback_years:.1f} yrs" if fk.payback_years is not None else "N/A"
+    pb_str = f"{fmt_num(fk.payback_years, 1)} yrs" if fk.payback_years is not None else "N/A"
     npv_color = "#22C55E" if fk.npv_15y_eur >= 0 else "#F87171"
 
     return (
@@ -84,7 +83,7 @@ def _render_master_cost_equation_bar(sim_res) -> str:
         f'</div>\n'
         f'<div style="color:#64748b; font-weight:800; font-size:1.05rem;">+</div>\n'
         f'<div style="background-color:#1e293b; border-left:4px solid #F59E0B; border-radius:6px; padding:7px 11px; flex:1; min-width:145px;">'
-        f'<div style="font-size:0.72rem; color:#94a3b8; font-weight:600;">Hardware O&amp;M &amp; Fuel</div>'
+        f'<div style="font-size:0.72rem; color:#94a3b8; font-weight:600;">Hardware OPEX &amp; Fuel</div>'
         f'<div style="font-size:1.00rem; color:#f8fafc; font-weight:700;">{_fmt_curr(fk.system_om_and_fuel_y1_eur, curr, html=True)} / yr</div>'
         f'</div>\n'
         f'<div style="color:#64748b; font-weight:800; font-size:1.05rem;">&minus;</div>\n'
@@ -94,7 +93,7 @@ def _render_master_cost_equation_bar(sim_res) -> str:
         f'</div>\n'
         f'<div style="color:#38BDF8; font-weight:800; font-size:1.10rem;">=</div>\n'
         f'<div style="background-color:#0f172a; border:1.5px solid #38BDF8; border-radius:6px; padding:7px 12px; flex:1.1; min-width:155px;">'
-        f'<div style="font-size:0.72rem; color:#38BDF8; font-weight:700; text-transform:uppercase;">Combined Annual Cost</div>'
+        f'<div style="font-size:0.72rem; color:#38BDF8; font-weight:700; text-transform:uppercase;">Combined Annual OPEX</div>'
         f'<div style="font-size:1.02rem; color:#ffffff; font-weight:800;">{_fmt_curr(fk.total_annual_opex_eur, curr, html=True)} / yr</div>'
         f'</div>\n'
         f'<div style="color:{sav_color}; font-weight:800; font-size:1.10rem;">&rarr;</div>\n'
@@ -111,7 +110,7 @@ def _render_master_cost_equation_bar(sim_res) -> str:
                     'GRID CONGESTION LOCK ACTIVE: COMPLIANT (&le; Contracted Grid Limit, no grid expansion permitted)'
                     if fk.grid_congestion_compliant
                     else f'background-color:#2a0e12; border:1px solid #EF4444; color:#FCA5A5;">'
-                         f'GRID CONGESTION LOCK VIOLATION: Exceeds contracted limit by +{fk.grid_congestion_breach_kw:,.1f} kW '
+                         f'GRID CONGESTION LOCK VIOLATION: Exceeds contracted limit by +{fmt_num(fk.grid_congestion_breach_kw, 1)} kW '
                          f'across {fk.grid_congestion_breach_months} month(s) &mdash; grid upgrade not allowed'
                 )
                 + '</div>\n'
@@ -120,12 +119,12 @@ def _render_master_cost_equation_bar(sim_res) -> str:
             else ""
         )
         + f'<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-top:9px; padding-top:8px; border-top:1px solid #1e293b; font-size:0.80rem; color:#cbd5e1;">\n'
-        f'<div><b>Net Investment (CAPEX):</b> Solar {_fmt_curr(fk.solar_capex_eur, curr, html=True)} + '
+        f'<div><b>Net CAPEX:</b> Solar {_fmt_curr(fk.solar_capex_eur, curr, html=True)} + '
         f'Battery {_fmt_curr(fk.battery_capex_eur, curr, html=True)} + '
         f'Generator {_fmt_curr(fk.generator_capex_eur, curr, html=True)} &minus; '
         f'Avoided Grid Upgrade {_fmt_curr(fk.avoided_grid_upgrade_capex_eur, curr, html=True)} = '
         f'<b style="color:#ffffff;">{_fmt_curr(fk.total_capex_eur, curr, html=True)}</b></div>\n'
-        f'<div><b>Simple Payback:</b> <span style="color:#f8fafc; font-weight:700;">{pb_str}</span> &nbsp;|&nbsp; '
+        f'<div><b>Payback Period:</b> <span style="color:#f8fafc; font-weight:700;">{pb_str}</span> &nbsp;|&nbsp; '
         f'<b>15-Year NPV:</b> <span style="color:{npv_color}; font-weight:700;">{_fmt_curr(fk.npv_15y_eur, curr, signed=True, html=True)}</span></div>\n'
         f'</div>\n'
         f'</div>'
@@ -323,7 +322,7 @@ def _render_isolated_pillar_deep_dive_fragment(sim_res) -> None:
                 render_kpi_card(
                     title="Isolated DSO Savings",
                     value=f"{_fmt_curr(fk.dso_savings_eur, curr, signed=True)} / yr",
-                    subtext=f"{fk.dso_savings_pct:+.1f}% vs. current DSO contract",
+                    subtext=f"{fmt_num(fk.dso_savings_pct, 1, signed=True)}% vs. current DSO contract",
                     status="ok" if fk.dso_savings_eur > 0 else ("alert" if fk.dso_savings_eur < 0 else "default"),
                 )
             with d4:
@@ -366,7 +365,7 @@ def _render_isolated_pillar_deep_dive_fragment(sim_res) -> None:
                 render_kpi_card(
                     title="Isolated Supplier Savings",
                     value=f"{_fmt_curr(fk.supplier_savings_eur, curr, signed=True)} / yr",
-                    subtext=f"{fk.supplier_savings_pct:+.1f}% energy cost change",
+                    subtext=f"{fmt_num(fk.supplier_savings_pct, 1, signed=True)}% energy cost change",
                     status="ok" if fk.supplier_savings_eur > 0 else "default",
                 )
             with s4:

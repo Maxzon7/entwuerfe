@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from .formatting import fmt_num
 from .models_and_presets import CombinedSimulationResult
 
 
@@ -199,7 +200,7 @@ def extract_bess_phase_events(
             soc_delta = end_soc - start_soc
             span_str = _format_clock_span(start_ts, end_ts)
 
-            suffix = f" | Phase: <b>{energy_kwh:,.1f} kWh</b> ({dur_h:.2f} h, {span_str})"
+            suffix = f" | Phase: <b>{fmt_num(energy_kwh, 1)} kWh</b> ({fmt_num(dur_h, 2)} h, {span_str})"
             for k in range(s, e):
                 if not gap_b[k]:
                     hover_arr[k] = suffix
@@ -214,14 +215,14 @@ def extract_bess_phase_events(
                 role_str = "Load / Peak Shaving"
 
             if energy_kwh >= min_label_kwh:
-                lbl_val = f"{energy_kwh:,.0f} kWh" if energy_kwh >= 10.0 else f"{energy_kwh:,.1f} kWh"
+                lbl_val = f"{fmt_num(energy_kwh, 0)} kWh" if energy_kwh >= 10.0 else f"{fmt_num(energy_kwh, 1)} kWh"
                 lx.append(ts[peak_idx])
                 ly.append(sign * peak_kw)
                 ltxt.append(f"+{lbl_val}" if sign > 0 else f"-{lbl_val}")
                 lhover.append(
-                    f"{p_type} Phase: <b>{energy_kwh:,.1f} kWh</b><br>"
-                    f"{start_ts.strftime('%Y-%m-%d %H:%M')} - {end_ts.strftime('%H:%M')} ({dur_h:.2f} h)<br>"
-                    f"Peak: {peak_kw:,.1f} kW | SoC: {start_soc:.1f}% -> {end_soc:.1f}%"
+                    f"{p_type} Phase: <b>{fmt_num(energy_kwh, 1)} kWh</b><br>"
+                    f"{start_ts.strftime('%Y-%m-%d %H:%M')} - {end_ts.strftime('%H:%M')} ({fmt_num(dur_h, 2)} h)<br>"
+                    f"Peak: {fmt_num(peak_kw, 1)} kW | SoC: {fmt_num(start_soc, 1)}% -> {fmt_num(end_soc, 1)}%"
                 )
 
             raw_records.append(

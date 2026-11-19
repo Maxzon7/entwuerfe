@@ -51,6 +51,7 @@ from current_model.ui_sandbox.Combined_sandbox.combined_charts import (
     _mask_gap_for_webgl_fill,
     create_consumption_baseline_figure,
     create_combined_dispatch_soc_figure,
+    create_solar_production_figure,
     create_financial_cost_comparison_figure,
     create_financial_tco_trajectory_figure,
     create_financial_waterfall_bridge_figure,
@@ -2157,7 +2158,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("Unused Battery Value", set(seg_fin["utilization_dead_cap"]["df"]["Metric / KPI"]))
         self.assertIn("Savings per kWh vs. Grid", set(seg_fin["bwl_15y_metrics"]["df"]["Metric / KPI"]))
         self.assertIn("Yearly Savings per 1,000 Invested", set(seg_fin["bwl_15y_metrics"]["df"]["Metric / KPI"]))
-        self.assertIn("15-Year Cost Split (Upfront vs. Running)", set(seg_fin["bwl_15y_metrics"]["df"]["Metric / KPI"]))
+        self.assertIn("15-Year Cost Split (CAPEX vs. OPEX & Grid)", set(seg_fin["bwl_15y_metrics"]["df"]["Metric / KPI"]))
         self.assertIsNotNone(bwl_inc)
         self.assertIsNotNone(bwl_inc_multi)
         self.assertGreaterEqual(bwl_inc["delta_capex_eur"], 0.0)
@@ -2534,7 +2535,7 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIsNotNone(inc_dom)
         self.assertTrue(inc_dom["never_pays_back"])
         self.assertEqual(inc_dom["winner_name"], "Low CAPEX More Savings")
-        self.assertIn("wins on both upfront cost and yearly savings", inc_dom["verdict_title"])
+        self.assertIn("wins on both CAPEX and annual savings", inc_dom["verdict_title"])
         self.assertNotIn("saves -", inc_dom["verdict_text"])
         self.assertIn("Head-to-Head Comparison:", code)
         self.assertNotIn("comb_ab_fin_cost_stack", code)
@@ -2884,6 +2885,103 @@ class TestCombinedSandbox(unittest.TestCase):
         code = self._read_combined_ui_source()
         self.assertIn("_render_solar_phase_log_expander", code)
         self.assertIn("Daily Solar Production Log (Energy per Day)", code)
+
+    def test_eu_number_formatting_rollback_switch_and_capex_opex_terminology(self):
+        """Verifies centralized European number formatting, 1-line rollback switch, pure-Python engine isolation, and unified CAPEX/OPEX labels."""
+        import ast
+        from current_model.ui_sandbox.Combined_sandbox.engine import formatting
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            CombinedFinancialConfig,
+            CombinedSystemConfig,
+            InteractionRulesConfig,
+            build_load_fingerprint_from_series,
+            build_segmented_comparison_tables,
+            capture_scenario_snapshot,
+            evaluate_combined_financials,
+            fmt_curr,
+            fmt_num,
+            format_currency_value,
+            get_plotly_separators,
+            simulate_combined_system_dispatch,
+        )
+        from current_model.ui_sandbox.Combined_sandbox.charts.financial_overview_charts import (
+            create_financial_tco_trajectory_figure,
+        )
+
+        # 1. Pure-Python check for engine/formatting.py (zero Streamlit imports)
+        fmt_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "ui_sandbox",
+                "Combined_sandbox",
+                "engine",
+                "formatting.py",
+            )
+        )
+        with open(fmt_path, "r", encoding="utf-8") as f:
+            fmt_src = f.read()
+        self.assertIn("# [ROLLBACK NOTE]", fmt_src)
+        fmt_tree = ast.parse(fmt_src, filename=fmt_path)
+        for node in ast.walk(fmt_tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertNotIn("streamlit", alias.name)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                self.assertNotIn("streamlit", node.module)
+
+        # 2. Default European formatting (USE_EU_NUMBER_FORMAT=True)
+        self.assertTrue(formatting.USE_EU_NUMBER_FORMAT)
+        self.assertEqual(get_plotly_separators(), ",.")
+        self.assertEqual(fmt_num(125000, 0), "125.000")
+        self.assertEqual(fmt_num(1234.5, 1), "1.234,5")
+        self.assertEqual(fmt_num(-0.02, 1), "0,0")
+        self.assertEqual(fmt_num(float("nan"), 1), "N/A")
+        self.assertEqual(fmt_curr(125000, "EUR"), "€125.000")
+        self.assertEqual(fmt_curr(-4500.5, "USD", decimals=2), "-$4.500,50")
+        self.assertEqual(format_currency_value(125000, "EUR"), "€125.000")
+        self.assertEqual(format_currency_value(125000, "ARS", signed=True), "+ARS 125.000")
+
+        # 3. 1-line rollback switch toggles cleanly back to Anglo-American formatting and reverts safely
+        try:
+            formatting.USE_EU_NUMBER_FORMAT = False
+            self.assertEqual(get_plotly_separators(), ".,")
+            self.assertEqual(fmt_num(125000.5, 1), "125,000.5")
+            self.assertEqual(fmt_curr(125000, "EUR"), "€125,000")
+            self.assertEqual(format_currency_value(-4500.5, "USD", decimals=2), "-$4,500.50")
+        finally:
+            formatting.USE_EU_NUMBER_FORMAT = True
+
+        self.assertEqual(get_plotly_separators(), ",.")
+
+        # 4. Plotly chart layout carries separators=",." & unified CAPEX/OPEX terms in tables/UI
+        cfg = CombinedSystemConfig(
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_kwp=150.0,
+            enable_battery=True,
+            battery_capacity_kwh=200.0,
+            battery_power_kw=100.0,
+            enable_financials=True,
+        )
+        sim_res = simulate_combined_system_dispatch(self.load_kw, self.timestamps, cfg, InteractionRulesConfig())
+        fin_cfg = CombinedFinancialConfig(currency_code="EUR")
+        evaluate_combined_financials(sim_res, fin_cfg)
+
+        fig_tco = create_financial_tco_trajectory_figure(sim_res)
+        self.assertEqual(fig_tco.layout.separators, ",.")
+
+        snap_a = capture_scenario_snapshot(sim_res, fin_cfg, "A", "Solar + BESS", build_load_fingerprint_from_series(self.load_series))
+        snap_b = capture_scenario_snapshot(sim_res, fin_cfg, "B", "Solar + BESS Alt", build_load_fingerprint_from_series(self.load_series))
+        seg = build_segmented_comparison_tables(snap_a, snap_b)
+        self.assertIn("4. CAPEX & Yearly Electricity Bill", seg["capex_y1_pnl"]["title"])
+        self.assertIn("Annual OPEX & Net Electricity Cost", seg["capex_y1_pnl"]["footer_cells"][0])
+
+        ui_src = self._read_combined_ui_source()
+        self.assertNotIn('title="Total Investment"', ui_src)
+        self.assertNotIn("Lowest Upfront Cost", ui_src)
+        self.assertIn('title="Total CAPEX"', ui_src)
+        self.assertIn("Payback Period", ui_src)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from ..combined_sandbox_engine import (
     build_segmented_comparison_tables,
     compute_incremental_bwl_evaluation,
     evaluate_combined_financials,
+    fmt_num,
     format_currency_value,
 )
 from .chart_snapshots import collect_report_chart_data_uris
@@ -57,11 +58,11 @@ def _build_cover_and_config_section(
 
     active_mods: List[str] = ["Grid Connection"]
     if cfg.enable_solar:
-        active_mods.append(f"Solar PV ({sim_res.solar_derivation.installed_kwp:,.1f} kWp)")
+        active_mods.append(f"Solar PV ({fmt_num(sim_res.solar_derivation.installed_kwp, 1)} kWp)")
     if cfg.enable_battery:
-        active_mods.append(f"BESS ({cfg.battery_capacity_kwh:,.0f} kWh / {cfg.battery_power_kw:,.0f} kW)")
+        active_mods.append(f"BESS ({fmt_num(cfg.battery_capacity_kwh, 0)} kWh / {fmt_num(cfg.battery_power_kw, 0)} kW)")
     if cfg.enable_generator:
-        active_mods.append(f"Generator ({cfg.generator_rated_kw:,.0f} kW {cfg.fuel_type})")
+        active_mods.append(f"Generator ({fmt_num(cfg.generator_rated_kw, 0)} kW {cfg.fuel_type})")
 
     cover_html = (
         '<div class="cover-header">'
@@ -71,7 +72,7 @@ def _build_cover_and_config_section(
         f'<p class="report-subtitle">Technical Dispatch &amp; 15-Year Financial Evaluation — {esc(opts.site_name)}</p>'
         '<div class="meta-strip">'
         f'<strong>Generated:</strong> {esc(generated_str)} &nbsp;|&nbsp; '
-        f'<strong>Grid Limit:</strong> {cfg.grid_limit_kw:,.0f} kW &nbsp;|&nbsp; '
+        f'<strong>Grid Limit:</strong> {fmt_num(cfg.grid_limit_kw, 0)} kW &nbsp;|&nbsp; '
         f'<strong>Currency:</strong> {esc(curr)}<br>'
         f'<strong>Active Configuration:</strong> {esc(" + ".join(active_mods))}'
         "</div>"
@@ -89,23 +90,23 @@ def _build_cover_and_config_section(
     )
 
     spec_rows: List[List[object]] = [
-        ["Baseline Facility Load", f"{kpis.annual_consumption_kwh:,.0f} kWh/yr | Peak: {kpis.original_peak_kw:,.1f} kW | Avg: {kpis.average_load_kw:,.1f} kW"],
-        ["Contracted Grid Limit", f"{cfg.grid_limit_kw:,.1f} kW (Baseline Overload: {kpis.baseline_overload_hours:,.1f} hrs / {kpis.baseline_overload_kwh:,.0f} kWh)"],
+        ["Baseline Facility Load (Current Situation)", f"{fmt_num(kpis.annual_consumption_kwh, 0)} kWh/yr | Peak: {fmt_num(kpis.original_peak_kw, 1)} kW | Avg: {fmt_num(kpis.average_load_kw, 1)} kW"],
+        ["Contracted Grid Limit", f"{fmt_num(cfg.grid_limit_kw, 1)} kW (Current Overload: {fmt_num(kpis.baseline_overload_hours, 1)} hrs / {fmt_num(kpis.baseline_overload_kwh, 0)} kWh)"],
         [
             "Solar PV System",
-            f"Enabled: {sim_res.solar_derivation.installed_kwp:,.1f} kWp (Yield: {sim_res.solar_derivation.specific_yield_kwh_per_kwp:,.0f} kWh/kWp/yr, {sim_res.solar_derivation.data_source_label})"
+            f"Enabled: {fmt_num(sim_res.solar_derivation.installed_kwp, 1)} kWp (Yield: {fmt_num(sim_res.solar_derivation.specific_yield_kwh_per_kwp, 0)} kWh/kWp/yr, {sim_res.solar_derivation.data_source_label})"
             if cfg.enable_solar
             else "Inactive",
         ],
         [
             "Battery Storage (BESS)",
-            f"Enabled: {cfg.battery_capacity_kwh:,.1f} kWh / {cfg.battery_power_kw:,.1f} kW | SoC Window: {cfg.min_soc_pct:.0f}%-{cfg.max_soc_pct:.0f}% | RTE: {cfg.round_trip_efficiency_pct:.0f}%"
+            f"Enabled: {fmt_num(cfg.battery_capacity_kwh, 1)} kWh / {fmt_num(cfg.battery_power_kw, 1)} kW | SoC Window: {fmt_num(cfg.min_soc_pct, 0)}%-{fmt_num(cfg.max_soc_pct, 0)}% | RTE: {fmt_num(cfg.round_trip_efficiency_pct, 0)}%"
             if cfg.enable_battery
             else "Inactive",
         ],
         [
             "Peaking Generator",
-            f"Enabled: {cfg.generator_rated_kw:,.1f} kW ({cfg.fuel_type}, min load {cfg.generator_min_load_pct:.0f}%)"
+            f"Enabled: {fmt_num(cfg.generator_rated_kw, 1)} kW ({cfg.fuel_type}, min load {fmt_num(cfg.generator_min_load_pct, 0)}%)"
             if cfg.enable_generator
             else "Inactive",
         ],
@@ -134,26 +135,26 @@ def _build_kpi_and_status_section(sim_res: CombinedSimulationResult) -> str:
     tech_cards = [
         {
             "title": "Grid Peak Demand",
-            "value": f"{kpis.original_peak_kw:,.1f} -> {kpis.new_grid_peak_kw:,.1f} kW",
-            "subtext": f"Shaved -{kpis.peak_reduction_kw:,.1f} kW (Limit {cfg.grid_limit_kw:,.0f} kW)",
+            "value": f"{fmt_num(kpis.original_peak_kw, 1)} -> {fmt_num(kpis.new_grid_peak_kw, 1)} kW",
+            "subtext": f"Shaved -{fmt_num(kpis.peak_reduction_kw, 1)} kW (Limit {fmt_num(cfg.grid_limit_kw, 0)} kW)",
             "tone": "ok" if kpis.grid_limit_met else "alert",
         },
         {
             "title": "Remaining Overload",
-            "value": f"{kpis.remaining_overload_hours:,.1f} hrs/yr",
-            "subtext": f"{kpis.remaining_overload_kwh:,.0f} kWh unmet (was {kpis.baseline_overload_hours:,.1f} hrs)",
+            "value": f"{fmt_num(kpis.remaining_overload_hours, 1)} hrs/yr",
+            "subtext": f"{fmt_num(kpis.remaining_overload_kwh, 0)} kWh unmet (was {fmt_num(kpis.baseline_overload_hours, 1)} hrs)",
             "tone": "ok" if kpis.grid_limit_met else "alert",
         },
         {
             "title": "On-Site Supply Share",
-            "value": f"{max(0.0, 100.0 - kpis.grid_supply_share_pct):.1f}%",
-            "subtext": f"Grid {kpis.grid_supply_share_pct:.1f}% | Solar/BESS {kpis.solar_supply_share_pct:.1f}% | Gen {kpis.generator_supply_share_pct:.1f}%",
+            "value": f"{fmt_num(max(0.0, 100.0 - kpis.grid_supply_share_pct), 1)}%",
+            "subtext": f"Grid {fmt_num(kpis.grid_supply_share_pct, 1)}% | Solar/BESS {fmt_num(kpis.solar_supply_share_pct, 1)}% | Gen {fmt_num(kpis.generator_supply_share_pct, 1)}%",
             "tone": "accent",
         },
         {
             "title": "Storage & Gen Activity",
-            "value": f"{kpis.battery_equivalent_cycles:,.1f} cyc/yr",
-            "subtext": f"BESS Discharged: {kpis.battery_total_discharged_kwh / 1000.0:,.1f} MWh | Gen: {kpis.generator_runtime_hours:,.1f} hrs",
+            "value": f"{fmt_num(kpis.battery_equivalent_cycles, 1)} cyc/yr",
+            "subtext": f"BESS Discharged: {fmt_num(kpis.battery_total_discharged_kwh / 1000.0, 1)} MWh | Gen: {fmt_num(kpis.generator_runtime_hours, 1)} hrs",
             "tone": "default",
         },
     ]
@@ -161,27 +162,27 @@ def _build_kpi_and_status_section(sim_res: CombinedSimulationResult) -> str:
     if kpis.grid_limit_met:
         banner_html = (
             '<div class="status-banner ok">'
-            f"<strong>Grid Limit Met (Zero Overload):</strong> Peak grid demand stays at {kpis.new_grid_peak_kw:,.1f} kW "
-            f"within the {cfg.grid_limit_kw:,.0f} kW contracted capacity across all 15-minute intervals."
+            f"<strong>Grid Limit Met (Zero Overload):</strong> Peak grid demand stays at {fmt_num(kpis.new_grid_peak_kw, 1)} kW "
+            f"within the {fmt_num(cfg.grid_limit_kw, 0)} kW contracted capacity across all 15-minute intervals."
             "</div>"
         )
     else:
         banner_html = (
             '<div class="status-banner warn">'
-            f"<strong>Remaining Grid Overload Detected:</strong> Peak demand reaches {kpis.new_grid_peak_kw:,.1f} kW "
-            f"(+{kpis.remaining_overload_kw:,.1f} kW above the {cfg.grid_limit_kw:,.0f} kW limit, "
-            f"{kpis.remaining_overload_kwh:,.0f} kWh across {kpis.remaining_overload_hours:,.1f} hrs)."
+            f"<strong>Remaining Grid Overload Detected:</strong> Peak demand reaches {fmt_num(kpis.new_grid_peak_kw, 1)} kW "
+            f"(+{fmt_num(kpis.remaining_overload_kw, 1)} kW above the {fmt_num(cfg.grid_limit_kw, 0)} kW limit, "
+            f"{fmt_num(kpis.remaining_overload_kwh, 0)} kWh across {fmt_num(kpis.remaining_overload_hours, 1)} hrs)."
             "</div>"
         )
 
     fin_html = ""
     if fk is not None:
         curr = str(getattr(fk, "currency_code", "EUR") or "EUR")
-        pb_str = f"{fk.payback_years:.1f} yrs" if fk.payback_years is not None else "> 15 yrs / N/A"
-        irr_str = f"{fk.irr_15y_pct:.1f}%" if fk.irr_15y_pct is not None else "N/A"
+        pb_str = f"{fmt_num(fk.payback_years, 1)} yrs" if fk.payback_years is not None else "> 15 yrs / N/A"
+        irr_str = f"{fmt_num(fk.irr_15y_pct, 1)}%" if fk.irr_15y_pct is not None else "N/A"
         fin_cards = [
             {
-                "title": "Net Investment (CAPEX)",
+                "title": "Net CAPEX",
                 "value": format_currency_value(fk.total_capex_eur, curr),
                 "subtext": f"Gross {format_currency_value(fk.gross_capex_eur, curr)} | Avoided Grid -{format_currency_value(fk.avoided_grid_upgrade_capex_eur, curr)}",
                 "tone": "default",
@@ -189,13 +190,13 @@ def _build_kpi_and_status_section(sim_res: CombinedSimulationResult) -> str:
             {
                 "title": "Year-1 Net Savings",
                 "value": f"{format_currency_value(fk.annual_savings_eur, curr, signed=True)}/yr",
-                "subtext": f"New OPEX {format_currency_value(fk.total_annual_opex_eur, curr)} vs. {format_currency_value(fk.baseline_total_opex_eur, curr)}",
+                "subtext": f"New OPEX {format_currency_value(fk.total_annual_opex_eur, curr)} vs. {format_currency_value(fk.baseline_total_opex_eur, curr)} Current Situation",
                 "tone": "ok" if fk.annual_savings_eur > 0 else "alert",
             },
             {
-                "title": "Simple Payback & IRR",
+                "title": "Payback Period & IRR",
                 "value": pb_str,
-                "subtext": f"15-Year IRR: {irr_str} | BCR: {fk.benefit_cost_ratio_15y:.2f}x",
+                "subtext": f"15-Year IRR: {irr_str} | BCR: {fmt_num(fk.benefit_cost_ratio_15y, 2)}x",
                 "tone": "ok" if fk.payback_years is not None else "alert",
             },
             {
@@ -305,21 +306,21 @@ def _build_financial_ledger_and_cashflow_section(
             format_currency_value((fk.baseline_pillar3_metering_eur + fk.baseline_pillar4_taxes_eur) - (fk.combined_pillar3_metering_eur + fk.combined_pillar4_taxes_eur), curr, signed=True),
         ],
         [
-            "Solar PV System (CAPEX & O&M)",
+            "Solar PV System (CAPEX & OPEX)",
             format_currency_value(fk.solar_capex_eur, curr),
             format_currency_value(0.0, curr),
             format_currency_value(fk.solar_om_eur, curr),
             format_currency_value(-fk.solar_om_eur, curr, signed=True),
         ],
         [
-            "Battery Storage BESS (CAPEX & O&M)",
+            "Battery Storage BESS (CAPEX & OPEX)",
             format_currency_value(fk.battery_capex_eur, curr),
             format_currency_value(0.0, curr),
             format_currency_value(fk.battery_om_eur, curr),
             format_currency_value(-fk.battery_om_eur, curr, signed=True),
         ],
         [
-            "Peaking Generator (Fuel & Service)",
+            "Peaking Generator (Fuel & Service OPEX)",
             format_currency_value(fk.generator_capex_eur, curr),
             format_currency_value(0.0, curr),
             format_currency_value(fk.generator_total_opex_eur, curr),
@@ -345,7 +346,7 @@ def _build_financial_ledger_and_cashflow_section(
         '<div class="section page-break">',
         f'<h2 class="section-heading">4. Annual Cost Structure &amp; Component Economics ({esc(curr)})</h2>',
         render_data_table(
-            ["Cost Component", "One-Off CAPEX", "Current (/yr)", "With System (/yr)", "Annual Impact (/yr)"],
+            ["Cost Component", "CAPEX", "Current Situation (/yr)", "With System (/yr)", "Annual Impact (/yr)"],
             cost_rows,
             numeric_cols=(1, 2, 3, 4),
             summary_last_row=True,

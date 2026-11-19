@@ -65,6 +65,12 @@ if getattr(_engine_mod, "ENGINE_VERSION", None) != "13.7":
         if "Combined_sandbox.engine" in _m or "Combined_sandbox.combined_sandbox_engine" in _m:
             del sys.modules[_m]
 from ..combined_sandbox_engine import (
+    USE_EU_NUMBER_FORMAT,
+    PLOTLY_NUMBER_SEPARATORS,
+    get_plotly_separators,
+    curr_prefix,
+    fmt_num,
+    fmt_curr,
     ENGINE_VERSION,
     SOLAR_SITE_PRESETS,
     FUEL_SPECS,

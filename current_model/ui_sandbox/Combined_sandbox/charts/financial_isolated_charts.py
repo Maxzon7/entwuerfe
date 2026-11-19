@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ..combined_sandbox_engine import CombinedSimulationResult
+from ..combined_sandbox_engine import CombinedSimulationResult, get_plotly_separators
 from .financial_overview_charts import _resolve_chart_currency
 
 def create_dso_isolated_breakdown_figure(
@@ -131,6 +131,7 @@ def create_dso_isolated_breakdown_figure(
     fig.update_layout(
         barmode="group",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=height,
         margin=dict(l=45, r=45, t=65, b=70),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -201,6 +202,7 @@ def create_supplier_isolated_breakdown_figure(
     fig.update_layout(
         barmode="group",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=height,
         margin=dict(l=45, r=45, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -282,6 +284,7 @@ def create_solar_isolated_financial_figure(
     fig.update_layout(
         barmode="relative",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=height,
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -358,6 +361,7 @@ def create_battery_isolated_financial_figure(
     fig.update_layout(
         barmode="relative",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=height,
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -425,6 +429,7 @@ def create_generator_isolated_financial_figure(
     fig.update_layout(
         barmode="relative",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=height,
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -448,7 +453,7 @@ def create_tax_isolated_breakdown_figure(
     df = getattr(sim_res, "tax_monthly_df", pd.DataFrame())
     fig = go.Figure()
     if df is None or df.empty:
-        fig.update_layout(template="plotly_dark", height=height, title="No Metering & Tax Data Available")
+        fig.update_layout(template="plotly_dark", separators=get_plotly_separators(), height=height, title="No Metering & Tax Data Available")
         return fig
 
     curr, curr_sym, _ = _resolve_chart_currency(sim_res)
@@ -503,6 +508,7 @@ def create_tax_isolated_breakdown_figure(
     fig.update_layout(
         barmode="group",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=height,
         margin=dict(l=45, r=25, t=60, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",

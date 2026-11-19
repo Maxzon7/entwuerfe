@@ -6,6 +6,7 @@ Pure-Cost Sub-Ledgers with Implied Unit Benchmarks, BESS Repowering, and Isolate
 import streamlit as st
 
 from .state_and_helpers import (
+    fmt_num,
     CombinedSystemConfig,
     CombinedFinancialConfig,
     render_kpi_card,
@@ -91,27 +92,27 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
         # ------------------------------------------------------------------------------
         # 1. SOLAR PV SYSTEM
         # ------------------------------------------------------------------------------
-        sol_badge = f"{deriv.installed_kwp:,.1f} kWp Active" if cur_sys.enable_solar else f"INACTIVE — {_fmt_curr(0, curr)}"
-        with st.expander(f":material/solar_power: Solar Costs ({sol_badge})", expanded=cur_sys.enable_solar):
+        sol_badge = f"{fmt_num(deriv.installed_kwp, 1)} kWp Active" if cur_sys.enable_solar else f"INACTIVE — {_fmt_curr(0, curr)}"
+        with st.expander(f":material/solar_power: Solar CAPEX & OPEX ({sol_badge})", expanded=cur_sys.enable_solar):
             st.info(
-                f":material/info: **Technical Profile:** Installed DC: **{deriv.installed_kwp:,.1f} kWp** "
-                f"| Panels: **{deriv.panel_count:,} x {deriv.panel_wp:.0f} Wp** "
-                f"| AC Inverter Limit: **{deriv.inverter_ac_kw:,.1f} kW**",
+                f":material/info: **Technical Profile:** Installed DC: **{fmt_num(deriv.installed_kwp, 1)} kWp** "
+                f"| Panels: **{fmt_num(deriv.panel_count, 0)} x {fmt_num(deriv.panel_wp, 0)} Wp** "
+                f"| AC Inverter Limit: **{fmt_num(deriv.inverter_ac_kw, 1)} kW**",
             )
             s_in, s_led = st.columns([0.46, 0.54], gap="large")
             with s_in:
                 sol_turnkey = st.number_input(
-                    f"Turnkey Solar Price ({curr}/kWp)",
+                    f"Turnkey Solar CAPEX ({curr}/kWp)",
                     min_value=0.0,
                     max_value=1e10,
                     value=float(cur_fin.solar_turnkey_eur_kwp),
                     step=25.0,
                     key="comb_fin_sol_turnkey",
                     disabled=not cur_sys.enable_solar,
-                    help="Standard all-in price per kWp installed. Ignored if Detailed Breakdown or Lump-Sum CAPEX Override (> 0) is active.",
+                    help="Standard all-in CAPEX per kWp installed. Ignored if Detailed Breakdown or Lump-Sum CAPEX Override (> 0) is active.",
                 )
                 sol_om = st.number_input(
-                    "Annual Maintenance (% of CAPEX/yr)",
+                    "Annual OPEX (% of CAPEX/yr)",
                     min_value=0.0,
                     max_value=25.0,
                     value=float(cur_fin.solar_om_pct_of_capex),
@@ -157,54 +158,54 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                     )
                 with so_2:
                     sol_lump_om = st.number_input(
-                        f"Lump-Sum Annual O&M Override ({curr}/yr, 0 = use %)",
+                        f"Lump-Sum Annual OPEX Override ({curr}/yr, 0 = use %)",
                         min_value=0.0, max_value=1e12, value=float(cur_fin.solar_lump_sum_om_eur_year), step=250.0,
                         key="comb_fin_sol_lump_om", disabled=not cur_sys.enable_solar,
                     )
 
             with s_led:
-                sol_rows = [{"group": f"Upfront Investment (CAPEX — {fk.solar_pricing_mode})"}]
+                sol_rows = [{"group": f"Solar CAPEX ({fk.solar_pricing_mode})"}]
                 if cur_fin.solar_lump_sum_capex_eur > 0.0:
                     sol_rows.append({
                         "cells": [
                             "1.1 Lump-Sum Turnkey Quote (Override)",
-                            f"Exact quote for {deriv.installed_kwp:,.1f} kWp",
+                            f"Exact quote for {fmt_num(deriv.installed_kwp, 1)} kWp",
                             "&mdash;",
                             _fmt_curr(fk.solar_capex_eur, curr, html=True),
                         ]
                     })
                 elif cur_fin.solar_use_detailed_breakdown:
                     sol_rows.extend([
-                        {"cells": ["1.1 Solar Modules", f"{deriv.installed_kwp:,.1f} kWp &times; 1,000 &times; {c_html}{cur_fin.solar_modules_eur_wp:,.2f}", "&mdash;", _fmt_curr(fk.solar_modules_capex_eur, curr, html=True)]},
-                        {"cells": ["1.2 Solar Inverters", f"{deriv.installed_kwp:,.1f} kWp &times; 1,000 &times; {c_html}{cur_fin.solar_inverter_eur_w:,.2f}", "&mdash;", _fmt_curr(fk.solar_inverter_capex_eur, curr, html=True)]},
-                        {"cells": ["1.3 Mounting &amp; Installation", f"{deriv.installed_kwp:,.1f} kWp &times; 1,000 &times; {c_html}{cur_fin.solar_mounting_eur_wp:,.2f}", "&mdash;", _fmt_curr(fk.solar_mounting_capex_eur, curr, html=True)]},
+                        {"cells": ["1.1 Solar Modules", f"{fmt_num(deriv.installed_kwp, 1)} kWp &times; {fmt_num(1000, 0)} &times; {c_html}{fmt_num(cur_fin.solar_modules_eur_wp, 2)}", "&mdash;", _fmt_curr(fk.solar_modules_capex_eur, curr, html=True)]},
+                        {"cells": ["1.2 Solar Inverters", f"{fmt_num(deriv.installed_kwp, 1)} kWp &times; {fmt_num(1000, 0)} &times; {c_html}{fmt_num(cur_fin.solar_inverter_eur_w, 2)}", "&mdash;", _fmt_curr(fk.solar_inverter_capex_eur, curr, html=True)]},
+                        {"cells": ["1.3 Mounting &amp; Installation", f"{fmt_num(deriv.installed_kwp, 1)} kWp &times; {fmt_num(1000, 0)} &times; {c_html}{fmt_num(cur_fin.solar_mounting_eur_wp, 2)}", "&mdash;", _fmt_curr(fk.solar_mounting_capex_eur, curr, html=True)]},
                     ])
                 else:
                     sol_rows.append({
                         "cells": [
                             "1.1 Turnkey Solar PV System",
-                            f"{deriv.installed_kwp:,.1f} kWp &times; {c_html}{cur_fin.solar_turnkey_eur_kwp:,.0f}/kWp",
+                            f"{fmt_num(deriv.installed_kwp, 1)} kWp &times; {c_html}{fmt_num(cur_fin.solar_turnkey_eur_kwp, 0)}/kWp",
                             "&mdash;",
                             _fmt_curr(fk.solar_capex_eur, curr, html=True),
                         ]
                     })
 
                 om_calc_txt = (
-                    "Lump-Sum O&amp;M Override"
+                    "Lump-Sum OPEX Override"
                     if cur_fin.solar_lump_sum_om_eur_year > 0.0
-                    else f"{cur_fin.solar_om_pct_of_capex:.2f}% &times; {_fmt_curr(fk.solar_capex_eur, curr, html=True)}"
+                    else f"{fmt_num(cur_fin.solar_om_pct_of_capex, 2)}% &times; {_fmt_curr(fk.solar_capex_eur, curr, html=True)}"
                 )
                 sol_rows.extend([
-                    {"group": f"Recurring Operating Cost (OPEX — {fk.solar_opex_pricing_mode})"},
-                    {"cells": ["2.1 Annual Maintenance (O&amp;M)", om_calc_txt, _fmt_curr(fk.solar_om_eur / 12.0, curr, html=True), _fmt_curr(fk.solar_om_eur, curr, html=True)]},
+                    {"group": f"Annual Operating Cost (OPEX — {fk.solar_opex_pricing_mode})"},
+                    {"cells": ["2.1 Annual OPEX (O&amp;M)", om_calc_txt, _fmt_curr(fk.solar_om_eur / 12.0, curr, html=True), _fmt_curr(fk.solar_om_eur, curr, html=True)]},
                 ])
                 st.markdown(
                     _render_sub_ledger_html(
                         header_title=f"Solar PV Cost Summary (Total CAPEX: {_fmt_curr(fk.solar_capex_eur, curr, html=True)})",
-                        columns=["Cost Line Item", "Calculation Basis", "Monthly", "One-Off / Annual"],
+                        columns=["Cost Line Item", "Calculation Basis", "Monthly", "CAPEX / Annual OPEX"],
                         rows=sol_rows,
                         footer_cells=[
-                            "= TOTAL ANNUAL SOLAR O&amp;M (OPEX)",
+                            "= TOTAL ANNUAL SOLAR OPEX",
                             f"{_fmt_curr(fk.solar_om_eur / 12.0, curr, html=True)}/mo",
                             f"{_fmt_curr(fk.solar_om_eur, curr, html=True)}/yr",
                         ],
@@ -224,11 +225,11 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
         # 2. BATTERY STORAGE (BESS)
         # ------------------------------------------------------------------------------
         bat_badge = (
-            f"{cur_sys.battery_capacity_kwh:,.0f} kWh / {cur_sys.battery_power_kw:,.0f} kW Active"
+            f"{fmt_num(cur_sys.battery_capacity_kwh, 0)} kWh / {fmt_num(cur_sys.battery_power_kw, 0)} kW Active"
             if cur_sys.enable_battery
             else f"INACTIVE — {_fmt_curr(0, curr)}"
         )
-        with st.expander(f":material/battery_charging_full: Battery Costs ({bat_badge})", expanded=cur_sys.enable_battery):
+        with st.expander(f":material/battery_charging_full: Battery CAPEX & OPEX ({bat_badge})", expanded=cur_sys.enable_battery):
             b_units = int(st.session_state.get("comb_bess_unit_count", 0) or 0)
             b_ukwh = float(st.session_state.get("comb_bess_unit_kwh", 0.0) or 0.0)
             if (b_units <= 0 or b_ukwh <= 0.0) and cur_sys.battery_capacity_kwh > 0.0:
@@ -236,10 +237,10 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
             c_rate = (cur_sys.battery_power_kw / cur_sys.battery_capacity_kwh) if cur_sys.battery_capacity_kwh > 0.0 else 0.0
             dur_h = (cur_sys.battery_capacity_kwh / cur_sys.battery_power_kw) if cur_sys.battery_power_kw > 0.0 else 0.0
             st.info(
-                f":material/info: **Technical Profile:** Gross Capacity: **{cur_sys.battery_capacity_kwh:,.0f} kWh** "
-                f"(**{b_units} x {b_ukwh:,.0f} kWh**) "
-                f"| Inverter Power: **{cur_sys.battery_power_kw:,.1f} kW** "
-                f"| C-Rate: **{c_rate:.2f} C ({dur_h:.1f}h storage)**",
+                f":material/info: **Technical Profile:** Gross Capacity: **{fmt_num(cur_sys.battery_capacity_kwh, 0)} kWh** "
+                f"(**{b_units} x {fmt_num(b_ukwh, 0)} kWh**) "
+                f"| Inverter Power: **{fmt_num(cur_sys.battery_power_kw, 1)} kW** "
+                f"| C-Rate: **{fmt_num(c_rate, 2)} C ({fmt_num(dur_h, 1)}h storage)**",
             )
             b_in, b_led = st.columns([0.46, 0.54], gap="large")
             with b_in:
@@ -262,7 +263,7 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                         key="comb_fin_bat_inv", disabled=not cur_sys.enable_battery,
                     )
                     bat_om = st.number_input(
-                        "Annual Maintenance (% of CAPEX/yr)",
+                        "Annual OPEX (% of CAPEX/yr)",
                         min_value=0.0, max_value=25.0, value=float(cur_fin.battery_om_pct_of_capex), step=0.25,
                         key="comb_fin_bat_om", disabled=not cur_sys.enable_battery,
                     )
@@ -303,32 +304,32 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                     )
                 with bo_2:
                     bat_lump_om = st.number_input(
-                        f"Lump-Sum Annual O&M Override ({curr}/yr, 0 = use %)",
+                        f"Lump-Sum Annual OPEX Override ({curr}/yr, 0 = use %)",
                         min_value=0.0, max_value=1e12, value=float(cur_fin.battery_lump_sum_om_eur_year), step=250.0,
                         key="comb_fin_bat_lump_om", disabled=not cur_sys.enable_battery,
                     )
 
             with b_led:
-                bat_rows = [{"group": f"Upfront Investment (CAPEX — {fk.battery_pricing_mode})"}]
+                bat_rows = [{"group": f"Battery CAPEX ({fk.battery_pricing_mode})"}]
                 if cur_fin.battery_lump_sum_capex_eur > 0.0:
                     bat_rows.append({
                         "cells": [
                             "2.1 Lump-Sum Turnkey Quote (Override)",
-                            f"Exact quote for {cur_sys.battery_capacity_kwh:,.0f} kWh / {cur_sys.battery_power_kw:,.0f} kW",
+                            f"Exact quote for {fmt_num(cur_sys.battery_capacity_kwh, 0)} kWh / {fmt_num(cur_sys.battery_power_kw, 0)} kW",
                             "&mdash;",
                             _fmt_curr(fk.battery_capex_eur, curr, html=True),
                         ]
                     })
                 else:
                     bat_rows.extend([
-                        {"cells": ["2.1 Storage Racks", f"{cur_sys.battery_capacity_kwh:,.0f} kWh &times; {c_html}{cur_fin.battery_capex_eur_kwh:,.0f}/kWh", "&mdash;", _fmt_curr(fk.battery_rack_capex_eur, curr, html=True)]},
-                        {"cells": ["2.2 Bidirectional Inverter (PCS)", f"{cur_sys.battery_power_kw:,.0f} kW &times; {c_html}{cur_fin.battery_capex_eur_kw:,.0f}/kW", "&mdash;", _fmt_curr(fk.battery_inverter_capex_eur, curr, html=True)]},
+                        {"cells": ["2.1 Storage Racks", f"{fmt_num(cur_sys.battery_capacity_kwh, 0)} kWh &times; {c_html}{fmt_num(cur_fin.battery_capex_eur_kwh, 0)}/kWh", "&mdash;", _fmt_curr(fk.battery_rack_capex_eur, curr, html=True)]},
+                        {"cells": ["2.2 Bidirectional Inverter (PCS)", f"{fmt_num(cur_sys.battery_power_kw, 0)} kW &times; {c_html}{fmt_num(cur_fin.battery_capex_eur_kw, 0)}/kW", "&mdash;", _fmt_curr(fk.battery_inverter_capex_eur, curr, html=True)]},
                         {"cells": ["2.3 Installation &amp; BoP", "Fixed Balance of Plant", "&mdash;", _fmt_curr(fk.battery_bop_capex_eur, curr, html=True)]},
                     ])
                 bat_rows.append({
                     "cells": [
                         "<b>= Total Battery CAPEX</b>",
-                        "Upfront Turnkey Investment",
+                        "Battery Turnkey CAPEX",
                         "&mdash;",
                         f"<b>{_fmt_curr(fk.battery_capex_eur, curr, html=True)}</b>",
                     ]
@@ -340,22 +341,22 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                     else "Not planned"
                 )
                 bat_om_desc = (
-                    "Lump-Sum O&amp;M Override"
+                    "Lump-Sum OPEX Override"
                     if cur_fin.battery_lump_sum_om_eur_year > 0.0
-                    else f"{cur_fin.battery_om_pct_of_capex:.2f}% &times; {_fmt_curr(fk.battery_capex_eur, curr, html=True)}"
+                    else f"{fmt_num(cur_fin.battery_om_pct_of_capex, 2)}% &times; {_fmt_curr(fk.battery_capex_eur, curr, html=True)}"
                 )
                 bat_rows.extend([
-                    {"group": "Mid-Life Repowering &amp; Recurring OPEX"},
+                    {"group": "Mid-Life Repowering &amp; Annual OPEX"},
                     {"cells": [f"Planned Cell Repowering (Yr {int(cur_fin.battery_augmentation_year)})", rep_desc, "&mdash;", _fmt_curr(fk.battery_augmentation_eur, curr, html=True)]},
-                    {"cells": [f"Annual Battery Maintenance ({fk.battery_opex_pricing_mode})", bat_om_desc, _fmt_curr(fk.battery_om_eur / 12.0, curr, html=True), _fmt_curr(fk.battery_om_eur, curr, html=True)]},
+                    {"cells": [f"Annual Battery OPEX ({fk.battery_opex_pricing_mode})", bat_om_desc, _fmt_curr(fk.battery_om_eur / 12.0, curr, html=True), _fmt_curr(fk.battery_om_eur, curr, html=True)]},
                 ])
                 st.markdown(
                     _render_sub_ledger_html(
                         header_title=f"Battery Storage Cost Summary (Total CAPEX: {_fmt_curr(fk.battery_capex_eur, curr, html=True)})",
-                        columns=["Cost Line Item", "Calculation Basis", "Monthly", "One-Off / Annual"],
+                        columns=["Cost Line Item", "Calculation Basis", "Monthly", "CAPEX / Annual OPEX"],
                         rows=bat_rows,
                         footer_cells=[
-                            "= TOTAL ANNUAL BATTERY O&amp;M (OPEX)",
+                            "= TOTAL ANNUAL BATTERY OPEX",
                             f"{_fmt_curr(fk.battery_om_eur / 12.0, curr, html=True)}/mo",
                             f"{_fmt_curr(fk.battery_om_eur, curr, html=True)}/yr",
                         ],
@@ -376,12 +377,12 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
         # ------------------------------------------------------------------------------
         # 3. PEAKING GENERATOR
         # ------------------------------------------------------------------------------
-        gen_badge = f"{cur_sys.generator_rated_kw:,.0f} kW {cur_sys.fuel_type} Active" if cur_sys.enable_generator else f"INACTIVE — {_fmt_curr(0, curr)}"
-        with st.expander(f":material/power: Generator Costs ({gen_badge})", expanded=cur_sys.enable_generator):
+        gen_badge = f"{fmt_num(cur_sys.generator_rated_kw, 0)} kW {cur_sys.fuel_type} Active" if cur_sys.enable_generator else f"INACTIVE — {_fmt_curr(0, curr)}"
+        with st.expander(f":material/power: Generator CAPEX & OPEX ({gen_badge})", expanded=cur_sys.enable_generator):
             st.info(
-                f":material/info: **Technical Profile:** Rated Power: **{cur_sys.generator_rated_kw:,.0f} kW** "
+                f":material/info: **Technical Profile:** Rated Power: **{fmt_num(cur_sys.generator_rated_kw, 0)} kW** "
                 f"| Fuel: **{cur_sys.fuel_type}** "
-                f"| Simulated Runtime: **{kpis.generator_runtime_hours:,.1f} hrs/yr** ({kpis.generator_starts_count} starts/yr)",
+                f"| Simulated Runtime: **{fmt_num(kpis.generator_runtime_hours, 1)} hrs/yr** ({kpis.generator_starts_count} starts/yr)",
             )
             gn_in, gn_led = st.columns([0.46, 0.54], gap="large")
             with gn_in:
@@ -394,7 +395,7 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                 g_c1, g_c2 = st.columns(2)
                 with g_c1:
                     gen_capex = st.number_input(
-                        f"Purchase Price ({curr})",
+                        f"Generator CAPEX (Purchase Price, {curr})",
                         min_value=0.0, max_value=1e12, value=float(cur_fin.generator_capex_eur), step=1000.0,
                         key="comb_fin_gen_capex", disabled=not cur_sys.enable_generator,
                     )
@@ -443,12 +444,12 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                 capex_desc = (
                     "Lump-Sum CAPEX Override"
                     if cur_fin.generator_lump_sum_capex_eur > 0.0 and cur_fin.generator_cost_model == "Purchase (CAPEX)"
-                    else ("One-off purchase" if cur_fin.generator_cost_model == "Purchase (CAPEX)" else "Rental mode (CAPEX = 0)")
+                    else ("One-off CAPEX" if cur_fin.generator_cost_model == "Purchase (CAPEX)" else "Rental mode (CAPEX = 0)")
                 )
                 svc_desc = (
                     "Lump-Sum Annual Service Override"
                     if cur_fin.generator_lump_sum_service_opex_eur_year > 0.0
-                    else f"{kpis.generator_runtime_hours:,.1f} hrs &times; {c_html}{cur_fin.generator_maintenance_eur_per_hour:,.2f}/hr"
+                    else f"{fmt_num(kpis.generator_runtime_hours, 1)} hrs &times; {c_html}{fmt_num(cur_fin.generator_maintenance_eur_per_hour, 2)}/hr"
                 )
                 rent_months_label = (
                     f"{int(round(fk.generator_rental_cost_eur / cur_fin.generator_rental_eur_month))} active mos"
@@ -457,16 +458,16 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                 )
                 gen_rows = [
                     {"group": f"Acquisition ({fk.generator_pricing_mode})"},
-                    {"cells": ["3.1 Purchase Investment (CAPEX)", capex_desc, "&mdash;", _fmt_curr(fk.generator_capex_eur, curr, html=True)]},
-                    {"cells": ["3.2 Rental / Leasing Fee (OPEX)", f"{rent_months_label} &times; {c_html}{cur_fin.generator_rental_eur_month:,.0f}/mo (if rental &amp; no override)", _fmt_curr(fk.generator_rental_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_rental_cost_eur, curr, html=True)]},
+                    {"cells": ["3.1 Generator Purchase (CAPEX)", capex_desc, "&mdash;", _fmt_curr(fk.generator_capex_eur, curr, html=True)]},
+                    {"cells": ["3.2 Rental / Leasing Fee (OPEX)", f"{rent_months_label} &times; {c_html}{fmt_num(cur_fin.generator_rental_eur_month, 0)}/mo (if rental &amp; no override)", _fmt_curr(fk.generator_rental_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_rental_cost_eur, curr, html=True)]},
                     {"group": f"Annual Fuel &amp; Operating Service ({fk.generator_opex_pricing_mode})"},
-                    {"cells": [f"3.3 Fuel Consumption ({cur_sys.fuel_type})", f"{kpis.generator_fuel_total:,.1f} {kpis.generator_fuel_unit} &times; {c_html}{cur_fin.fuel_price_eur_per_unit:,.2f}", _fmt_curr(fk.generator_fuel_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_fuel_cost_eur, curr, html=True)]},
-                    {"cells": ["3.4 Service &amp; Maintenance", svc_desc, _fmt_curr(fk.generator_maintenance_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_maintenance_cost_eur, curr, html=True)]},
+                    {"cells": [f"3.3 Fuel Consumption ({cur_sys.fuel_type})", f"{fmt_num(kpis.generator_fuel_total, 1)} {kpis.generator_fuel_unit} &times; {c_html}{fmt_num(cur_fin.fuel_price_eur_per_unit, 2)}", _fmt_curr(fk.generator_fuel_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_fuel_cost_eur, curr, html=True)]},
+                    {"cells": ["3.4 Service &amp; Maintenance (OPEX)", svc_desc, _fmt_curr(fk.generator_maintenance_cost_eur / 12.0, curr, html=True), _fmt_curr(fk.generator_maintenance_cost_eur, curr, html=True)]},
                 ]
                 st.markdown(
                     _render_sub_ledger_html(
-                        header_title=f"Generator Cost Summary (Generated: {kpis.generator_to_load_kwh:,.0f} kWh/yr)",
-                        columns=["Cost Line Item", "Calculation Basis", "Monthly", "One-Off / Annual"],
+                        header_title=f"Generator Cost Summary (Generated: {fmt_num(kpis.generator_to_load_kwh, 0)} kWh/yr)",
+                        columns=["Cost Line Item", "Calculation Basis", "Monthly", "CAPEX / Annual OPEX"],
                         rows=gen_rows,
                         footer_cells=[
                             "= TOTAL GENERATOR ANNUAL OPEX",
@@ -488,13 +489,13 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
         # ------------------------------------------------------------------------------
         # 4. SAVED GRID UPGRADE CREDIT
         # ------------------------------------------------------------------------------
-        with st.expander(":material/savings: Saved Grid Upgrade Cost", expanded=bool(cur_fin.avoided_grid_upgrade_capex_eur > 0.0 or cur_fin.strict_grid_congestion_mode)):
+        with st.expander(":material/savings: Avoided Grid Upgrade Credit (CAPEX Offset)", expanded=bool(cur_fin.avoided_grid_upgrade_capex_eur > 0.0 or cur_fin.strict_grid_congestion_mode)):
             av_in, av_led = st.columns([0.46, 0.54], gap="large")
             with av_in:
                 if cur_fin.strict_grid_congestion_mode:
                     st.session_state["comb_fin_avoided_upgrade"] = 0.0
                 avoided_upgrade = st.number_input(
-                    f"One-Off Avoided Grid Upgrade Cost ({curr})",
+                    f"Avoided Grid Upgrade CAPEX ({curr})",
                     min_value=0.0,
                     max_value=1e12,
                     value=0.0 if cur_fin.strict_grid_congestion_mode else float(cur_fin.avoided_grid_upgrade_capex_eur),
@@ -510,13 +511,13 @@ def _render_subtab6_2_hardware_costs(sim_res, cur_sys: CombinedSystemConfig, cur
                     )
             with av_led:
                 st.info(
-                    f":material/info: **Net Project Investment Summary:**  \n"
+                    f":material/info: **Net CAPEX Summary:**  \n"
                     f"Gross Hardware CAPEX (**{_fmt_curr(fk.gross_capex_eur, curr)}**) &minus; Avoided Grid Upgrade (**{_fmt_curr(fk.avoided_grid_upgrade_capex_eur, curr)}**) "
-                    f"= **Net Turnkey Investment: {_fmt_curr(fk.total_capex_eur, curr)}**."
+                    f"= **Net CAPEX: {_fmt_curr(fk.total_capex_eur, curr)}**."
                 )
 
         hw_submitted = st.form_submit_button(
-            "Apply Hardware & Operating Costs",
+            "Apply Hardware CAPEX & OPEX",
             icon=":material/check_circle:",
             type="primary",
             use_container_width=True,
@@ -583,13 +584,13 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
         if not cur_sys.enable_solar:
             st.info(":material/info: Enable **Solar PV** in Tab 2 or Tab 5 to view isolated solar economics.")
         else:
-            sol_pb = f"{fk.solar_isolated_payback_years:.1f} yrs" if fk.solar_isolated_payback_years is not None else "N/A"
+            sol_pb = f"{fmt_num(fk.solar_isolated_payback_years, 1)} yrs" if fk.solar_isolated_payback_years is not None else "N/A"
             sc1, sc2, sc3, sc4 = st.columns(4)
             with sc1:
                 render_kpi_card(
-                    title="Solar Investment (CAPEX)",
+                    title="Solar CAPEX",
                     value=_fmt_curr(fk.solar_capex_eur, curr),
-                    subtext=f"{sim_res.solar_derivation.installed_kwp:,.1f} kWp installed",
+                    subtext=f"{fmt_num(sim_res.solar_derivation.installed_kwp, 1)} kWp installed",
                     status="default",
                 )
             with sc2:
@@ -601,16 +602,16 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
                 )
             with sc3:
                 render_kpi_card(
-                    title="Net Annual Solar Value (after O&M)",
+                    title="Net Annual Solar Value (after OPEX)",
                     value=f"{_fmt_curr(fk.solar_net_value_y1_eur, curr, signed=True)} / yr",
-                    subtext=f"Annual O&M: {_fmt_curr(fk.solar_om_eur, curr)}/yr",
+                    subtext=f"Annual OPEX: {_fmt_curr(fk.solar_om_eur, curr)}/yr",
                     status="ok" if fk.solar_net_value_y1_eur > 0 else "alert",
                 )
             with sc4:
                 render_kpi_card(
-                    title="Isolated Payback & LCOE",
-                    value=f"{sol_pb} | {_curr_prefix(curr)}{fk.solar_isolated_lcoe_eur_kwh:,.3f}/kWh",
-                    subtext=f"15Y annualized cost across {kpis.solar_total_generation_kwh / 1000.0:,.1f} MWh/yr",
+                    title="Payback Period & LCOE",
+                    value=f"{sol_pb} | {_curr_prefix(curr)}{fmt_num(fk.solar_isolated_lcoe_eur_kwh, 3)}/kWh",
+                    subtext=f"15Y annualized cost across {fmt_num(kpis.solar_total_generation_kwh / 1000.0, 1)} MWh/yr",
                     status="ok" if fk.solar_isolated_payback_years is not None else "default",
                 )
             st.plotly_chart(
@@ -626,13 +627,13 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
         if not cur_sys.enable_battery:
             st.info(":material/info: Enable **Battery Storage** in Tab 3 or Tab 5 to view isolated battery economics.")
         else:
-            bat_pb = f"{fk.battery_isolated_payback_years:.1f} yrs" if fk.battery_isolated_payback_years is not None else "N/A"
+            bat_pb = f"{fmt_num(fk.battery_isolated_payback_years, 1)} yrs" if fk.battery_isolated_payback_years is not None else "N/A"
             bc1, bc2, bc3, bc4 = st.columns(4)
             with bc1:
                 render_kpi_card(
-                    title="Battery Investment (CAPEX)",
+                    title="Battery CAPEX",
                     value=_fmt_curr(fk.battery_capex_eur, curr),
-                    subtext=f"{cur_sys.battery_capacity_kwh:,.0f} kWh / {cur_sys.battery_power_kw:,.0f} kW",
+                    subtext=f"{fmt_num(cur_sys.battery_capacity_kwh, 0)} kWh / {fmt_num(cur_sys.battery_power_kw, 0)} kW",
                     status="default",
                 )
             with bc2:
@@ -646,14 +647,14 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
                 render_kpi_card(
                     title="Net Annual Battery Value",
                     value=f"{_fmt_curr(fk.battery_net_value_y1_eur, curr, signed=True)} / yr",
-                    subtext=f"O&M: {_fmt_curr(fk.battery_om_eur, curr)} | Grid charge: {_fmt_curr(fk.battery_grid_charge_cost_y1_eur, curr)}",
+                    subtext=f"OPEX: {_fmt_curr(fk.battery_om_eur, curr)} | Grid charge: {_fmt_curr(fk.battery_grid_charge_cost_y1_eur, curr)}",
                     status="ok" if fk.battery_net_value_y1_eur > 0 else "alert",
                 )
             with bc4:
                 render_kpi_card(
-                    title="Isolated Payback & Cost/kWh",
-                    value=f"{bat_pb} | {_curr_prefix(curr)}{fk.battery_cost_per_discharged_kwh:,.3f}/kWh",
-                    subtext=f"{kpis.battery_total_discharged_kwh:,.0f} kWh discharged ({kpis.battery_equivalent_cycles:.1f} cyc/yr)",
+                    title="Payback Period & Cost/kWh",
+                    value=f"{bat_pb} | {_curr_prefix(curr)}{fmt_num(fk.battery_cost_per_discharged_kwh, 3)}/kWh",
+                    subtext=f"{fmt_num(kpis.battery_total_discharged_kwh, 0)} kWh discharged ({fmt_num(kpis.battery_equivalent_cycles, 1)} cyc/yr)",
                     status="ok" if fk.battery_isolated_payback_years is not None else "default",
                 )
             st.plotly_chart(
@@ -669,34 +670,34 @@ def _render_isolated_component_economics_fragment(sim_res, cur_sys: CombinedSyst
         if not cur_sys.enable_generator:
             st.info(":material/info: Enable **Generator** in Tab 4 or Tab 5 to view isolated generator economics.")
         else:
-            gen_pb = f"{fk.generator_isolated_payback_years:.1f} yrs" if fk.generator_isolated_payback_years is not None else "N/A"
+            gen_pb = f"{fmt_num(fk.generator_isolated_payback_years, 1)} yrs" if fk.generator_isolated_payback_years is not None else "N/A"
             gc1, gc2, gc3, gc4 = st.columns(4)
             with gc1:
                 render_kpi_card(
                     title="Generator CAPEX & Model",
                     value=_fmt_curr(fk.generator_capex_eur, curr),
-                    subtext=f"{cur_sys.generator_rated_kw:,.0f} kW ({sim_res.financial_config.generator_cost_model if sim_res.financial_config else 'Purchase'})",
+                    subtext=f"{fmt_num(cur_sys.generator_rated_kw, 0)} kW ({sim_res.financial_config.generator_cost_model if sim_res.financial_config else 'Purchase'})",
                     status="default",
                 )
             with gc2:
                 render_kpi_card(
                     title="Attributed Peak & Penalty Savings",
                     value=f"{_fmt_curr(fk.generator_peak_savings_y1_eur, curr)} / yr",
-                    subtext=f"{kpis.generator_total_generation_kwh:,.0f} kWh generated in {kpis.generator_runtime_hours:,.1f} hrs",
+                    subtext=f"{fmt_num(kpis.generator_total_generation_kwh, 0)} kWh generated in {fmt_num(kpis.generator_runtime_hours, 1)} hrs",
                     status="ok" if fk.generator_peak_savings_y1_eur > 0 else "default",
                 )
             with gc3:
                 render_kpi_card(
-                    title="Annual Fuel, Service & Rental",
+                    title="Annual OPEX (Fuel, Service & Rental)",
                     value=f"{_fmt_curr(fk.generator_total_opex_eur, curr)} / yr",
-                    subtext=f"Fuel: {_fmt_curr(fk.generator_fuel_cost_eur, curr)} | O&M: {_fmt_curr(fk.generator_maintenance_cost_eur, curr)} | Rent: {_fmt_curr(fk.generator_rental_cost_eur, curr)}",
+                    subtext=f"Fuel: {_fmt_curr(fk.generator_fuel_cost_eur, curr)} | Service: {_fmt_curr(fk.generator_maintenance_cost_eur, curr)} | Rent: {_fmt_curr(fk.generator_rental_cost_eur, curr)}",
                     status="default",
                 )
             with gc4:
                 render_kpi_card(
                     title="Net Impact & Cost/kWh",
-                    value=f"{_fmt_curr(fk.generator_net_value_y1_eur, curr, signed=True)} | {_curr_prefix(curr)}{fk.generator_cost_per_kwh:,.3f}/kWh",
-                    subtext=f"Isolated payback: {gen_pb}",
+                    value=f"{_fmt_curr(fk.generator_net_value_y1_eur, curr, signed=True)} | {_curr_prefix(curr)}{fmt_num(fk.generator_cost_per_kwh, 3)}/kWh",
+                    subtext=f"Payback period: {gen_pb}",
                     status="ok" if fk.generator_net_value_y1_eur >= 0 else "alert",
                 )
             st.plotly_chart(

@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ..combined_sandbox_engine import CombinedSimulationResult
+from ..combined_sandbox_engine import CombinedSimulationResult, fmt_curr, fmt_num, get_plotly_separators
 
 
 def _resolve_chart_currency(sim_res: CombinedSimulationResult) -> tuple[str, str, str]:
@@ -116,6 +116,7 @@ def create_financial_cost_comparison_figure(
     fig.update_layout(
         barmode="stack",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=420,
         margin=dict(l=55, r=25, t=75, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -211,7 +212,7 @@ def create_financial_tco_trajectory_figure(
             line_dash="dot",
             line_color="#22C55E",
             line_width=1.8,
-            annotation_text=f"Break-Even: {fk.payback_years:.1f} yrs",
+            annotation_text=f"Break-Even: {fmt_num(fk.payback_years, 1)} yrs",
             annotation_position="top left",
             annotation_font=dict(color="#22C55E", size=11),
         )
@@ -268,6 +269,7 @@ def create_financial_tco_trajectory_figure(
 
     fig.update_layout(
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=560,
         margin=dict(l=60, r=40, t=105, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -400,7 +402,7 @@ def create_financial_waterfall_bridge_figure(
             x=x_labels,
             y=y_vals,
             textposition="outside",
-            text=[f"{curr_sym}{abs(v):,.0f}" if m != "total" else f"{curr_sym}{fk.total_annual_opex_eur:,.0f}" for v, m in zip(y_vals, measures)],
+            text=[fmt_curr(abs(v), curr) if m != "total" else fmt_curr(fk.total_annual_opex_eur, curr) for v, m in zip(y_vals, measures)],
             connector={"line": {"color": "rgba(148, 163, 184, 0.4)"}},
             decreasing={"marker": {"color": "#22C55E"}},
             increasing={"marker": {"color": "#EF4444"}},
@@ -411,6 +413,7 @@ def create_financial_waterfall_bridge_figure(
 
     fig.update_layout(
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=430,
         margin=dict(l=55, r=25, t=75, b=65),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -492,6 +495,7 @@ def create_financial_monthly_cashflow_figure(
     fig.update_layout(
         barmode="group",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=430,
         margin=dict(l=55, r=55, t=75, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -593,6 +597,7 @@ def create_monthly_grid_bill_progression_figure(
         fig.update_layout(
             barmode="group",
             template="plotly_dark",
+        separators=get_plotly_separators(),
             height=380,
             margin=dict(l=50, r=50, t=70, b=40),
             paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -671,6 +676,7 @@ def create_monthly_grid_bill_progression_figure(
     fig.update_layout(
         barmode="stack",
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=380,
         margin=dict(l=50, r=20, t=70, b=40),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",

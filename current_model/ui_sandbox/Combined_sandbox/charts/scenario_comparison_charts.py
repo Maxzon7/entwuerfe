@@ -15,6 +15,7 @@ from plotly.subplots import make_subplots
 from ..combined_sandbox_engine import (
     CombinedScenarioSnapshot,
     SCENARIO_COMPARISON_PALETTE,
+    get_plotly_separators,
     normalize_scenario_list,
 )
 
@@ -79,6 +80,7 @@ def _apply_comparison_layout(
     """Applies unified dark Plotly theme, spacing, and top horizontal legend without title overlap."""
     layout_kwargs = dict(
         template="plotly_dark",
+        separators=get_plotly_separators(),
         height=height,
         margin=dict(l=margin_l, r=25, t=max(margin_t, 120), b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",

@@ -2,6 +2,14 @@
 Modular Engine Subpackage for Combined System Sandbox (`ui_sandbox/Combined_sandbox/engine/`).
 """
 
+from .formatting import (
+    USE_EU_NUMBER_FORMAT,
+    PLOTLY_NUMBER_SEPARATORS,
+    get_plotly_separators,
+    curr_prefix,
+    fmt_num,
+    fmt_curr,
+)
 from .models_and_presets import (
     ENGINE_VERSION,
     MONTH_NAMES_SHORT,

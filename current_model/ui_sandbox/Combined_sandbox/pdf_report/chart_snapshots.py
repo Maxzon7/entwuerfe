@@ -20,6 +20,7 @@ from ..combined_sandbox_engine import (
     CombinedScenarioSnapshot,
     CombinedSimulationResult,
     compute_system_utilization_diagnostics,
+    get_plotly_separators,
 )
 from ..charts.dispatch_and_mix_charts import (
     compute_focus_range_for_timestamps,
@@ -63,6 +64,7 @@ def apply_print_light_theme(fig: go.Figure, height: Optional[int] = None) -> go.
     out = copy.deepcopy(fig)
     layout_updates: Dict[str, Any] = {
         "template": "plotly_white",
+        "separators": get_plotly_separators(),
         "paper_bgcolor": "rgba(255, 255, 255, 0.0)",
         "plot_bgcolor": "rgba(255, 255, 255, 0.92)",
         "font": dict(color="#1E293B", family="Arial, Helvetica, sans-serif", size=11),

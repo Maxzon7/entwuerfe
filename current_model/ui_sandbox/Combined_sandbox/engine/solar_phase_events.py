@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from .bess_phase_events import _find_true_runs, _format_clock_span
+from .formatting import fmt_num
 from .models_and_presets import CombinedSimulationResult
 
 
@@ -81,7 +82,7 @@ def _format_solar_allocation_split(
 
 def _fmt_kwh_label(kwh: float) -> str:
     """Formats concise chart peak labels (`kWh`)."""
-    return f"{kwh:,.0f} kWh" if kwh >= 10.0 else f"{kwh:,.1f} kWh"
+    return f"{fmt_num(kwh, 0)} kWh" if kwh >= 10.0 else f"{fmt_num(kwh, 1)} kWh"
 
 
 def _build_solar_phase_core(
@@ -155,7 +156,7 @@ def _build_solar_phase_core(
         peak_prod_kw = float(p_prod[peak_prod_idx])
 
         if standalone_mode:
-            prod_suffix = f" | Day/Phase: <b>{prod_kwh:,.1f} kWh</b> ({dur_h:.2f} h, {span_str})"
+            prod_suffix = f" | Day/Phase: <b>{fmt_num(prod_kwh, 1)} kWh</b> ({fmt_num(dur_h, 2)} h, {span_str})"
             spec_y = (prod_kwh / float(installed_kwp)) if installed_kwp > 0.0 else 0.0
             rows.append(
                 {
@@ -175,7 +176,7 @@ def _build_solar_phase_core(
             bess_kwh = float(np.sum(p_bess[s:e]) * dt)
             exp_kwh = float(np.sum(p_exp[s:e]) * dt)
             split_str = _format_solar_allocation_split(prod_kwh, dir_kwh, bess_kwh, exp_kwh)
-            prod_suffix = f" | Phase: <b>{prod_kwh:,.1f} kWh</b> ({dur_h:.2f} h, {split_str})"
+            prod_suffix = f" | Phase: <b>{fmt_num(prod_kwh, 1)} kWh</b> ({fmt_num(dur_h, 2)} h, {split_str})"
             rows.append(
                 {
                     "Phase #": phase_num,
@@ -193,8 +194,8 @@ def _build_solar_phase_core(
                 }
             )
 
-        pot_suffix = f" | Day/Phase: <b>{pot_kwh:,.1f} kWh</b>" + (
-            f" (Clipped -{clip_kwh:,.1f} kWh)" if clip_kwh >= 0.1 else ""
+        pot_suffix = f" | Day/Phase: <b>{fmt_num(pot_kwh, 1)} kWh</b>" + (
+            f" (Clipped -{fmt_num(clip_kwh, 1)} kWh)" if clip_kwh >= 0.1 else ""
         )
         for k in range(s, e):
             if p_prod[k] > threshold_kw:
@@ -207,10 +208,10 @@ def _build_solar_phase_core(
             prod_ly.append(peak_prod_kw)
             prod_ltxt.append(_fmt_kwh_label(prod_kwh))
             prod_lhover.append(
-                f"Solar Production Phase: <b>{prod_kwh:,.1f} kWh</b><br>"
-                f"{start_ts.strftime('%Y-%m-%d %H:%M')} - {end_ts.strftime('%H:%M')} ({dur_h:.2f} h)<br>"
-                f"Peak: {peak_prod_kw:,.1f} kW AC"
-                + (f" | Clipped: {clip_kwh:,.1f} kWh" if clip_kwh >= 0.1 else "")
+                f"Solar Production Phase: <b>{fmt_num(prod_kwh, 1)} kWh</b><br>"
+                f"{start_ts.strftime('%Y-%m-%d %H:%M')} - {end_ts.strftime('%H:%M')} ({fmt_num(dur_h, 2)} h)<br>"
+                f"Peak: {fmt_num(peak_prod_kw, 1)} kW AC"
+                + (f" | Clipped: {fmt_num(clip_kwh, 1)} kWh" if clip_kwh >= 0.1 else "")
             )
 
     # Contiguous Solar Direct runs for coupled Power Flow hover & labels
@@ -227,7 +228,7 @@ def _build_solar_phase_core(
             d_peak_kw = float(p_dir[d_peak_idx])
             d_span = _format_clock_span(d_start, d_end)
 
-            d_suffix = f" | Phase: <b>{d_kwh:,.1f} kWh</b> ({d_dur_h:.2f} h, {d_span})"
+            d_suffix = f" | Phase: <b>{fmt_num(d_kwh, 1)} kWh</b> ({fmt_num(d_dur_h, 2)} h, {d_span})"
             for k in range(ds, de):
                 if p_dir[k] > threshold_kw:
                     direct_hover_suffix[k] = d_suffix
@@ -237,9 +238,9 @@ def _build_solar_phase_core(
                 dir_ly.append(d_peak_kw)
                 dir_ltxt.append(_fmt_kwh_label(d_kwh))
                 dir_lhover.append(
-                    f"Solar Direct Phase: <b>{d_kwh:,.1f} kWh</b><br>"
-                    f"{d_start.strftime('%Y-%m-%d %H:%M')} - {d_end.strftime('%H:%M')} ({d_dur_h:.2f} h)<br>"
-                    f"Peak Direct: {d_peak_kw:,.1f} kW"
+                    f"Solar Direct Phase: <b>{fmt_num(d_kwh, 1)} kWh</b><br>"
+                    f"{d_start.strftime('%Y-%m-%d %H:%M')} - {d_end.strftime('%H:%M')} ({fmt_num(d_dur_h, 2)} h)<br>"
+                    f"Peak Direct: {fmt_num(d_peak_kw, 1)} kW"
                 )
 
     events_df = pd.DataFrame(rows, columns=cols) if rows else empty_df

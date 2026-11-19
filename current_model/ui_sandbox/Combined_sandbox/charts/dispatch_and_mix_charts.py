@@ -15,6 +15,8 @@ from ..combined_sandbox_engine import (
     extract_bess_phase_events,
     extract_combined_solar_phase_events,
     extract_standalone_solar_phase_events,
+    fmt_num,
+    get_plotly_separators,
 )
 from .phase_overlay_helpers import (
     build_bess_phase_label_traces,
@@ -137,13 +139,13 @@ def create_consumption_baseline_figure(
         line_dash="dash",
         line_color="#94A3B8",
         line_width=1.1,
-        annotation_text=f"Average Load: {avg_kw:,.1f} kW",
+        annotation_text=f"Average Load: {fmt_num(avg_kw, 1)} kW",
         annotation_position="bottom right",
         annotation_font=dict(color="#94A3B8", size=11),
     )
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_dark", separators=get_plotly_separators(),
         height=440,
         margin=dict(l=55, r=25, t=45, b=45),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -670,7 +672,7 @@ def create_combined_dispatch_soc_figure(
         fig.update_xaxes(range=eff_initial_range)
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_dark", separators=get_plotly_separators(),
         height=height,
         hovermode="x unified",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -729,7 +731,7 @@ def create_supply_mix_pie_figure(
 
     ann_mwh = diag.annual_consumption_kwh / 1000.0
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_dark", separators=get_plotly_separators(),
         height=height,
         margin=dict(l=15, r=15, t=42, b=15),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -750,7 +752,7 @@ def create_supply_mix_pie_figure(
         ),
         annotations=[
             dict(
-                text=f"<b>{ann_mwh:,.0f} MWh</b><br><span style='font-size:11px;color:#94A3B8;'>Annual Load</span>",
+                text=f"<b>{fmt_num(ann_mwh, 0)} MWh</b><br><span style='font-size:11px;color:#94A3B8;'>Annual Load</span>",
                 x=0.5,
                 y=0.5,
                 font=dict(size=14, color="#F8FAFC"),
@@ -840,7 +842,7 @@ def create_component_utilization_bars_figure(
 
     fig.update_layout(
         barmode="stack",
-        template="plotly_dark",
+        template="plotly_dark", separators=get_plotly_separators(),
         height=height,
         margin=dict(l=15, r=20, t=58, b=42),
         paper_bgcolor="rgba(15, 23, 42, 0.0)",
@@ -924,7 +926,7 @@ def create_solar_production_figure(
 
     focus_range = initial_range or compute_focus_range_for_timestamps(ts, pot_arr if len(pot_arr) > 0 else prod_arr, days=7.0)
     fig.update_layout(
-        template="plotly_dark", height=height, hovermode="x unified",
+        template="plotly_dark", height=height, hovermode="x unified", separators=get_plotly_separators(),
         paper_bgcolor="rgba(15, 23, 42, 0.0)", plot_bgcolor="rgba(15, 23, 42, 0.45)",
         margin=dict(l=55, r=25, t=65, b=45),
         title=dict(text="Solar Production vs. Unclipped Solar Potential (kW)", font=dict(size=14, color="#F8FAFC"), x=0.0),

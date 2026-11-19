@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from .state_and_helpers import (
+    fmt_num,
     CombinedSystemConfig,
     CombinedFinancialConfig,
     SystemUtilizationDiagnostics,
@@ -253,19 +254,19 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
         bat_capex = fin_kpis.battery_capex_eur
         if bat_om > 0.5 * max(1.0, gross_sav) or (gross_sav > 0 and fin_kpis.annual_savings_eur <= 0):
             st.warning(
-                f"**:material/lightbulb: Economic Bottleneck Alert:** Annual battery maintenance ({_fmt_curr(bat_om, curr)}/yr from {_fmt_curr(bat_capex, curr)} CAPEX) "
-                f"consumes {(bat_om / max(1.0, gross_sav) * 100.0):.1f}% of the gross electricity bill savings ({_fmt_curr(gross_sav, curr)}/yr). "
+                f"**:material/lightbulb: Economic Bottleneck Alert:** Annual battery OPEX ({_fmt_curr(bat_om, curr)}/yr from {_fmt_curr(bat_capex, curr)} CAPEX) "
+                f"consumes {fmt_num(bat_om / max(1.0, gross_sav) * 100.0, 1)}% of the gross electricity bill savings ({_fmt_curr(gross_sav, curr)}/yr). "
                 f"Tip: Selecting an 80% battery capacity target or pairing a smaller battery with a peaking generator "
-                f"substantially reduces CAPEX and O&M costs."
+                f"substantially reduces CAPEX and OPEX."
             )
 
     st.markdown("##### :material/account_balance: Financial Summary")
 
     # Single Clear 4-Card Headline Overview
     fk1, fk2, fk3, fk4 = st.columns(4)
-    pb_str = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
-    disc_pb_str = f"{fin_kpis.discounted_payback_years:.1f} yrs" if fin_kpis.discounted_payback_years is not None else "N/A"
-    irr_str = f"{fin_kpis.irr_15y_pct:.1f}%" if fin_kpis.irr_15y_pct is not None else "N/A"
+    pb_str = f"{fmt_num(fin_kpis.payback_years, 1)} yrs" if fin_kpis.payback_years is not None else "N/A"
+    disc_pb_str = f"{fmt_num(fin_kpis.discounted_payback_years, 1)} yrs" if fin_kpis.discounted_payback_years is not None else "N/A"
+    irr_str = f"{fmt_num(fin_kpis.irr_15y_pct, 1)}%" if fin_kpis.irr_15y_pct is not None else "N/A"
     with fk1:
         capex_subtext = (
             f"Gross: {_fmt_curr(fin_kpis.gross_capex_eur, curr)} | Avoided: -{_fmt_curr(fin_kpis.avoided_grid_upgrade_capex_eur, curr)}"
@@ -273,7 +274,7 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
             else f"Solar: {_fmt_curr(fin_kpis.solar_capex_eur, curr)} | Battery: {_fmt_curr(fin_kpis.battery_capex_eur, curr)} | Gen: {_fmt_curr(fin_kpis.generator_capex_eur, curr)}"
         )
         render_kpi_card(
-            title="Total Investment",
+            title="Total CAPEX",
             value=_fmt_curr(fin_kpis.total_capex_eur, curr),
             subtext=capex_subtext,
             status="default",
@@ -282,21 +283,21 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
         render_kpi_card(
             title="Annual Savings (Year 1)",
             value=f"{_fmt_curr(fin_kpis.annual_savings_eur, curr, signed=True)} / yr",
-            subtext=f"New annual cost: {_fmt_curr(fin_kpis.total_annual_opex_eur, curr)} vs. {_fmt_curr(fin_kpis.baseline_total_opex_eur, curr)} current",
+            subtext=f"New OPEX: {_fmt_curr(fin_kpis.total_annual_opex_eur, curr)} vs. {_fmt_curr(fin_kpis.baseline_total_opex_eur, curr)} current situation",
             status="ok" if fin_kpis.annual_savings_eur > 0 else "alert",
         )
     with fk3:
         render_kpi_card(
             title="Payback Period",
             value=pb_str,
-            subtext="Years until investment is paid back",
+            subtext="Years until CAPEX is paid back",
             status="ok" if fin_kpis.payback_years is not None else "alert",
         )
     with fk4:
         render_kpi_card(
             title="15-Year Net Profit",
             value=_fmt_curr(fin_kpis.tco_15y_savings_eur, curr, signed=True),
-            subtext=f"15Y total cost: {_fmt_curr(fin_kpis.tco_15y_combined_eur, curr)} vs. {_fmt_curr(fin_kpis.tco_15y_baseline_eur, curr)} current",
+            subtext=f"15Y total cost: {_fmt_curr(fin_kpis.tco_15y_combined_eur, curr)} vs. {_fmt_curr(fin_kpis.tco_15y_baseline_eur, curr)} current situation",
             status="ok" if fin_kpis.tco_15y_savings_eur > 0 else "alert",
         )
 
@@ -304,12 +305,12 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
         if fin_kpis.grid_congestion_compliant:
             st.success(
                 f":material/verified: **Strict Grid Congestion Lock Active — Compliant:** "
-                f"System stays within the {cur_sys.grid_limit_kw:,.0f} kW contracted limit all year without grid upgrades."
+                f"System stays within the {fmt_num(cur_sys.grid_limit_kw, 0)} kW contracted limit all year without grid upgrades."
             )
         else:
             st.error(
                 f":material/gpp_bad: **Strict Grid Congestion Lock Active — Violation:** "
-                f"Grid peak reaches {sim_res.kpis.new_grid_peak_kw:,.1f} kW (+{fin_kpis.grid_congestion_breach_kw:,.1f} kW over limit). "
+                f"Grid peak reaches {fmt_num(sim_res.kpis.new_grid_peak_kw, 1)} kW (+{fmt_num(fin_kpis.grid_congestion_breach_kw, 1)} kW over limit). "
                 f"Avoided grid upgrade CAPEX is locked at {_fmt_curr(0, curr)}; adjust Battery, Generator, or Load Mix in Tab 5."
             )
 
@@ -320,15 +321,15 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
             {"cells": ["1. Electricity Supply (Retailer)", _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar1_supply_eur, curr, html=True), _fmt_curr(fin_kpis.combined_pillar1_supply_eur, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar1_supply_eur - fin_kpis.combined_pillar1_supply_eur, curr, signed=True, html=True)], "highlight": "#22C55E" if fin_kpis.baseline_pillar1_supply_eur > fin_kpis.combined_pillar1_supply_eur else None},
             {"cells": ["2. Grid Network (DSO &amp; Peaks)", f"-{_fmt_curr(fin_kpis.avoided_grid_upgrade_capex_eur, curr, html=True)}" if fin_kpis.avoided_grid_upgrade_capex_eur > 0 else _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar2_dso_eur, curr, html=True), _fmt_curr(fin_kpis.combined_pillar2_dso_eur, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar2_dso_eur - fin_kpis.combined_pillar2_dso_eur, curr, signed=True, html=True)], "highlight": "#22C55E" if fin_kpis.baseline_pillar2_dso_eur > fin_kpis.combined_pillar2_dso_eur else None},
             {"cells": ["3. Metering &amp; Statutory Taxes", _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur, curr, html=True), _fmt_curr(fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur, curr, html=True), _fmt_curr((fin_kpis.baseline_pillar3_metering_eur + fin_kpis.baseline_pillar4_taxes_eur) - (fin_kpis.combined_pillar3_metering_eur + fin_kpis.combined_pillar4_taxes_eur), curr, signed=True, html=True)], "highlight": "#22C55E" if fin_kpis.baseline_pillar4_taxes_eur > fin_kpis.combined_pillar4_taxes_eur else None},
-            {"cells": ["4. Solar PV System (O&amp;M)", _fmt_curr(fin_kpis.solar_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.solar_om_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.solar_om_eur, curr, html=True)}" if fin_kpis.solar_om_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.solar_om_eur > 0 else None},
-            {"cells": ["5. Battery Storage BESS (O&amp;M)", _fmt_curr(fin_kpis.battery_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.battery_om_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.battery_om_eur, curr, html=True)}" if fin_kpis.battery_om_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.battery_om_eur > 0 else None},
-            {"cells": ["6. Peaking Generator (Fuel &amp; Service)", _fmt_curr(fin_kpis.generator_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.generator_total_opex_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.generator_total_opex_eur, curr, html=True)}" if fin_kpis.generator_total_opex_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.generator_total_opex_eur > 0 else None},
+            {"cells": ["4. Solar PV System (OPEX)", _fmt_curr(fin_kpis.solar_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.solar_om_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.solar_om_eur, curr, html=True)}" if fin_kpis.solar_om_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.solar_om_eur > 0 else None},
+            {"cells": ["5. Battery Storage BESS (OPEX)", _fmt_curr(fin_kpis.battery_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.battery_om_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.battery_om_eur, curr, html=True)}" if fin_kpis.battery_om_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.battery_om_eur > 0 else None},
+            {"cells": ["6. Peaking Generator (Fuel &amp; Service OPEX)", _fmt_curr(fin_kpis.generator_capex_eur, curr, html=True), _fmt_curr(0, curr, html=True), _fmt_curr(fin_kpis.generator_total_opex_eur, curr, html=True), f"-{_fmt_curr(fin_kpis.generator_total_opex_eur, curr, html=True)}" if fin_kpis.generator_total_opex_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#EF4444" if fin_kpis.generator_total_opex_eur > 0 else None},
             {"cells": ["7. Solar Export Feed-in Revenue", _fmt_curr(0, curr, html=True), _fmt_curr(0, curr, html=True), f"-{_fmt_curr(fin_kpis.solar_export_revenue_eur, curr, html=True)}" if fin_kpis.solar_export_revenue_eur > 0 else _fmt_curr(0, curr, html=True), f"+{_fmt_curr(fin_kpis.solar_export_revenue_eur, curr, html=True)}" if fin_kpis.solar_export_revenue_eur > 0 else _fmt_curr(0, curr, html=True)], "highlight": "#22C55E" if fin_kpis.solar_export_revenue_eur > 0 else None},
         ]
         st.markdown(
             _render_sub_ledger_html(
-                header_title="Costs &amp; Savings by Component",
-                columns=["Cost Component", "One-Off CAPEX", "Current (/yr)", "With System (/yr)", "Annual Impact (/yr)"],
+                header_title="CAPEX &amp; Annual OPEX by Component",
+                columns=["Cost Component", "CAPEX", "Current Situation (/yr)", "With System (/yr)", "Annual Impact (/yr)"],
                 rows=comp_rows,
                 footer_cells=[
                     "= TOTAL COMBINED SYSTEM (NET)",
@@ -347,18 +348,18 @@ def _render_subtab6_3_executive_overview(sim_res, cur_sys: CombinedSystemConfig,
     # Secondary Technical & Contract Indicators (collapsed by default for clean screen clarity)
     with st.expander(":material/analytics: Additional Financial & Contract Indicators (NPV, IRR, LCOE & Contract Split)", expanded=False):
         cong_val = (
-            f"Compliant (0 breach mos, Peak {sim_res.kpis.new_grid_peak_kw:,.1f} <= {cur_sys.grid_limit_kw:,.0f} kW)"
+            f"Compliant (0 breach mos, Peak {fmt_num(sim_res.kpis.new_grid_peak_kw, 1)} <= {fmt_num(cur_sys.grid_limit_kw, 0)} kW)"
             if fin_kpis.grid_congestion_compliant
-            else f"Breach (+{fin_kpis.grid_congestion_breach_kw:,.1f} kW across {fin_kpis.grid_congestion_breach_months} mos)"
+            else f"Breach (+{fmt_num(fin_kpis.grid_congestion_breach_kw, 1)} kW across {fin_kpis.grid_congestion_breach_months} mos)"
         )
         ind_df = pd.DataFrame([
-            {"Indicator": "Discounted Payback", "Value": disc_pb_str, "Notes": f"Break-even discounted at {cur_fin.discount_rate_pct:.1f}% p.a."},
-            {"Indicator": "15-Year NPV & IRR", "Value": f"{_fmt_curr(fin_kpis.npv_15y_eur, curr, signed=True)} | IRR: {irr_str}", "Notes": f"Discounted net present value at {cur_fin.discount_rate_pct:.1f}%"},
-            {"Indicator": "15-Year Benefit-Cost Ratio (BCR)", "Value": f"{fin_kpis.benefit_cost_ratio_15y:.2f}x", "Notes": "Discounted 15-year savings divided by Net CAPEX"},
-            {"Indicator": "On-Site Energy Cost vs. Grid", "Value": f"{c_pref}{fin_kpis.system_lcoe_eur_kwh:,.3f} / kWh", "Notes": f"Effective grid rate: {c_pref}{fin_kpis.effective_blended_grid_rate_eur_kwh:,.3f} / kWh"},
-            {"Indicator": "Peak Shaving Cost Efficiency", "Value": f"{_fmt_curr(fin_kpis.annualized_cost_per_shaved_kw_eur, curr)} / kW/yr", "Notes": f"Peak demand reduced by {sim_res.kpis.peak_reduction_kw:,.1f} kW"},
-            {"Indicator": "DSO Contract Savings (Isolated)", "Value": f"{_fmt_curr(fin_kpis.dso_savings_eur, curr, signed=True)} / yr ({fin_kpis.dso_savings_pct:+.1f}%)", "Notes": f"New DSO grid bill: {_fmt_curr(fin_kpis.combined_pillar2_dso_eur, curr)}/yr"},
-            {"Indicator": "Supplier Commodity Savings (Isolated)", "Value": f"{_fmt_curr(fin_kpis.supplier_savings_eur, curr, signed=True)} / yr ({fin_kpis.supplier_savings_pct:+.1f}%)", "Notes": f"New energy bill: {_fmt_curr(fin_kpis.combined_pillar1_supply_eur, curr)}/yr"},
+            {"Indicator": "Discounted Payback Period", "Value": disc_pb_str, "Notes": f"Break-even discounted at {fmt_num(cur_fin.discount_rate_pct, 1)}% p.a."},
+            {"Indicator": "15-Year NPV & IRR", "Value": f"{_fmt_curr(fin_kpis.npv_15y_eur, curr, signed=True)} | IRR: {irr_str}", "Notes": f"Discounted net present value at {fmt_num(cur_fin.discount_rate_pct, 1)}%"},
+            {"Indicator": "15-Year Benefit-Cost Ratio (BCR)", "Value": f"{fmt_num(fin_kpis.benefit_cost_ratio_15y, 2)}x", "Notes": "Discounted 15-year savings divided by Net CAPEX"},
+            {"Indicator": "On-Site Energy Cost vs. Grid", "Value": f"{c_pref}{fmt_num(fin_kpis.system_lcoe_eur_kwh, 3)} / kWh", "Notes": f"Effective grid rate: {c_pref}{fmt_num(fin_kpis.effective_blended_grid_rate_eur_kwh, 3)} / kWh"},
+            {"Indicator": "Peak Shaving Cost Efficiency", "Value": f"{_fmt_curr(fin_kpis.annualized_cost_per_shaved_kw_eur, curr)} / kW/yr", "Notes": f"Peak demand reduced by {fmt_num(sim_res.kpis.peak_reduction_kw, 1)} kW"},
+            {"Indicator": "DSO Contract Savings (Isolated)", "Value": f"{_fmt_curr(fin_kpis.dso_savings_eur, curr, signed=True)} / yr ({fmt_num(fin_kpis.dso_savings_pct, 1, signed=True)}%)", "Notes": f"New DSO grid bill: {_fmt_curr(fin_kpis.combined_pillar2_dso_eur, curr)}/yr"},
+            {"Indicator": "Supplier Commodity Savings (Isolated)", "Value": f"{_fmt_curr(fin_kpis.supplier_savings_eur, curr, signed=True)} / yr ({fmt_num(fin_kpis.supplier_savings_pct, 1, signed=True)}%)", "Notes": f"New energy bill: {_fmt_curr(fin_kpis.combined_pillar1_supply_eur, curr)}/yr"},
             {"Indicator": "Grid Congestion Compliance", "Value": cong_val, "Notes": "Checks whether all 12 monthly peaks stay within contracted grid limit"},
         ])
         st.dataframe(ind_df, use_container_width=True, hide_index=True)
@@ -493,7 +494,7 @@ def render_subtab6_financials(sim_res) -> None:
     # 3 Structured Financial Inner Sub-Tabs
     fin_tabs = st.tabs([
         ":material/receipt_long: 1. Electricity Bill",
-        ":material/precision_manufacturing: 2. Hardware & Running Costs",
+        ":material/precision_manufacturing: 2. Hardware CAPEX & OPEX",
         ":material/analytics: 3. 15-Year Overview",
     ])
 

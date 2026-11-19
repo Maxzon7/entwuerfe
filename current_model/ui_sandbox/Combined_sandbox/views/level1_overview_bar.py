@@ -5,6 +5,7 @@ Level 1 Top System Overview Bar view (Contracted Grid Limit + Global Module Swit
 import streamlit as st
 
 from .state_and_helpers import (
+    fmt_num,
     LoadSeries2025,
     CombinedSystemConfig,
 )
@@ -50,9 +51,9 @@ def render_level1_overview_bar(load_series: LoadSeries2025, load_label: str) -> 
         with c_peak:
             st.metric(
                 label="Peak Demand",
-                value=f"{orig_peak_kw:,.1f} kW",
+                value=f"{fmt_num(orig_peak_kw, 1)} kW",
                 delta=(
-                    f"+{overload_kw:,.1f} kW above Grid Limit"
+                    f"+{fmt_num(overload_kw, 1)} kW above Grid Limit"
                     if overload_kw > 0.05
                     else "Within Grid Limit"
                 ),

@@ -10,6 +10,8 @@ import streamlit as st
 
 from .state_and_helpers import (
     DEFAULT_POWERFLOW_COLORS,
+    fmt_num,
+    fmt_curr,
     render_kpi_card,
     create_combined_dispatch_soc_figure,
     build_combined_verification_excel_bytes,
@@ -149,26 +151,26 @@ def _render_bess_phase_log_expander(sim_res) -> None:
         k1, k2, k3, k4 = st.columns(4)
         k1.metric(
             "Window Discharge (AC)",
-            f"{win['discharge_kwh']:,.1f} kWh",
-            delta=f"{len(dis_df)} phases | Peak {win['peak_discharge_kw']:,.1f} kW",
+            f"{fmt_num(win['discharge_kwh'], 1)} kWh",
+            delta=f"{len(dis_df)} phases | Peak {fmt_num(win['peak_discharge_kw'], 1)} kW",
             delta_color="off",
         )
         k2.metric(
             "Largest Single Discharge",
-            f"{max_dis_kwh:,.1f} kWh",
-            delta=f"{max_dis_h:.2f} h event",
+            f"{fmt_num(max_dis_kwh, 1)} kWh",
+            delta=f"{fmt_num(max_dis_h, 2)} h event",
             delta_color="off",
         )
         k3.metric(
             "Window Charge (AC)",
-            f"{win['charge_total_kwh']:,.1f} kWh",
-            delta=f"{len(chg_df)} phases | Solar {solar_pct:.0f}%",
+            f"{fmt_num(win['charge_total_kwh'], 1)} kWh",
+            delta=f"{len(chg_df)} phases | Solar {fmt_num(solar_pct, 0)}%",
             delta_color="off",
         )
         k4.metric(
             "Largest Single Charge",
-            f"{max_chg_kwh:,.1f} kWh",
-            delta=f"{max_chg_h:.2f} h event",
+            f"{fmt_num(max_chg_kwh, 1)} kWh",
+            delta=f"{fmt_num(max_chg_h, 2)} h event",
             delta_color="off",
         )
 
@@ -243,26 +245,26 @@ def _render_solar_phase_log_expander(sim_res) -> None:
         k1, k2, k3, k4 = st.columns(4)
         k1.metric(
             "Window Solar Production (AC)",
-            f"{win['production_kwh']:,.1f} kWh",
-            delta=f"{len(df_win)} phases | Peak {win['peak_production_kw']:,.1f} kW",
+            f"{fmt_num(win['production_kwh'], 1)} kWh",
+            delta=f"{len(df_win)} phases | Peak {fmt_num(win['peak_production_kw'], 1)} kW",
             delta_color="off",
         )
         k2.metric(
             "Window Direct Load Use",
-            f"{win['direct_kwh']:,.1f} kWh",
-            delta=f"{dir_share:.0f}% direct | Peak {win['peak_direct_kw']:,.1f} kW",
+            f"{fmt_num(win['direct_kwh'], 1)} kWh",
+            delta=f"{fmt_num(dir_share, 0)}% direct | Peak {fmt_num(win['peak_direct_kw'], 1)} kW",
             delta_color="off",
         )
         k3.metric(
             "To Battery / Grid Export",
-            f"{win['to_battery_kwh']:,.1f} / {win['export_kwh']:,.1f} kWh",
-            delta=f"Clipped: {win['clipped_kwh']:,.1f} kWh",
+            f"{fmt_num(win['to_battery_kwh'], 1)} / {fmt_num(win['export_kwh'], 1)} kWh",
+            delta=f"Clipped: {fmt_num(win['clipped_kwh'], 1)} kWh",
             delta_color="off",
         )
         k4.metric(
             "Peak Solar Production Day",
-            f"{max_day_kwh:,.1f} kWh",
-            delta=f"{max_day_h:.2f} h daylight",
+            f"{fmt_num(max_day_kwh, 1)} kWh",
+            delta=f"{fmt_num(max_day_h, 2)} h daylight",
             delta_color="off",
         )
 
@@ -467,25 +469,25 @@ def render_level3_permanent_master_output(sim_res) -> None:
     mk1, mk2, mk3, mk4 = st.columns(4)
     with mk1:
         limit_status = (
-            f"Grid Limit ({kpis.grid_limit_kw:,.0f} kW) Met"
+            f"Grid Limit ({fmt_num(kpis.grid_limit_kw, 0)} kW) Met"
             if kpis.grid_limit_met
-            else f"Exceeds Limit by {kpis.remaining_overload_kw:,.1f} kW"
+            else f"Exceeds Limit by {fmt_num(kpis.remaining_overload_kw, 1)} kW"
         )
         render_kpi_card(
             title="Grid Peak Demand",
-            value=f"{kpis.original_peak_kw:,.1f} → {kpis.new_grid_peak_kw:,.1f} kW",
-            subtext=f"{limit_status} (-{kpis.peak_reduction_kw:,.1f} kW shaved)",
+            value=f"{fmt_num(kpis.original_peak_kw, 1)} → {fmt_num(kpis.new_grid_peak_kw, 1)} kW",
+            subtext=f"{limit_status} (-{fmt_num(kpis.peak_reduction_kw, 1)} kW shaved)",
             status="ok" if kpis.grid_limit_met else "alert",
         )
 
     with mk2:
         render_kpi_card(
             title="Remaining Overload",
-            value=f"{kpis.remaining_overload_hours:,.1f} hrs | {kpis.remaining_overload_kwh:,.0f} kWh",
+            value=f"{fmt_num(kpis.remaining_overload_hours, 1)} hrs | {fmt_num(kpis.remaining_overload_kwh, 0)} kWh",
             subtext=(
-                f"0.0 hrs remaining (Before: {kpis.baseline_overload_hours:,.1f} hrs)"
+                f"{fmt_num(0.0, 1)} hrs remaining (Before: {fmt_num(kpis.baseline_overload_hours, 1)} hrs)"
                 if kpis.remaining_overload_hours == 0.0
-                else f"{kpis.overload_eliminated_pct:.1f}% of {kpis.baseline_overload_hours:,.1f} hrs eliminated"
+                else f"{fmt_num(kpis.overload_eliminated_pct, 1)}% of {fmt_num(kpis.baseline_overload_hours, 1)} hrs eliminated"
             ),
             status="ok" if kpis.remaining_overload_hours == 0.0 else "alert",
         )
@@ -494,35 +496,34 @@ def render_level3_permanent_master_output(sim_res) -> None:
         render_kpi_card(
             title="Energy Supply Split",
             value=(
-                f"Grid {kpis.grid_supply_share_pct:.0f}% | "
-                f"Solar {kpis.solar_direct_share_pct:.0f}% | "
-                f"Bat {kpis.battery_discharge_share_pct:.0f}% | "
-                f"Gen {kpis.generator_supply_share_pct:.0f}%"
+                f"Grid {fmt_num(kpis.grid_supply_share_pct, 0)}% | "
+                f"Solar {fmt_num(kpis.solar_direct_share_pct, 0)}% | "
+                f"Bat {fmt_num(kpis.battery_discharge_share_pct, 0)}% | "
+                f"Gen {fmt_num(kpis.generator_supply_share_pct, 0)}%"
             ),
-            subtext=f"Annual Consumption: {kpis.annual_consumption_kwh:,.0f} kWh",
+            subtext=f"Annual Consumption: {fmt_num(kpis.annual_consumption_kwh, 0)} kWh",
             status="default",
         )
 
     with mk4:
         if cfg.enable_financials and fin_kpis is not None:
-            pb_txt = f"{fin_kpis.payback_years:.1f} yrs" if fin_kpis.payback_years is not None else "N/A"
+            pb_txt = f"{fmt_num(fin_kpis.payback_years, 1)} yrs" if fin_kpis.payback_years is not None else "N/A"
             c_code = str(getattr(fin_kpis, "currency_code", "EUR") or "EUR")
-            c_sym = "€" if c_code == "EUR" else (f"{c_code} " if c_code == "ARS" else "$")
             render_kpi_card(
                 title="System Operation & Financials",
-                value=f"{c_sym}{fin_kpis.annual_savings_eur:,.0f}/yr | {pb_txt}",
+                value=f"{fmt_curr(fin_kpis.annual_savings_eur, c_code, signed=True)}/yr | {pb_txt}",
                 subtext=(
-                    f"BESS: {kpis.battery_equivalent_cycles:.1f} cyc | "
-                    f"Gen: {kpis.generator_runtime_hours:,.1f} hrs ({kpis.generator_fuel_total:,.0f} {kpis.generator_fuel_unit})"
+                    f"BESS: {fmt_num(kpis.battery_equivalent_cycles, 1)} cyc | "
+                    f"Gen: {fmt_num(kpis.generator_runtime_hours, 1)} hrs ({fmt_num(kpis.generator_fuel_total, 0)} {kpis.generator_fuel_unit})"
                 ),
                 status="ok" if fin_kpis.annual_savings_eur > 0 else "default",
             )
         else:
             render_kpi_card(
                 title="System Operation",
-                value=f"{kpis.battery_equivalent_cycles:.1f} cyc | {kpis.generator_runtime_hours:,.1f} hrs",
+                value=f"{fmt_num(kpis.battery_equivalent_cycles, 1)} cyc | {fmt_num(kpis.generator_runtime_hours, 1)} hrs",
                 subtext=(
-                    f"Gen Fuel: {kpis.generator_fuel_total:,.0f} {kpis.generator_fuel_unit} "
+                    f"Gen Fuel: {fmt_num(kpis.generator_fuel_total, 0)} {kpis.generator_fuel_unit} "
                     f"({kpis.generator_starts_count} starts/yr)"
                 ),
                 status="default",

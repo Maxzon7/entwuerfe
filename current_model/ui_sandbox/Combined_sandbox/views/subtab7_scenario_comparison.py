@@ -22,6 +22,7 @@ from .state_and_helpers import (
     render_kpi_card,
     _load_fingerprint,
     _physical_sys_tuple,
+    fmt_num,
     format_currency_value,
     build_baseline_tariff_fingerprint,
     capture_scenario_snapshot,
@@ -47,17 +48,17 @@ from .subtab6_isolated_pillars import _render_sub_ledger_html
 def _hardware_badge(snap: CombinedScenarioSnapshot) -> str:
     """Formats a concise hardware summary badge for a saved snapshot card."""
     cfg = snap.system_config
-    parts = [f"Grid Limit {cfg.grid_limit_kw:,.0f} kW"]
+    parts = [f"Grid Limit {fmt_num(cfg.grid_limit_kw, 0)} kW"]
     if cfg.enable_solar:
-        parts.append(f"PV {snap.solar_derivation.installed_kwp:,.1f} kWp")
+        parts.append(f"PV {fmt_num(snap.solar_derivation.installed_kwp, 1)} kWp")
     else:
         parts.append("PV Off")
     if cfg.enable_battery:
-        parts.append(f"BESS {cfg.battery_capacity_kwh:,.0f} kWh / {cfg.battery_power_kw:,.0f} kW")
+        parts.append(f"BESS {fmt_num(cfg.battery_capacity_kwh, 0)} kWh / {fmt_num(cfg.battery_power_kw, 0)} kW")
     else:
         parts.append("BESS Off")
     if cfg.enable_generator:
-        parts.append(f"Gen {cfg.generator_rated_kw:,.0f} kW ({cfg.fuel_type})")
+        parts.append(f"Gen {fmt_num(cfg.generator_rated_kw, 0)} kW ({cfg.fuel_type})")
     else:
         parts.append("Gen Off")
     return " | ".join(parts)
@@ -106,17 +107,17 @@ def _render_scenario_scorecard_column(slot_id: str, snap: CombinedScenarioSnapsh
         st.caption(_hardware_badge(snap))
 
         if has_fin and fk is not None:
-            pb_str = f"{fk.payback_years:.1f} yrs" if fk.payback_years is not None else "N/A"
-            irr_str = f"{fk.irr_15y_pct:.1f}%" if fk.irr_15y_pct is not None else "N/A"
+            pb_str = f"{fmt_num(fk.payback_years, 1)} yrs" if fk.payback_years is not None else "N/A"
+            irr_str = f"{fmt_num(fk.irr_15y_pct, 1)}%" if fk.irr_15y_pct is not None else "N/A"
             f1, f2 = st.columns(2)
             with f1:
                 render_kpi_card(
-                    title="Total Investment",
+                    title="Total CAPEX",
                     value=format_currency_value(fk.total_capex_eur, curr),
                     subtext=(
                         f"Avoided grid upgrade: -{format_currency_value(fk.avoided_grid_upgrade_capex_eur, curr)}"
                         if fk.avoided_grid_upgrade_capex_eur > 0
-                        else "Net upfront system cost"
+                        else "Net system CAPEX"
                     ),
                     status="default",
                 )
@@ -124,7 +125,7 @@ def _render_scenario_scorecard_column(slot_id: str, snap: CombinedScenarioSnapsh
                 render_kpi_card(
                     title="Annual Savings (Year 1)",
                     value=f"{format_currency_value(fk.annual_savings_eur, curr, signed=True)} / yr",
-                    subtext=f"New cost: {format_currency_value(fk.total_annual_opex_eur, curr)}/yr",
+                    subtext=f"New Annual OPEX: {format_currency_value(fk.total_annual_opex_eur, curr)}/yr",
                     status="ok" if fk.annual_savings_eur > 0 else "alert",
                 )
             f3, f4 = st.columns(2)
@@ -147,33 +148,33 @@ def _render_scenario_scorecard_column(slot_id: str, snap: CombinedScenarioSnapsh
         with t1:
             render_kpi_card(
                 title="Grid Peak Demand",
-                value=f"{kp.original_peak_kw:,.1f} → {kp.new_grid_peak_kw:,.1f} kW",
-                subtext=f"Limit {kp.grid_limit_kw:,.0f} kW (-{kp.peak_reduction_kw:,.1f} kW shaved)",
+                value=f"{fmt_num(kp.original_peak_kw, 1)} → {fmt_num(kp.new_grid_peak_kw, 1)} kW",
+                subtext=f"Limit {fmt_num(kp.grid_limit_kw, 0)} kW (-{fmt_num(kp.peak_reduction_kw, 1)} kW shaved)",
                 status="ok" if kp.grid_limit_met else "alert",
             )
         with t2:
             render_kpi_card(
                 title="Remaining Overload",
-                value=f"{kp.remaining_overload_hours:,.1f} hrs | {kp.remaining_overload_kwh:,.0f} kWh",
-                subtext="0.0 hrs remaining" if kp.remaining_overload_hours <= 0.05 else f"{kp.overload_eliminated_pct:.1f}% eliminated",
+                value=f"{fmt_num(kp.remaining_overload_hours, 1)} hrs | {fmt_num(kp.remaining_overload_kwh, 0)} kWh",
+                subtext=f"{fmt_num(0.0, 1)} hrs remaining" if kp.remaining_overload_hours <= 0.05 else f"{fmt_num(kp.overload_eliminated_pct, 1)}% eliminated",
                 status="ok" if kp.remaining_overload_hours <= 0.05 else "alert",
             )
         t3, t4 = st.columns(2)
         with t3:
             render_kpi_card(
                 title="Electricity Supply Split",
-                value=f"Grid {ut.grid_direct_pct:.0f}% | Solar {ut.solar_direct_pct:.0f}%",
-                subtext=f"Battery {ut.battery_discharge_pct:.0f}% | Generator {ut.generator_direct_pct:.0f}%",
+                value=f"Grid {fmt_num(ut.grid_direct_pct, 0)}% | Solar {fmt_num(ut.solar_direct_pct, 0)}%",
+                subtext=f"Battery {fmt_num(ut.battery_discharge_pct, 0)}% | Generator {fmt_num(ut.generator_direct_pct, 0)}%",
                 status="default",
             )
         with t4:
             render_kpi_card(
                 title="System Operation",
-                value=f"{kp.battery_equivalent_cycles:.1f} cyc | {kp.generator_runtime_hours:,.1f} hrs",
+                value=f"{fmt_num(kp.battery_equivalent_cycles, 1)} cyc | {fmt_num(kp.generator_runtime_hours, 1)} hrs",
                 subtext=(
-                    f"Gen fuel: {kp.generator_fuel_total:,.0f} {kp.generator_fuel_unit}"
+                    f"Gen fuel: {fmt_num(kp.generator_fuel_total, 0)} {kp.generator_fuel_unit}"
                     if snap.system_config.enable_generator
-                    else f"On-site supply: {max(0.0, 100.0 - ut.grid_direct_pct):.1f}%"
+                    else f"On-site supply: {fmt_num(max(0.0, 100.0 - ut.grid_direct_pct), 1)}%"
                 ),
                 status="default",
             )
@@ -210,12 +211,12 @@ def _render_executive_winner_and_kpis(
             onsite_winner = snap_a if onsite_a >= onsite_b else snap_b
             st.success(
                 f":material/emoji_events: **Side-by-Side Comparison Summary (Financials Off):**  \n"
-                f"- **Lowest Grid Peak:** **{peak_winner.name}** ({peak_winner.kpis.new_grid_peak_kw:,.1f} kW)  \n"
-                f"- **Highest On-Site Supply:** **{onsite_winner.name}** ({max(onsite_a, onsite_b):.1f}%)  \n"
+                f"- **Lowest Grid Peak:** **{peak_winner.name}** ({fmt_num(peak_winner.kpis.new_grid_peak_kw, 1)} kW)  \n"
+                f"- **Highest On-Site Supply:** **{onsite_winner.name}** ({fmt_num(max(onsite_a, onsite_b), 1)}%)  \n"
                 f"- **Grid Compliance:** **{ov_summary}**"
             )
             st.info(
-                ":material/info: **Financials Off:** Enable **Financials** in the top bar and re-save a scenario to compare investment cost, savings, and payback."
+                ":material/info: **Financials Off:** Enable **Financials** in the top bar and re-save a scenario to compare CAPEX, OPEX savings, and payback period."
             )
         else:
             curr_a = str(snap_a.financial_config.currency_code or "EUR")
@@ -230,8 +231,8 @@ def _render_executive_winner_and_kpis(
                 st.success(
                     f":material/emoji_events: **Comparison Summary:**  \n"
                     f"- **Best 15-Year Cost / Profit:** **{tco_winner.name}** ({format_currency_value(tco_winner.financial_kpis.tco_15y_combined_eur, curr_a)} total cost)  \n"
-                    f"- **Lowest Upfront Cost:** **{capex_winner.name}** ({format_currency_value(capex_winner.financial_kpis.total_capex_eur, curr_a)})  \n"
-                    f"- **Fastest Payback:** **{pb_winner_txt}** | **Grid Limit:** **{ov_summary}**"
+                    f"- **Lowest CAPEX:** **{capex_winner.name}** ({format_currency_value(capex_winner.financial_kpis.total_capex_eur, curr_a)})  \n"
+                    f"- **Fastest Payback Period:** **{pb_winner_txt}** | **Grid Limit:** **{ov_summary}**"
                 )
             else:
                 st.warning(
@@ -508,34 +509,34 @@ def _render_comparison_ledger(
             d_tco = float(bwl_inc["delta_tco_15y_savings_eur"])
             never_pb = bool(bwl_inc.get("never_pays_back", d_cap > 0.5 and d_sav <= 1.0))
             if bwl_inc["incremental_payback_years"] is not None:
-                inc_pb = f"{bwl_inc['incremental_payback_years']:.1f} yrs"
-                pb_sub = "Time for extra savings to repay extra cost"
+                inc_pb = f"{fmt_num(bwl_inc['incremental_payback_years'], 1)} yrs"
+                pb_sub = "Time for extra savings to repay extra CAPEX"
             elif never_pb:
                 inc_pb = "Never"
-                pb_sub = f"{low_n[:24]} is cheaper upfront & saves more"
+                pb_sub = f"{low_n[:24]} has lower CAPEX & saves more"
             else:
                 inc_pb = "> 15 yrs (N/A)"
-                pb_sub = "Extra upfront cost / extra yearly savings"
+                pb_sub = "Extra CAPEX / extra annual savings"
             banner_fn = st.success if bwl_inc["is_upgrade_value_accretive"] else st.info
             with st.container(border=True):
                 st.markdown(f"##### :material/balance: Head-to-Head Comparison: {high_n} vs. {low_n}")
-                st.caption("Direct comparison between the two saved options (this compares them against each other, not against doing nothing).")
+                st.caption("Direct comparison between the two saved options (this compares them against each other, not against the Current Situation).")
                 banner_fn(f"**{bwl_inc['verdict_title']}** — {bwl_inc['verdict_text']}", icon=":material/insights:")
                 m1, m2, m3, m4 = st.columns(4)
                 with m1:
                     render_kpi_card(
-                        title="Upfront Cost Difference",
+                        title="CAPEX Difference",
                         value=format_currency_value(d_cap, inc_curr, signed=True),
                         subtext=(
-                            f"{high_n[:22]} costs more than {low_n[:22]}"
+                            f"{high_n[:22]} CAPEX is higher than {low_n[:22]}"
                             if d_cap > 0.5
-                            else "Both options have the same upfront cost"
+                            else "Both options have the same CAPEX"
                         ),
                         status="default",
                     )
                 with m2:
                     render_kpi_card(
-                        title="Yearly Savings Difference",
+                        title="Annual Savings Difference",
                         value=f"{format_currency_value(d_sav, inc_curr, signed=True)}/yr",
                         subtext=(
                             f"{high_n[:22]} saves more/yr than {low_n[:22]}"
@@ -546,7 +547,7 @@ def _render_comparison_ledger(
                     )
                 with m3:
                     render_kpi_card(
-                        title="Payback on Extra Cost",
+                        title="Incremental Payback Period",
                         value=inc_pb,
                         subtext=pb_sub,
                         status="ok" if (bwl_inc["incremental_payback_years"] is not None and bwl_inc["incremental_payback_years"] <= 10.0) else "default",
@@ -728,20 +729,20 @@ def render_subtab7_scenario_comparison(
                         if getattr(snap.system_config, "enable_financials", False):
                             s_curr = str(snap.financial_config.currency_code or "EUR")
                             fk_s = snap.financial_kpis
-                            pb_s = f"{fk_s.payback_years:.1f} yrs" if fk_s.payback_years is not None else "N/A"
+                            pb_s = f"{fmt_num(fk_s.payback_years, 1)} yrs" if fk_s.payback_years is not None else "N/A"
                             st.markdown(
                                 f"**Net CAPEX:** {format_currency_value(fk_s.total_capex_eur, s_curr)} | "
                                 f"**Y1 Savings:** {format_currency_value(fk_s.annual_savings_eur, s_curr, signed=True)}/yr | "
-                                f"**Payback:** {pb_s} | "
+                                f"**Payback Period:** {pb_s} | "
                                 f"**15Y TCO:** {format_currency_value(fk_s.tco_15y_combined_eur, s_curr)}"
                             )
                         else:
                             kp_s = snap.kpis
                             onsite_s = max(0.0, 100.0 - float(snap.utilization_diagnostics.grid_direct_pct))
                             st.markdown(
-                                f"**Grid Peak:** {kp_s.new_grid_peak_kw:,.1f} kW | "
-                                f"**Overload:** {kp_s.remaining_overload_hours:,.1f} hrs | "
-                                f"**On-Site Share:** {onsite_s:.1f}% | "
+                                f"**Grid Peak:** {fmt_num(kp_s.new_grid_peak_kw, 1)} kW | "
+                                f"**Overload:** {fmt_num(kp_s.remaining_overload_hours, 1)} hrs | "
+                                f"**On-Site Share:** {fmt_num(onsite_s, 1)}% | "
                                 f"**Financials:** Off"
                             )
                     else:

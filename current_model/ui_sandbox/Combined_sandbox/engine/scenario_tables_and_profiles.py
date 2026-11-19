@@ -16,6 +16,7 @@ from .models_and_presets import (
     CombinedScenarioSnapshot,
     CombinedSimulationResult,
 )
+from .formatting import curr_prefix, fmt_curr, fmt_num
 from .scenario_comparison_engine import (
     normalize_scenario_list,
     format_currency_value,
@@ -25,7 +26,7 @@ from .scenario_comparison_engine import (
 
 def _curr_prefix(currency_code: str = "EUR") -> str:
     """Returns compact currency prefix (`€`, `$`, or `<ISO> `)."""
-    return "€" if currency_code == "EUR" else ("$" if currency_code == "USD" else f"{currency_code} ")
+    return curr_prefix(currency_code)
 
 
 def compute_snapshot_bwl_extensions(snap: CombinedScenarioSnapshot) -> Dict[str, Any]:
@@ -126,34 +127,34 @@ def compute_incremental_bwl_evaluation(
     winner_name = high_cap_snap.name if accretive else low_cap_snap.name
 
     if delta_capex > 0.5 and delta_opex_savings <= 0.0:
-        verdict_title = f"{low_cap_snap.name} wins on both upfront cost and yearly savings"
+        verdict_title = f"{low_cap_snap.name} wins on both CAPEX and annual savings"
         verdict_text = (
             f"Both options are profitable on their own, but in a direct comparison {low_cap_snap.name} "
-            f"costs {format_currency_value(delta_capex, curr)} less upfront AND saves "
+            f"requires {format_currency_value(delta_capex, curr)} less CAPEX AND saves "
             f"{format_currency_value(abs(delta_opex_savings), curr)}/yr more than {high_cap_snap.name} "
             f"— finishing {format_currency_value(abs(delta_tco_savings), curr)} ahead over 15 years."
         )
     elif accretive and inc_payback is not None and inc_payback <= 15.0:
-        verdict_title = f"{high_cap_snap.name} pays back its extra upfront cost in {inc_payback:.1f} years"
+        verdict_title = f"{high_cap_snap.name} pays back its extra CAPEX in {fmt_num(inc_payback, 1)} years"
         verdict_text = (
-            f"Spending an extra {format_currency_value(delta_capex, curr)} upfront for {high_cap_snap.name} "
-            f"instead of {low_cap_snap.name} lowers yearly running costs by "
+            f"Investing an extra {format_currency_value(delta_capex, curr)} CAPEX for {high_cap_snap.name} "
+            f"instead of {low_cap_snap.name} lowers annual OPEX &amp; electricity costs by "
             f"{format_currency_value(delta_opex_savings, curr)}/yr, "
             f"delivering {format_currency_value(delta_tco_savings, curr, signed=True)} higher net profit over 15 years."
         )
     elif delta_capex <= 0.5 and delta_tco_savings > 0.0:
-        verdict_title = f"{high_cap_snap.name} wins on both upfront cost and 15-year profit"
+        verdict_title = f"{high_cap_snap.name} wins on both CAPEX and 15-year profit"
         verdict_text = (
             f"{high_cap_snap.name} saves an extra {format_currency_value(delta_tco_savings, curr)} over 15 years "
-            f"without costing more upfront."
+            f"without higher CAPEX."
         )
     else:
         verdict_title = f"{low_cap_snap.name} is the better deal over 15 years"
-        pb_txt = f"{inc_payback:.1f} years" if inc_payback is not None else "more than 15 years"
+        pb_txt = f"{fmt_num(inc_payback, 1)} years" if inc_payback is not None else "more than 15 years"
         verdict_text = (
-            f"The extra {format_currency_value(delta_capex, curr)} upfront cost for {high_cap_snap.name} "
+            f"The extra {format_currency_value(delta_capex, curr)} CAPEX for {high_cap_snap.name} "
             f"only saves {format_currency_value(delta_opex_savings, curr)}/yr more than {low_cap_snap.name} "
-            f"(payback on extra cost: {pb_txt}), leaving {low_cap_snap.name} ahead by "
+            f"(incremental payback period: {pb_txt}), leaving {low_cap_snap.name} ahead by "
             f"{format_currency_value(abs(delta_tco_savings), curr)} over 15 years."
         )
 
@@ -185,11 +186,11 @@ def _short_hw_signature(snap: Optional[CombinedScenarioSnapshot]) -> str:
     c = snap.system_config
     parts: List[str] = []
     if c.enable_solar:
-        parts.append(f"PV {snap.solar_derivation.installed_kwp:,.0f}kWp")
+        parts.append(f"PV {fmt_num(snap.solar_derivation.installed_kwp, 0)}kWp")
     if c.enable_battery:
-        parts.append(f"BESS {c.battery_capacity_kwh:,.0f}kWh")
+        parts.append(f"BESS {fmt_num(c.battery_capacity_kwh, 0)}kWh")
     if c.enable_generator:
-        parts.append(f"Gen {c.generator_rated_kw:,.0f}kW")
+        parts.append(f"Gen {fmt_num(c.generator_rated_kw, 0)}kW")
     return " + ".join(parts) if parts else "Grid Only"
 
 
@@ -304,7 +305,7 @@ def build_segmented_comparison_tables(
         if snap is None:
             return "—"
         hrs = float(snap.kpis.remaining_overload_hours)
-        return "COMPLIANT (0.0 hrs)" if hrs <= 0.05 else f"BREACH ({hrs:,.1f} hrs)"
+        return f"COMPLIANT ({fmt_num(0.0, 1)} hrs)" if hrs <= 0.05 else f"BREACH ({fmt_num(hrs, 1)} hrs)"
 
     def _unused_footer(snap: Optional[CombinedScenarioSnapshot], ext: Optional[Dict[str, Any]], curr_c: str) -> str:
         if snap is None or ext is None:
@@ -312,8 +313,8 @@ def build_segmented_comparison_tables(
         if not snap.system_config.enable_battery:
             return "No BESS"
         if ext["has_financials"]:
-            return f"{ext['idle_bess_kwh']:,.0f} kWh ({format_currency_value(ext['idle_bess_capex_eur'], curr_c)})"
-        return f"{ext['idle_bess_kwh']:,.0f} kWh unused"
+            return f"{fmt_num(ext['idle_bess_kwh'], 0)} kWh ({format_currency_value(ext['idle_bess_capex_eur'], curr_c)})"
+        return f"{fmt_num(ext['idle_bess_kwh'], 0)} kWh unused"
 
     delta_peak_str = row_by_metric.get("Peak Grid Demand (kW)", {}).get("Delta (B vs. A)", "—")
     delta_idle_str = idle_extra[0]["Delta (B vs. A)"] if idle_extra else row_by_metric.get("Battery Min SoC / Unused Reserve", {}).get("Delta (B vs. A)", "—")
@@ -329,7 +330,7 @@ def build_segmented_comparison_tables(
                 "Grid Only",
                 _short_hw_signature(snap_a),
                 _short_hw_signature(snap_b),
-                f"{snap_b.system_config.grid_limit_kw - snap_a.system_config.grid_limit_kw:+.0f} kW Limit" if (snap_a and snap_b) else "—",
+                f"{fmt_num(snap_b.system_config.grid_limit_kw - snap_a.system_config.grid_limit_kw, 0, signed=True)} kW Limit" if (snap_a and snap_b) else "—",
             ],
         },
         "grid_balance": {
@@ -339,7 +340,7 @@ def build_segmented_comparison_tables(
             "df": grid_df,
             "footer_cells": [
                 "Grid Limit Status",
-                f"Overload ({ref.kpis.baseline_overload_hours:,.1f} hrs)",
+                f"Overload ({fmt_num(ref.kpis.baseline_overload_hours, 1)} hrs)",
                 _compliance_badge(snap_a),
                 _compliance_badge(snap_b),
                 f"Peak {delta_peak_str}" if delta_peak_str != "—" else "—",
@@ -363,19 +364,19 @@ def build_segmented_comparison_tables(
     if not any_fin:
         return tables
 
-    # 4. Upfront Cost & Yearly Electricity Bill
+    # 4. CAPEX & Yearly Electricity Bill
     pnl_df = _subset_df([
         "Gross Hardware CAPEX",
         "Avoided Grid Upgrade Credit",
-        "Net Upfront CAPEX",
+        "Net CAPEX",
         "Year-1 Pillar 1: Energy Supply",
         "Year-1 Pillar 2: DSO Network (excl. Penalties)",
         "Year-1 Pillar 2: Overload Penalties",
         "Year-1 Pillar 3 & 4: Metering & Taxes",
         "Year-1 Total Grid Bill (4-Pillar)",
-        "Year-1 Hardware O&M & Generator OPEX",
+        "Year-1 Hardware OPEX & Fuel",
         "Year-1 Solar Export Revenue",
-        "Year-1 Net Operating Cost (Total OPEX)",
+        "Year-1 Total Annual OPEX",
         "Year-1 Net Annual Savings (vs. Current)",
     ])
     fin_ref = snap_a if has_fin_a else snap_b
@@ -385,12 +386,12 @@ def build_segmented_comparison_tables(
     sav_delta_str = row_by_metric.get("Year-1 Net Annual Savings (vs. Current)", {}).get("Delta (B vs. A)", "—")
 
     tables["capex_y1_pnl"] = {
-        "title": f":material/receipt_long: 4. Upfront Cost & Yearly Electricity Bill ({ref_curr})",
-        "header_title": f"4. Upfront Cost &amp; Yearly Electricity Bill ({ref_curr})",
+        "title": f":material/receipt_long: 4. CAPEX & Yearly Electricity Bill ({ref_curr})",
+        "header_title": f"4. CAPEX &amp; Yearly Electricity Bill ({ref_curr})",
         "accent_color": "#6366F1",
         "df": pnl_df,
         "footer_cells": [
-            "Yearly Running Cost (Net)",
+            "Annual OPEX & Net Electricity Cost",
             format_currency_value(fin_ref.financial_kpis.baseline_total_opex_eur, ref_curr),
             opex_a_str,
             opex_b_str,
@@ -404,7 +405,7 @@ def build_segmented_comparison_tables(
             return "—"
         if not ext or not ext["has_financials"]:
             return "Financials Off"
-        return f"{_curr_prefix(curr_c)}{ext['lcoe_spread_eur_kwh']:+.3f}/kWh"
+        return f"{fmt_curr(ext['lcoe_spread_eur_kwh'], curr_c, decimals=3, signed=True)}/kWh"
 
     def _fmt_prod(snap: Optional[CombinedScenarioSnapshot], ext: Optional[Dict[str, Any]], curr_c: str) -> str:
         if snap is None:
@@ -418,15 +419,15 @@ def build_segmented_comparison_tables(
             return "—"
         if not ext or not ext["has_financials"]:
             return "Financials Off"
-        return f"{ext['fixed_capex_share_15y_pct']:.0f}% Upfront / {ext['variable_opex_share_15y_pct']:.0f}% Running"
+        return f"{fmt_num(ext['fixed_capex_share_15y_pct'], 0)}% CAPEX / {fmt_num(ext['variable_opex_share_15y_pct'], 0)}% OPEX"
 
     bwl_extra_rows = [
         _info_row(
             "Savings per kWh vs. Grid",
-            "0.000/kWh",
+            f"{fmt_num(0.0, 3)}/kWh",
             _fmt_spread(snap_a, ext_a, curr_a),
             _fmt_spread(snap_b, ext_b, curr_b),
-            f"{(ext_b['lcoe_spread_eur_kwh'] - ext_a['lcoe_spread_eur_kwh']):+.3f}/kWh" if (has_fin_a and has_fin_b and same_curr) else "—",
+            f"{fmt_num(ext_b['lcoe_spread_eur_kwh'] - ext_a['lcoe_spread_eur_kwh'], 3, signed=True)}/kWh" if (has_fin_a and has_fin_b and same_curr) else "—",
         ),
         _info_row(
             "Yearly Savings per 1,000 Invested",
@@ -438,11 +439,11 @@ def build_segmented_comparison_tables(
             else "—",
         ),
         _info_row(
-            "15-Year Cost Split (Upfront vs. Running)",
-            "0% Upfront / 100% Running",
+            "15-Year Cost Split (CAPEX vs. OPEX & Grid)",
+            "0% CAPEX / 100% OPEX",
             _fmt_risk(snap_a, ext_a),
             _fmt_risk(snap_b, ext_b),
-            f"{ext_b['fixed_capex_share_15y_pct'] - ext_a['fixed_capex_share_15y_pct']:+.0f} pp Upfront"
+            f"{fmt_num(ext_b['fixed_capex_share_15y_pct'] - ext_a['fixed_capex_share_15y_pct'], 0, signed=True)} pp CAPEX"
             if (has_fin_a and has_fin_b)
             else "—",
         ),
@@ -450,7 +451,7 @@ def build_segmented_comparison_tables(
 
     bwl_df = _subset_df(
         [
-            "Simple Payback Period",
+            "Payback Period",
             "Discounted Payback Period",
             "15-Year Cumulative TCO",
             "15-Year TCO Net Savings (vs. Current)",

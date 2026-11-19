@@ -10,6 +10,7 @@ from .state_and_helpers import (
     _HAS_FOLIUM,
     folium,
     st_folium,
+    fmt_num,
     search_locations_open_meteo,
     LoadSeries2025,
     SOLAR_SITE_PRESETS,
@@ -127,29 +128,29 @@ def _render_solar_production_fragment(
     with sp1:
         render_kpi_card(
             title="Solar Production",
-            value=f"{prod_kwh:,.0f} kWh/yr",
-            subtext=f"{cap_pct:.1f}% of {pot_kwh:,.0f} kWh unclipped potential",
+            value=f"{fmt_num(prod_kwh, 0)} kWh/yr",
+            subtext=f"{fmt_num(cap_pct, 1)}% of {fmt_num(pot_kwh, 0)} kWh unclipped potential",
             status="ok",
         )
     with sp2:
         render_kpi_card(
             title="Peak Solar Production",
-            value=f"{peak_prod:,.1f} kW AC",
-            subtext=f"Inverter Limit: {inv_kw:,.1f} kW | Potential Peak: {peak_pot:,.1f} kW" if inv_kw > 0.0 else f"Inverter Limit: Disabled (Unclipped) | Potential Peak: {peak_pot:,.1f} kW",
+            value=f"{fmt_num(peak_prod, 1)} kW AC",
+            subtext=f"Inverter Limit: {fmt_num(inv_kw, 1)} kW | Potential Peak: {fmt_num(peak_pot, 1)} kW" if inv_kw > 0.0 else f"Inverter Limit: Disabled (Unclipped) | Potential Peak: {fmt_num(peak_pot, 1)} kW",
             status="default",
         )
     with sp3:
         render_kpi_card(
             title="Inverter Clipping Loss",
-            value=f"{clip_kwh:,.0f} kWh/yr",
-            subtext=f"{clip_pct:.1f}% of potential across {clip_hrs:,.1f} hrs/yr at limit",
+            value=f"{fmt_num(clip_kwh, 0)} kWh/yr",
+            subtext=f"{fmt_num(clip_pct, 1)}% of potential across {fmt_num(clip_hrs, 1)} hrs/yr at limit",
             status="alert" if clip_pct >= 5.0 else "default",
         )
     with sp4:
         render_kpi_card(
             title="Full-Load / Sun Hours",
-            value=f"{flh:,.0f} hrs/yr",
-            subtext=f"{prod_summary['specific_yield_after_inv_kwh_kwp']:,.0f} kWh/kWp | Active: {active_hrs:,.0f} hrs/yr",
+            value=f"{fmt_num(flh, 0)} hrs/yr",
+            subtext=f"{fmt_num(prod_summary['specific_yield_after_inv_kwh_kwp'], 0)} kWh/kWp | Active: {fmt_num(active_hrs, 0)} hrs/yr",
             status="default",
         )
 
@@ -199,9 +200,9 @@ def _render_solar_production_fragment(
                 df_win = df_ev.copy()
 
             m1, m2, m3 = st.columns(3)
-            m1.metric("Window Production (AC)", f"{win['production_kwh']:,.1f} kWh", delta=f"{len(df_win)} days | Peak {win['peak_production_kw']:,.1f} kW", delta_color="off")
-            m2.metric("Window Unclipped Potential", f"{win['potential_kwh']:,.1f} kWh", delta=f"{win['active_hours']:,.1f} active hrs", delta_color="off")
-            m3.metric("Window Clipping Loss", f"{win['clipped_kwh']:,.1f} kWh", delta="Inverter ceiling" if inv_kw > 0 else "Unclipped", delta_color="off")
+            m1.metric("Window Production (AC)", f"{fmt_num(win['production_kwh'], 1)} kWh", delta=f"{len(df_win)} days | Peak {fmt_num(win['peak_production_kw'], 1)} kW", delta_color="off")
+            m2.metric("Window Unclipped Potential", f"{fmt_num(win['potential_kwh'], 1)} kWh", delta=f"{fmt_num(win['active_hours'], 1)} active hrs", delta_color="off")
+            m3.metric("Window Clipping Loss", f"{fmt_num(win['clipped_kwh'], 1)} kWh", delta="Inverter ceiling" if inv_kw > 0 else "Unclipped", delta_color="off")
 
             if df_win.empty:
                 st.info("No Solar production phases matched the selected date range.")
@@ -678,24 +679,24 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     ),
                     (
                         "System Size",
-                        f"{solar_deriv.installed_kwp:,.1f} kWp",
-                        f"{solar_deriv.panel_count:,} panels ({solar_deriv.panel_wp:,.0f} Wp each)",
+                        f"{fmt_num(solar_deriv.installed_kwp, 1)} kWp",
+                        f"{fmt_num(solar_deriv.panel_count, 0)} panels ({fmt_num(solar_deriv.panel_wp, 0)} Wp each)",
                     ),
                     (
                         "Sun at Your Location",
-                        f"{solar_deriv.specific_yield_kwh_per_kwp:,.0f} kWh / kWp / yr",
+                        f"{fmt_num(solar_deriv.specific_yield_kwh_per_kwp, 0)} kWh / kWp / yr",
                         f"Expected yearly output per installed kWp in {site_disp}",
                     ),
                     (
                         "Expected Yearly Production",
-                        f"{solar_deriv.expected_annual_yield_kwh:,.0f} kWh / yr",
-                        f"{solar_deriv.installed_kwp:,.1f} kWp &times; {solar_deriv.specific_yield_kwh_per_kwp:,.0f} kWh/kWp (at {solar_deriv.inverter_efficiency_pct:.0f}% inverter efficiency)",
+                        f"{fmt_num(solar_deriv.expected_annual_yield_kwh, 0)} kWh / yr",
+                        f"{fmt_num(solar_deriv.installed_kwp, 1)} kWp &times; {fmt_num(solar_deriv.specific_yield_kwh_per_kwp, 0)} kWh/kWp (at {fmt_num(solar_deriv.inverter_efficiency_pct, 0)}% inverter efficiency)",
                     ),
                     (
                         "Covers of Your Consumption",
-                        f"{solar_deriv.effective_share_pct:,.1f}%",
+                        f"{fmt_num(solar_deriv.effective_share_pct, 1)}%",
                         (
-                            f"Compared against your {ann_kwh:,.0f} kWh/yr total electricity use"
+                            f"Compared against your {fmt_num(ann_kwh, 0)} kWh/yr total electricity use"
                             if ann_kwh > 0.0
                             else "Upload or select a consumption profile to compare against annual demand"
                         ),
@@ -703,14 +704,14 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                     (
                         "Inverter Size",
                         (
-                            f"{solar_deriv.inverter_ac_kw:,.1f} kW AC"
+                            f"{fmt_num(solar_deriv.inverter_ac_kw, 1)} kW AC"
                             if solar_deriv.inverter_ac_kw > 0.0
                             else "No AC Limit (Unclipped)"
                         ),
                         (
-                            f"DC/AC ratio {dc_ac_actual:.2f} &middot; {solar_deriv.inverter_efficiency_pct:.0f}% efficiency"
+                            f"DC/AC ratio {fmt_num(dc_ac_actual, 2)} &middot; {fmt_num(solar_deriv.inverter_efficiency_pct, 0)}% efficiency"
                             if solar_deriv.inverter_ac_kw > 0.0
-                            else f"100% of solar potential usable (AC clipping disabled) &middot; {solar_deriv.inverter_efficiency_pct:.0f}% efficiency"
+                            else f"100% of solar potential usable (AC clipping disabled) &middot; {fmt_num(solar_deriv.inverter_efficiency_pct, 0)}% efficiency"
                         ),
                     ),
                 ]
@@ -734,19 +735,19 @@ def render_subtab2_solar(load_series: LoadSeries2025) -> None:
                 'display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px;">'
                 f'<div style="background-color:#1e293b; border-left:3px solid #FACC15; border-radius:6px; padding:6px 10px; flex:1; min-width:130px;">'
                 f'<div style="font-size:0.70rem; color:#94a3b8;">System Size</div>'
-                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{solar_deriv.installed_kwp:,.1f} kWp</div></div>'
+                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{fmt_num(solar_deriv.installed_kwp, 1)} kWp</div></div>'
                 '<div style="color:#64748b; font-weight:800;">&times;</div>'
                 f'<div style="background-color:#1e293b; border-left:3px solid #38BDF8; border-radius:6px; padding:6px 10px; flex:1; min-width:150px;">'
                 f'<div style="font-size:0.70rem; color:#94a3b8;">Sun at Location</div>'
-                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{solar_deriv.specific_yield_kwh_per_kwp:,.0f} kWh/kWp/yr</div></div>'
+                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{fmt_num(solar_deriv.specific_yield_kwh_per_kwp, 0)} kWh/kWp/yr</div></div>'
                 '<div style="color:#64748b; font-weight:800;">=</div>'
                 f'<div style="background-color:#1e293b; border-left:3px solid #22C55E; border-radius:6px; padding:6px 10px; flex:1; min-width:150px;">'
                 f'<div style="font-size:0.70rem; color:#94a3b8;">Yearly Production</div>'
-                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{solar_deriv.expected_annual_yield_kwh:,.0f} kWh/yr</div></div>'
+                f'<div style="font-size:0.95rem; color:#f8fafc; font-weight:700;">{fmt_num(solar_deriv.expected_annual_yield_kwh, 0)} kWh/yr</div></div>'
                 '<div style="color:#38BDF8; font-weight:800;">&rarr;</div>'
                 f'<div style="background-color:#06281e; border:1.5px solid #22C55E; border-radius:6px; padding:6px 10px; flex:1; min-width:140px;">'
                 f'<div style="font-size:0.70rem; color:#86EFAC; font-weight:700;">Covers of Demand</div>'
-                f'<div style="font-size:0.95rem; color:#ffffff; font-weight:800;">{solar_deriv.effective_share_pct:,.1f}%</div></div>'
+                f'<div style="font-size:0.95rem; color:#ffffff; font-weight:800;">{fmt_num(solar_deriv.effective_share_pct, 1)}%</div></div>'
                 '</div>'
             )
             st.markdown(flow_html, unsafe_allow_html=True)

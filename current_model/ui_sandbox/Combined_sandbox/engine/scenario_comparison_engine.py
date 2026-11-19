@@ -33,6 +33,7 @@ from .utilization_and_tables import (
     compute_system_utilization_diagnostics,
 )
 from .financial_engine import evaluate_combined_financials
+from .formatting import curr_prefix, fmt_curr, fmt_num
 
 
 _BASELINE_TARIFF_FIELDS: Tuple[str, ...] = (
@@ -82,7 +83,7 @@ _BASELINE_TARIFF_FIELDS: Tuple[str, ...] = (
 
 def _curr_sym(currency_code: str = "EUR") -> str:
     """Returns compact currency symbol for unit-rate formatting (€, $, or ISO code)."""
-    return "€" if currency_code == "EUR" else ("$" if currency_code == "USD" else f"{currency_code} ")
+    return curr_prefix(currency_code)
 
 
 SCENARIO_COMPARISON_PALETTE: Tuple[str, ...] = (
@@ -109,15 +110,14 @@ def normalize_scenario_list(
     return [s for s in (snap_a, snap_b) if s is not None]
 
 
-def format_currency_value(val: float, currency_code: str = "EUR", signed: bool = False) -> str:
+def format_currency_value(
+    val: float,
+    currency_code: str = "EUR",
+    signed: bool = False,
+    decimals: int = 0,
+) -> str:
     """Formats a monetary value with currency prefix for plain text, DataFrames, and Excel cells."""
-    pref = _curr_sym(currency_code)
-    if signed:
-        sign = "+" if val >= 0 else "-"
-        return f"{sign}{pref}{abs(val):,.0f}"
-    if val < -0.5:
-        return f"-{pref}{abs(val):,.0f}"
-    return f"{pref}{val:,.0f}"
+    return fmt_curr(val, currency_code=currency_code, decimals=decimals, signed=signed)
 
 
 def build_load_fingerprint_from_series(load_series: Any) -> Tuple[int, float, float]:
@@ -639,7 +639,7 @@ def build_restore_widget_sync_payload(
 def _describe_hardware_solar(snap: CombinedScenarioSnapshot) -> str:
     if not snap.system_config.enable_solar:
         return "Off"
-    return f"{snap.solar_derivation.installed_kwp:,.1f} kWp ({snap.solar_derivation.effective_share_pct:,.0f}%)"
+    return f"{fmt_num(snap.solar_derivation.installed_kwp, 1)} kWp ({fmt_num(snap.solar_derivation.effective_share_pct, 0)}%)"
 
 
 def _describe_hardware_bess(snap: CombinedScenarioSnapshot) -> str:
@@ -647,14 +647,14 @@ def _describe_hardware_bess(snap: CombinedScenarioSnapshot) -> str:
     if not cfg.enable_battery:
         return "Off"
     dur_h = cfg.battery_capacity_kwh / max(1.0, cfg.battery_power_kw)
-    return f"{cfg.battery_capacity_kwh:,.0f} kWh / {cfg.battery_power_kw:,.0f} kW ({dur_h:.1f}h)"
+    return f"{fmt_num(cfg.battery_capacity_kwh, 0)} kWh / {fmt_num(cfg.battery_power_kw, 0)} kW ({fmt_num(dur_h, 1)}h)"
 
 
 def _describe_hardware_gen(snap: CombinedScenarioSnapshot) -> str:
     cfg = snap.system_config
     if not cfg.enable_generator:
         return "Off"
-    return f"{cfg.generator_rated_kw:,.0f} kW ({cfg.fuel_type})"
+    return f"{fmt_num(cfg.generator_rated_kw, 0)} kW ({cfg.fuel_type})"
 
 
 def _describe_rules(snap: CombinedScenarioSnapshot) -> str:
@@ -720,11 +720,10 @@ def build_ab_comparison_matrix_df(
         if snap_a is None or snap_b is None:
             return "—"
         diff = float(val_fn(snap_b)) - float(val_fn(snap_a))
-        fmt = f"{{:+,.{decimals}f}}"
-        return f"{fmt.format(diff)}{(' ' + unit) if unit else ''}"
+        return f"{fmt_num(diff, decimals, signed=True)}{(' ' + unit) if unit else ''}"
 
     def _opt_payback(pb: Optional[float]) -> str:
-        return f"{pb:.1f} yrs" if pb is not None else "N/A"
+        return f"{fmt_num(pb, 1)} yrs" if pb is not None else "N/A"
 
     def _opt_payback_delta(attr: str) -> str:
         if snap_a is None or snap_b is None:
@@ -733,10 +732,10 @@ def build_ab_comparison_matrix_df(
         vb = getattr(snap_b.financial_kpis, attr, None)
         if va is None or vb is None:
             return "N/A"
-        return f"{float(vb) - float(va):+.1f} yrs"
+        return f"{fmt_num(float(vb) - float(va), 1, signed=True)} yrs"
 
     def _opt_pct(val: Optional[float]) -> str:
-        return f"{val:.1f}%" if val is not None else "N/A"
+        return f"{fmt_num(val, 1)}%" if val is not None else "N/A"
 
     def _opt_pct_delta(attr: str) -> str:
         if snap_a is None or snap_b is None:
@@ -745,7 +744,7 @@ def build_ab_comparison_matrix_df(
         vb = getattr(snap_b.financial_kpis, attr, None)
         if va is None or vb is None:
             return "N/A"
-        return f"{float(vb) - float(va):+.1f} pp"
+        return f"{fmt_num(float(vb) - float(va), 1, signed=True)} pp"
 
     rows: List[Dict[str, str]] = []
 
@@ -761,7 +760,7 @@ def build_ab_comparison_matrix_df(
 
     # 1. Dimensioning & Rules
     add_row("Dimensioning & Rules", "Scenario Name", "Status Quo (No Add-On Hardware)", snap_a.name if snap_a else "—", snap_b.name if snap_b else "—", "—")
-    add_row("Dimensioning & Rules", "Contracted Grid Limit (kW)", f"{ref.system_config.grid_limit_kw:,.0f} kW", f"{snap_a.system_config.grid_limit_kw:,.0f} kW" if snap_a else "—", f"{snap_b.system_config.grid_limit_kw:,.0f} kW" if snap_b else "—", _fmt_num_delta(lambda s: s.system_config.grid_limit_kw, "kW", 0))
+    add_row("Dimensioning & Rules", "Contracted Grid Limit (kW)", f"{fmt_num(ref.system_config.grid_limit_kw, 0)} kW", f"{fmt_num(snap_a.system_config.grid_limit_kw, 0)} kW" if snap_a else "—", f"{fmt_num(snap_b.system_config.grid_limit_kw, 0)} kW" if snap_b else "—", _fmt_num_delta(lambda s: s.system_config.grid_limit_kw, "kW", 0))
     add_row("Dimensioning & Rules", "Solar PV Size", "Off", _describe_hardware_solar(snap_a) if snap_a else "—", _describe_hardware_solar(snap_b) if snap_b else "—", _fmt_num_delta(lambda s: s.solar_derivation.installed_kwp if s.system_config.enable_solar else 0.0, "kWp", 1))
     add_row("Dimensioning & Rules", "Battery Storage (kWh / kW)", "Off", _describe_hardware_bess(snap_a) if snap_a else "—", _describe_hardware_bess(snap_b) if snap_b else "—", _fmt_num_delta(lambda s: s.system_config.battery_capacity_kwh if s.system_config.enable_battery else 0.0, "kWh", 0))
     add_row("Dimensioning & Rules", "Peaking Generator (kW & Fuel)", "Off", _describe_hardware_gen(snap_a) if snap_a else "—", _describe_hardware_gen(snap_b) if snap_b else "—", _fmt_num_delta(lambda s: s.system_config.generator_rated_kw if s.system_config.enable_generator else 0.0, "kW", 0))
@@ -769,53 +768,53 @@ def build_ab_comparison_matrix_df(
 
     # 2. Technical Performance
     tech_num_specs = [
-        ("Peak Grid Demand (kW)", f"{ref.kpis.original_peak_kw:,.1f} kW", lambda s: s.kpis.new_grid_peak_kw, "kW", 1, "kW"),
-        ("Peak Demand Shaved (kW)", "0.0 kW", lambda s: s.kpis.peak_reduction_kw, "kW", 1, "kW"),
-        ("Remaining Overload (hrs/yr)", f"{ref.kpis.baseline_overload_hours:,.1f} hrs", lambda s: s.kpis.remaining_overload_hours, "hrs", 1, "hrs"),
-        ("Remaining Overload Energy (kWh/yr)", f"{ref.kpis.baseline_overload_kwh:,.0f} kWh", lambda s: s.kpis.remaining_overload_kwh, "kWh", 0, "kWh"),
-        ("Overload Eliminated (%)", "0.0%", lambda s: s.kpis.overload_eliminated_pct, "%", 1, "pp"),
-        ("On-Site Autarky Share (%)", "0.0%", lambda s: max(0.0, 100.0 - s.utilization_diagnostics.grid_direct_pct), "%", 1, "pp"),
-        ("Supply Share: Grid (%)", "100.0%", lambda s: s.utilization_diagnostics.grid_direct_pct, "%", 1, "pp"),
-        ("Supply Share: Solar Direct (%)", "0.0%", lambda s: s.utilization_diagnostics.solar_direct_pct, "%", 1, "pp"),
-        ("Supply Share: Battery Discharge (%)", "0.0%", lambda s: s.utilization_diagnostics.battery_discharge_pct, "%", 1, "pp"),
-        ("Supply Share: Generator (%)", "0.0%", lambda s: s.utilization_diagnostics.generator_direct_pct, "%", 1, "pp"),
-        ("Annual Residual Grid Import (MWh/yr)", f"{ref.kpis.annual_consumption_kwh / 1000.0:,.1f} MWh", lambda s: s.kpis.grid_import_total_kwh / 1000.0, "MWh", 1, "MWh"),
-        ("Solar Exported Surplus (MWh/yr)", "0.0 MWh", lambda s: (s.kpis.solar_export_kwh / 1000.0) if s.system_config.enable_solar else 0.0, "MWh", 1, "MWh"),
+        ("Peak Grid Demand (kW)", f"{fmt_num(ref.kpis.original_peak_kw, 1)} kW", lambda s: s.kpis.new_grid_peak_kw, "kW", 1, "kW"),
+        ("Peak Demand Shaved (kW)", f"{fmt_num(0.0, 1)} kW", lambda s: s.kpis.peak_reduction_kw, "kW", 1, "kW"),
+        ("Remaining Overload (hrs/yr)", f"{fmt_num(ref.kpis.baseline_overload_hours, 1)} hrs", lambda s: s.kpis.remaining_overload_hours, "hrs", 1, "hrs"),
+        ("Remaining Overload Energy (kWh/yr)", f"{fmt_num(ref.kpis.baseline_overload_kwh, 0)} kWh", lambda s: s.kpis.remaining_overload_kwh, "kWh", 0, "kWh"),
+        ("Overload Eliminated (%)", f"{fmt_num(0.0, 1)}%", lambda s: s.kpis.overload_eliminated_pct, "%", 1, "pp"),
+        ("On-Site Autarky Share (%)", f"{fmt_num(0.0, 1)}%", lambda s: max(0.0, 100.0 - s.utilization_diagnostics.grid_direct_pct), "%", 1, "pp"),
+        ("Supply Share: Grid (%)", f"{fmt_num(100.0, 1)}%", lambda s: s.utilization_diagnostics.grid_direct_pct, "%", 1, "pp"),
+        ("Supply Share: Solar Direct (%)", f"{fmt_num(0.0, 1)}%", lambda s: s.utilization_diagnostics.solar_direct_pct, "%", 1, "pp"),
+        ("Supply Share: Battery Discharge (%)", f"{fmt_num(0.0, 1)}%", lambda s: s.utilization_diagnostics.battery_discharge_pct, "%", 1, "pp"),
+        ("Supply Share: Generator (%)", f"{fmt_num(0.0, 1)}%", lambda s: s.utilization_diagnostics.generator_direct_pct, "%", 1, "pp"),
+        ("Annual Residual Grid Import (MWh/yr)", f"{fmt_num(ref.kpis.annual_consumption_kwh / 1000.0, 1)} MWh", lambda s: s.kpis.grid_import_total_kwh / 1000.0, "MWh", 1, "MWh"),
+        ("Solar Exported Surplus (MWh/yr)", f"{fmt_num(0.0, 1)} MWh", lambda s: (s.kpis.solar_export_kwh / 1000.0) if s.system_config.enable_solar else 0.0, "MWh", 1, "MWh"),
     ]
     for m_lbl, cur_str, fn, disp_unit, dec, d_unit in tech_num_specs:
-        fmt_v = f"{{:,.{dec}f}}{disp_unit}" if disp_unit == "%" else f"{{:,.{dec}f}} {disp_unit}"
-        add_row("Technical Performance", m_lbl, cur_str, fmt_v.format(fn(snap_a)) if snap_a else "—", fmt_v.format(fn(snap_b)) if snap_b else "—", _fmt_num_delta(fn, d_unit, dec))
+        sep_u = "" if disp_unit == "%" else f" {disp_unit}"
+        add_row("Technical Performance", m_lbl, cur_str, f"{fmt_num(fn(snap_a), dec)}{sep_u}" if snap_a else "—", f"{fmt_num(fn(snap_b), dec)}{sep_u}" if snap_b else "—", _fmt_num_delta(fn, d_unit, dec))
 
     add_row(
         "Technical Performance",
         "Solar Generation / Used On-Site",
         "Off",
-        f"{snap_a.kpis.solar_total_generation_kwh / 1000.0:,.1f} MWh ({snap_a.utilization_diagnostics.solar_utilization_pct:.0f}% used)" if snap_a and snap_a.system_config.enable_solar else ("Off" if snap_a else "—"),
-        f"{snap_b.kpis.solar_total_generation_kwh / 1000.0:,.1f} MWh ({snap_b.utilization_diagnostics.solar_utilization_pct:.0f}% used)" if snap_b and snap_b.system_config.enable_solar else ("Off" if snap_b else "—"),
+        f"{fmt_num(snap_a.kpis.solar_total_generation_kwh / 1000.0, 1)} MWh ({fmt_num(snap_a.utilization_diagnostics.solar_utilization_pct, 0)}% used)" if snap_a and snap_a.system_config.enable_solar else ("Off" if snap_a else "—"),
+        f"{fmt_num(snap_b.kpis.solar_total_generation_kwh / 1000.0, 1)} MWh ({fmt_num(snap_b.utilization_diagnostics.solar_utilization_pct, 0)}% used)" if snap_b and snap_b.system_config.enable_solar else ("Off" if snap_b else "—"),
         _fmt_num_delta(lambda s: (s.kpis.solar_total_generation_kwh / 1000.0) if s.system_config.enable_solar else 0.0, "MWh", 1),
     )
     add_row(
         "Technical Performance",
         "Battery Cycles / Capacity Used",
-        "0.0 cyc",
-        f"{snap_a.kpis.battery_equivalent_cycles:.1f} cyc ({snap_a.utilization_diagnostics.bess_capacity_utilization_pct:.0f}%)" if snap_a and snap_a.system_config.enable_battery else ("Off" if snap_a else "—"),
-        f"{snap_b.kpis.battery_equivalent_cycles:.1f} cyc ({snap_b.utilization_diagnostics.bess_capacity_utilization_pct:.0f}%)" if snap_b and snap_b.system_config.enable_battery else ("Off" if snap_b else "—"),
+        f"{fmt_num(0.0, 1)} cyc",
+        f"{fmt_num(snap_a.kpis.battery_equivalent_cycles, 1)} cyc ({fmt_num(snap_a.utilization_diagnostics.bess_capacity_utilization_pct, 0)}%)" if snap_a and snap_a.system_config.enable_battery else ("Off" if snap_a else "—"),
+        f"{fmt_num(snap_b.kpis.battery_equivalent_cycles, 1)} cyc ({fmt_num(snap_b.utilization_diagnostics.bess_capacity_utilization_pct, 0)}%)" if snap_b and snap_b.system_config.enable_battery else ("Off" if snap_b else "—"),
         _fmt_num_delta(lambda s: s.kpis.battery_equivalent_cycles, "cyc", 1),
     )
     add_row(
         "Technical Performance",
         "Battery Min SoC / Unused Reserve",
         "Off",
-        f"Min {snap_a.utilization_diagnostics.bess_min_soc_reached_pct:.0f}% ({snap_a.utilization_diagnostics.bess_unused_usable_kwh:,.0f} kWh unused)" if snap_a and snap_a.system_config.enable_battery else ("Off" if snap_a else "—"),
-        f"Min {snap_b.utilization_diagnostics.bess_min_soc_reached_pct:.0f}% ({snap_b.utilization_diagnostics.bess_unused_usable_kwh:,.0f} kWh unused)" if snap_b and snap_b.system_config.enable_battery else ("Off" if snap_b else "—"),
+        f"Min {fmt_num(snap_a.utilization_diagnostics.bess_min_soc_reached_pct, 0)}% ({fmt_num(snap_a.utilization_diagnostics.bess_unused_usable_kwh, 0)} kWh unused)" if snap_a and snap_a.system_config.enable_battery else ("Off" if snap_a else "—"),
+        f"Min {fmt_num(snap_b.utilization_diagnostics.bess_min_soc_reached_pct, 0)}% ({fmt_num(snap_b.utilization_diagnostics.bess_unused_usable_kwh, 0)} kWh unused)" if snap_b and snap_b.system_config.enable_battery else ("Off" if snap_b else "—"),
         _fmt_num_delta(lambda s: s.utilization_diagnostics.bess_unused_usable_kwh if s.system_config.enable_battery else 0.0, "kWh", 0),
     )
     add_row(
         "Technical Performance",
         "Generator Runtime & Fuel",
-        "0.0 hrs",
-        f"{snap_a.kpis.generator_runtime_hours:,.1f} hrs ({snap_a.kpis.generator_fuel_total:,.0f} {snap_a.kpis.generator_fuel_unit})" if snap_a and snap_a.system_config.enable_generator else ("Off" if snap_a else "—"),
-        f"{snap_b.kpis.generator_runtime_hours:,.1f} hrs ({snap_b.kpis.generator_fuel_total:,.0f} {snap_b.kpis.generator_fuel_unit})" if snap_b and snap_b.system_config.enable_generator else ("Off" if snap_b else "—"),
+        f"{fmt_num(0.0, 1)} hrs",
+        f"{fmt_num(snap_a.kpis.generator_runtime_hours, 1)} hrs ({fmt_num(snap_a.kpis.generator_fuel_total, 0)} {snap_a.kpis.generator_fuel_unit})" if snap_a and snap_a.system_config.enable_generator else ("Off" if snap_a else "—"),
+        f"{fmt_num(snap_b.kpis.generator_runtime_hours, 1)} hrs ({fmt_num(snap_b.kpis.generator_fuel_total, 0)} {snap_b.kpis.generator_fuel_unit})" if snap_b and snap_b.system_config.enable_generator else ("Off" if snap_b else "—"),
         _fmt_num_delta(lambda s: s.kpis.generator_runtime_hours, "hrs", 1),
     )
 
@@ -842,21 +841,21 @@ def build_ab_comparison_matrix_df(
     econ_curr_specs = [
         ("Gross Hardware CAPEX", 0.0, lambda s: s.financial_kpis.gross_capex_eur, False),
         ("Avoided Grid Upgrade Credit", 0.0, lambda s: s.financial_kpis.avoided_grid_upgrade_capex_eur, False),
-        ("Net Upfront CAPEX", 0.0, lambda s: s.financial_kpis.total_capex_eur, False),
+        ("Net CAPEX", 0.0, lambda s: s.financial_kpis.total_capex_eur, False),
         ("Year-1 Pillar 1: Energy Supply", fin_ref.financial_kpis.baseline_pillar1_supply_eur, lambda s: s.financial_kpis.combined_pillar1_supply_eur, False),
         ("Year-1 Pillar 2: DSO Network (excl. Penalties)", max(0.0, fin_ref.financial_kpis.baseline_pillar2_dso_eur - fin_ref.financial_kpis.baseline_penalty_cost_eur), lambda s: max(0.0, s.financial_kpis.combined_pillar2_dso_eur - s.financial_kpis.combined_grid_penalty_cost_eur), False),
         ("Year-1 Pillar 2: Overload Penalties", fin_ref.financial_kpis.baseline_penalty_cost_eur, lambda s: s.financial_kpis.combined_grid_penalty_cost_eur, False),
         ("Year-1 Pillar 3 & 4: Metering & Taxes", fin_ref.financial_kpis.baseline_pillar3_metering_eur + fin_ref.financial_kpis.baseline_pillar4_taxes_eur, lambda s: s.financial_kpis.combined_pillar3_metering_eur + s.financial_kpis.combined_pillar4_taxes_eur, False),
         ("Year-1 Total Grid Bill (4-Pillar)", fin_ref.financial_kpis.baseline_total_opex_eur, lambda s: s.financial_kpis.combined_grid_total_eur, False),
-        ("Year-1 Hardware O&M & Generator OPEX", 0.0, lambda s: s.financial_kpis.system_om_and_fuel_y1_eur, False),
+        ("Year-1 Hardware OPEX & Fuel", 0.0, lambda s: s.financial_kpis.system_om_and_fuel_y1_eur, False),
         ("Year-1 Solar Export Revenue", 0.0, lambda s: s.financial_kpis.solar_export_revenue_eur, False),
-        ("Year-1 Net Operating Cost (Total OPEX)", fin_ref.financial_kpis.baseline_total_opex_eur, lambda s: s.financial_kpis.total_annual_opex_eur, False),
+        ("Year-1 Total Annual OPEX", fin_ref.financial_kpis.baseline_total_opex_eur, lambda s: s.financial_kpis.total_annual_opex_eur, False),
         ("Year-1 Net Annual Savings (vs. Current)", 0.0, lambda s: s.financial_kpis.annual_savings_eur, True),
     ]
     for m_lbl, cur_val, fn, signed in econ_curr_specs:
         add_row("Economics & 15-Year Financials", m_lbl, format_currency_value(cur_val, fin_ref_curr), _fin_curr_cell(snap_a, fn, signed=signed), _fin_curr_cell(snap_b, fn, signed=signed), _fin_curr_delta_cell(fn))
 
-    add_row("Economics & 15-Year Financials", "Simple Payback Period", "—", (_opt_payback(snap_a.financial_kpis.payback_years) if has_fin_a else "Financials Off") if snap_a else "—", (_opt_payback(snap_b.financial_kpis.payback_years) if has_fin_b else "Financials Off") if snap_b else "—", _opt_payback_delta("payback_years") if (has_fin_a and has_fin_b) else "—")
+    add_row("Economics & 15-Year Financials", "Payback Period", "—", (_opt_payback(snap_a.financial_kpis.payback_years) if has_fin_a else "Financials Off") if snap_a else "—", (_opt_payback(snap_b.financial_kpis.payback_years) if has_fin_b else "Financials Off") if snap_b else "—", _opt_payback_delta("payback_years") if (has_fin_a and has_fin_b) else "—")
     add_row("Economics & 15-Year Financials", "Discounted Payback Period", "—", (_opt_payback(snap_a.financial_kpis.discounted_payback_years) if has_fin_a else "Financials Off") if snap_a else "—", (_opt_payback(snap_b.financial_kpis.discounted_payback_years) if has_fin_b else "Financials Off") if snap_b else "—", _opt_payback_delta("discounted_payback_years") if (has_fin_a and has_fin_b) else "—")
 
     econ_15y_specs = [
@@ -868,14 +867,14 @@ def build_ab_comparison_matrix_df(
         add_row("Economics & 15-Year Financials", m_lbl, format_currency_value(cur_val, fin_ref_curr), _fin_curr_cell(snap_a, fn, signed=signed), _fin_curr_cell(snap_b, fn, signed=signed), _fin_curr_delta_cell(fn))
 
     add_row("Economics & 15-Year Financials", "15-Year Internal Rate of Return (IRR)", "—", (_opt_pct(snap_a.financial_kpis.irr_15y_pct) if has_fin_a else "Financials Off") if snap_a else "—", (_opt_pct(snap_b.financial_kpis.irr_15y_pct) if has_fin_b else "Financials Off") if snap_b else "—", _opt_pct_delta("irr_15y_pct") if (has_fin_a and has_fin_b) else "—")
-    add_row("Economics & 15-Year Financials", "15-Year Benefit-Cost Ratio (BCR)", "—", (f"{snap_a.financial_kpis.benefit_cost_ratio_15y:.2f}x" if has_fin_a else "Financials Off") if snap_a else "—", (f"{snap_b.financial_kpis.benefit_cost_ratio_15y:.2f}x" if has_fin_b else "Financials Off") if snap_b else "—", _fmt_num_delta(lambda s: s.financial_kpis.benefit_cost_ratio_15y, "x", 2) if (has_fin_a and has_fin_b) else "—")
+    add_row("Economics & 15-Year Financials", "15-Year Benefit-Cost Ratio (BCR)", "—", (f"{fmt_num(snap_a.financial_kpis.benefit_cost_ratio_15y, 2)}x" if has_fin_a else "Financials Off") if snap_a else "—", (f"{fmt_num(snap_b.financial_kpis.benefit_cost_ratio_15y, 2)}x" if has_fin_b else "Financials Off") if snap_b else "—", _fmt_num_delta(lambda s: s.financial_kpis.benefit_cost_ratio_15y, "x", 2) if (has_fin_a and has_fin_b) else "—")
     add_row(
         "Economics & 15-Year Financials",
         "On-Site System LCOE (per kWh)",
-        f"{_curr_sym(fin_ref_curr)}{fin_ref.financial_kpis.effective_blended_grid_rate_eur_kwh:.3f}/kWh (Grid)",
-        (f"{_curr_sym(str(snap_a.financial_config.currency_code or 'EUR'))}{snap_a.financial_kpis.system_lcoe_eur_kwh:.3f}/kWh" if has_fin_a else "Financials Off") if snap_a else "—",
-        (f"{_curr_sym(str(snap_b.financial_config.currency_code or 'EUR'))}{snap_b.financial_kpis.system_lcoe_eur_kwh:.3f}/kWh" if has_fin_b else "Financials Off") if snap_b else "—",
-        f"{snap_b.financial_kpis.system_lcoe_eur_kwh - snap_a.financial_kpis.system_lcoe_eur_kwh:+.3f}/kWh" if (has_fin_a and has_fin_b and same_curr) else "—",
+        f"{fmt_curr(fin_ref.financial_kpis.effective_blended_grid_rate_eur_kwh, fin_ref_curr, decimals=3)}/kWh (Grid)",
+        (f"{fmt_curr(snap_a.financial_kpis.system_lcoe_eur_kwh, str(snap_a.financial_config.currency_code or 'EUR'), decimals=3)}/kWh" if has_fin_a else "Financials Off") if snap_a else "—",
+        (f"{fmt_curr(snap_b.financial_kpis.system_lcoe_eur_kwh, str(snap_b.financial_config.currency_code or 'EUR'), decimals=3)}/kWh" if has_fin_b else "Financials Off") if snap_b else "—",
+        f"{fmt_num(snap_b.financial_kpis.system_lcoe_eur_kwh - snap_a.financial_kpis.system_lcoe_eur_kwh, 3, signed=True)}/kWh" if (has_fin_a and has_fin_b and same_curr) else "—",
     )
     add_row(
         "Economics & 15-Year Financials",
@@ -914,11 +913,11 @@ def build_multi_scenario_leaderboard_df(
     for idx, s in enumerate(ranked, start=1):
         hw_parts = []
         if s.system_config.enable_solar:
-            hw_parts.append(f"PV {s.solar_derivation.installed_kwp:,.0f} kWp")
+            hw_parts.append(f"PV {fmt_num(s.solar_derivation.installed_kwp, 0)} kWp")
         if s.system_config.enable_battery:
-            hw_parts.append(f"BESS {s.system_config.battery_capacity_kwh:,.0f} kWh")
+            hw_parts.append(f"BESS {fmt_num(s.system_config.battery_capacity_kwh, 0)} kWh")
         if s.system_config.enable_generator:
-            hw_parts.append(f"Gen {s.system_config.generator_rated_kw:,.0f} kW")
+            hw_parts.append(f"Gen {fmt_num(s.system_config.generator_rated_kw, 0)} kW")
         hw_mix = " + ".join(hw_parts) if hw_parts else "Grid Only"
         autarky = round(max(0.0, 100.0 - float(s.utilization_diagnostics.grid_direct_pct)), 1)
         row: Dict[str, Any] = {
@@ -935,7 +934,7 @@ def build_multi_scenario_leaderboard_df(
             fk = s.financial_kpis
             row["Net CAPEX"] = format_currency_value(fk.total_capex_eur, c) if has_f else "Financials Off"
             row["Year-1 Net Savings"] = format_currency_value(fk.annual_savings_eur, c, signed=True) if has_f else "Financials Off"
-            row["Simple Payback"] = (f"{fk.payback_years:.1f} yrs" if fk.payback_years is not None else "N/A") if has_f else "Financials Off"
+            row["Payback Period"] = (f"{fmt_num(fk.payback_years, 1)} yrs" if fk.payback_years is not None else "N/A") if has_f else "Financials Off"
             row["15-Year TCO"] = format_currency_value(fk.tco_15y_combined_eur, c) if has_f else "Financials Off"
             row["15-Year NPV"] = format_currency_value(fk.npv_15y_eur, c, signed=True) if has_f else "Financials Off"
         rows.append(row)
