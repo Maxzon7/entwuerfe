@@ -13,8 +13,14 @@ from ..combined_sandbox_engine import (
     CombinedSimulationResult,
     SystemUtilizationDiagnostics,
     extract_bess_phase_events,
+    extract_combined_solar_phase_events,
+    extract_standalone_solar_phase_events,
 )
-from .phase_overlay_helpers import build_bess_phase_label_traces
+from .phase_overlay_helpers import (
+    build_bess_phase_label_traces,
+    build_solar_direct_label_traces,
+    build_solar_production_label_traces,
+)
 
 DEFAULT_POWERFLOW_COLORS: Dict[str, str] = {
     "facility_load": "#94A3B8",
@@ -339,49 +345,37 @@ def create_combined_dispatch_soc_figure(
 
     # 3. Solar Direct, Production & Total Potential (when enabled)
     if cfg.enable_solar:
+        sol_phase = extract_combined_solar_phase_events(sim_res)
         fig.add_trace(
             go.Scattergl(
-                x=ts,
-                y=p_solar_dir,
-                mode="lines",
-                name="Solar Direct (kW)",
-                connectgaps=False,
+                x=ts, y=p_solar_dir, text=sol_phase.direct_hover_suffix, mode="lines",
+                name="Solar Direct (kW)", connectgaps=False,
                 line=dict(color=c["solar_direct"], width=1.0),
-                fill="tozeroy",
-                fillcolor=_hex_to_rgba(c["solar_direct"], 0.25),
-                hovertemplate="Solar Direct: <b>%{y:,.1f} kW</b><extra></extra>",
+                fill="tozeroy", fillcolor=_hex_to_rgba(c["solar_direct"], 0.25),
+                hovertemplate="Solar Direct: <b>%{y:,.1f} kW</b>%{text}<extra></extra>",
             ),
-            row=1,
-            col=1,
+            row=1, col=1,
         )
         fig.add_trace(
             go.Scattergl(
-                x=ts,
-                y=p_solar_prod,
-                mode="lines",
-                name="Solar Production (kW)",
-                connectgaps=False,
-                line=dict(color=c["solar_production"], width=1.8),
-                visible="legendonly",
-                hovertemplate="Solar Production (AC, w/ Inverter Limit): <b>%{y:,.1f} kW</b><extra></extra>",
+                x=ts, y=p_solar_prod, text=sol_phase.prod_hover_suffix, mode="lines",
+                name="Solar Production (kW)", connectgaps=False,
+                line=dict(color=c["solar_production"], width=1.8), visible="legendonly",
+                hovertemplate="Solar Production (AC, w/ Inverter Limit): <b>%{y:,.1f} kW</b>%{text}<extra></extra>",
             ),
-            row=1,
-            col=1,
+            row=1, col=1,
         )
         fig.add_trace(
             go.Scattergl(
-                x=ts,
-                y=p_solar_pot,
-                mode="lines",
-                name="Solar Total Potential (kW)",
-                connectgaps=False,
-                line=dict(color=c["solar_potential"], width=1.5, dash="dash"),
-                visible="legendonly",
-                hovertemplate="Solar Total Potential (Unclipped): <b>%{y:,.1f} kW</b><extra></extra>",
+                x=ts, y=p_solar_pot, text=sol_phase.pot_hover_suffix, mode="lines",
+                name="Solar Total Potential (kW)", connectgaps=False,
+                line=dict(color=c["solar_potential"], width=1.5, dash="dash"), visible="legendonly",
+                hovertemplate="Solar Total Potential (Unclipped): <b>%{y:,.1f} kW</b>%{text}<extra></extra>",
             ),
-            row=1,
-            col=1,
+            row=1, col=1,
         )
+        for lbl_tr in build_solar_direct_label_traces(sol_phase, show_phase_labels=show_phase_labels):
+            fig.add_trace(lbl_tr, row=1, col=1)
 
     # 4. Battery Discharge & Recharge (when enabled)
     if cfg.enable_battery:
@@ -885,6 +879,7 @@ def create_solar_production_figure(
     initial_range: Optional[List[Any]] = None,
     height: int = 430,
     color_overrides: Optional[Dict[str, str]] = None,
+    show_phase_labels: bool = False,
 ) -> go.Figure:
     """
     Standalone consumption-independent WebGL chart comparing Solar Production (kW),
@@ -894,30 +889,26 @@ def create_solar_production_figure(
     prod_arr = np.asarray(solar_production_kw, dtype=np.float32)
     pot_arr = np.asarray(solar_potential_kw, dtype=np.float32)
     c = _resolve_colors(color_overrides)
+    sol_phase = extract_standalone_solar_phase_events(ts, prod_arr, pot_arr)
 
     fig = go.Figure()
     fig.add_trace(
         go.Scattergl(
-            x=ts,
-            y=prod_arr,
-            mode="lines",
-            name="Solar Production (kW)",
-            line=dict(color=c["solar_production"], width=2.0),
-            fill="tozeroy",
-            fillcolor=_hex_to_rgba(c["solar_production"], 0.16),
-            hovertemplate="Solar Production (Usable AC): <b>%{y:,.1f} kW</b><extra></extra>",
+            x=ts, y=prod_arr, text=sol_phase.prod_hover_suffix, mode="lines",
+            name="Solar Production (kW)", line=dict(color=c["solar_production"], width=2.0),
+            fill="tozeroy", fillcolor=_hex_to_rgba(c["solar_production"], 0.16),
+            hovertemplate="Solar Production (Usable AC): <b>%{y:,.1f} kW</b>%{text}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Scattergl(
-            x=ts,
-            y=pot_arr,
-            mode="lines",
-            name="Solar Total Potential (kW)",
-            line=dict(color=c["solar_potential"], width=1.6, dash="dash"),
-            hovertemplate="Solar Total Potential (Unclipped): <b>%{y:,.1f} kW</b><extra></extra>",
+            x=ts, y=pot_arr, text=sol_phase.pot_hover_suffix, mode="lines",
+            name="Solar Total Potential (kW)", line=dict(color=c["solar_potential"], width=1.6, dash="dash"),
+            hovertemplate="Solar Total Potential (Unclipped): <b>%{y:,.1f} kW</b>%{text}<extra></extra>",
         )
     )
+    for lbl_tr in build_solar_production_label_traces(sol_phase, show_phase_labels=show_phase_labels):
+        fig.add_trace(lbl_tr)
     inv_kw = float(inverter_ac_kw or 0.0)
     if inv_kw > 0.0 and len(ts) > 0:
         fig.add_trace(

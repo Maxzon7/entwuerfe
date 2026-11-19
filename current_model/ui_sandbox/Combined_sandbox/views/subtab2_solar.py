@@ -3,6 +3,7 @@ Subtab 2: Solar PV view (GPS search, interactive Folium map fragment, dual quick
 """
 
 from typing import Optional
+import pandas as pd
 import streamlit as st
 
 from .state_and_helpers import (
@@ -19,6 +20,9 @@ from .state_and_helpers import (
     compute_synced_solar_pair,
     render_kpi_card,
     create_solar_production_figure,
+    extract_standalone_solar_phase_events,
+    summarize_solar_window_energy,
+    normalize_date_range_input,
     _activate_module_callback,
     _apply_solar_quick_share,
 )
@@ -162,6 +166,56 @@ def _render_solar_production_fragment(
         config={"scrollZoom": False, "displayModeBar": "hover", "responsive": True},
         key="comb_solar_production_chart",
     )
+
+    if timestamps is not None and len(timestamps) > 0:
+        ts_idx = pd.DatetimeIndex(timestamps)
+        min_d, max_d = ts_idx.min().date(), ts_idx.max().date()
+        with st.expander("Daily Solar Production Log (Energy per Day)", expanded=False, icon=":material/event_note:"):
+            raw_range = st.date_input(
+                "Date Range Filter",
+                value=(min_d, max_d),
+                min_value=min_d,
+                max_value=max_d,
+                key="comb_sub2_solar_phase_date_range",
+            )
+            start_dt, end_dt, d0, d1 = normalize_date_range_input(raw_range)
+            solar_res = extract_standalone_solar_phase_events(
+                timestamps=timestamps,
+                solar_production_kw=prod_summary["solar_production_kw"],
+                solar_potential_kw=prod_summary["solar_potential_kw"],
+                installed_kwp=float(solar_deriv.installed_kwp),
+            )
+            win = summarize_solar_window_energy(
+                timestamps=timestamps,
+                start_ts=start_dt,
+                end_ts=end_dt,
+                solar_production_kw=prod_summary["solar_production_kw"],
+                solar_potential_kw=prod_summary["solar_potential_kw"],
+            )
+            df_ev = solar_res.events_df
+            if not df_ev.empty:
+                df_win = df_ev[(pd.to_datetime(df_ev["Start"]) <= end_dt) & (pd.to_datetime(df_ev["End"]) >= start_dt)].copy()
+            else:
+                df_win = df_ev.copy()
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Window Production (AC)", f"{win['production_kwh']:,.1f} kWh", delta=f"{len(df_win)} days | Peak {win['peak_production_kw']:,.1f} kW", delta_color="off")
+            m2.metric("Window Unclipped Potential", f"{win['potential_kwh']:,.1f} kWh", delta=f"{win['active_hours']:,.1f} active hrs", delta_color="off")
+            m3.metric("Window Clipping Loss", f"{win['clipped_kwh']:,.1f} kWh", delta="Inverter ceiling" if inv_kw > 0 else "Unclipped", delta_color="off")
+
+            if df_win.empty:
+                st.info("No Solar production phases matched the selected date range.")
+            else:
+                st.dataframe(df_win, use_container_width=True, hide_index=True)
+                st.download_button(
+                    label="Download Daily Solar Log (.csv)",
+                    data=df_win.to_csv(index=False).encode("utf-8"),
+                    file_name=f"Solar_Daily_Production_{d0}_{d1}.csv",
+                    mime="text/csv",
+                    icon=":material/download:",
+                    key="comb_sub2_solar_phase_csv_dl",
+                )
+            st.caption("Toggle **Solar Phase Energy (kWh)** in the chart legend above to show daily kWh totals directly over peaks.")
 
 
 def render_subtab2_solar(load_series: LoadSeries2025) -> None:

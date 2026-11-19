@@ -15,6 +15,8 @@ from .dispatch_and_mix_charts import (
 )
 from .phase_overlay_helpers import (
     build_bess_phase_label_traces,
+    build_solar_direct_label_traces,
+    build_solar_production_label_traces,
 )
 from .financial_overview_charts import (
     create_financial_cost_comparison_figure,

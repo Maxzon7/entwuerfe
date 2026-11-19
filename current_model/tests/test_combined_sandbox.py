@@ -2751,6 +2751,140 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("_render_bess_phase_log_expander", code)
         self.assertIn("comb_bess_phase_merge_pauses", code)
 
+    def test_solar_phase_events_hover_labels_and_log(self):
+        """Verifies coupled & standalone Solar phase segmentation, energy conservation, chart overlays, and UI expanders."""
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            CombinedSystemConfig,
+            InteractionRulesConfig,
+            compute_standalone_solar_production_summary,
+            extract_combined_solar_phase_events,
+            extract_standalone_solar_phase_events,
+            simulate_combined_system_dispatch,
+            summarize_solar_window_energy,
+        )
+
+        # 1. Coupled Solar + Battery dispatch conservation check
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            solar_sizing_method="direct_kwp",
+            solar_kwp=280.0,
+            enable_battery=True,
+            battery_capacity_kwh=200.0,
+            battery_power_kw=100.0,
+            enable_generator=False,
+        )
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=self.load_series.power_kw,
+            timestamps=self.load_series.timestamps,
+            system_cfg=cfg,
+            rules_cfg=InteractionRulesConfig(),
+        )
+        coupled_res = extract_combined_solar_phase_events(sim_res, threshold_kw=0.0)
+        df_c = coupled_res.events_df
+        self.assertFalse(df_c.empty)
+        expected_prod = float(np.sum(np.maximum(0.0, sim_res.solar_gen_kw)) * 0.25)
+        expected_dir = float(np.sum(np.maximum(0.0, sim_res.solar_direct_kw)) * 0.25)
+        self.assertAlmostEqual(
+            float(df_c["Solar Production AC (kWh)"].sum()),
+            expected_prod,
+            delta=max(5.0, 0.005 * expected_prod),
+        )
+        self.assertAlmostEqual(
+            float(df_c["Solar Direct (kWh)"].sum()),
+            expected_dir,
+            delta=max(5.0, 0.005 * expected_dir),
+        )
+
+        # 2. Standalone Solar conservation vs compute_standalone_solar_production_summary
+        prod_summary = compute_standalone_solar_production_summary(
+            system_cfg=cfg,
+            solar_derivation=sim_res.solar_derivation,
+            n_steps=len(self.load_series.timestamps),
+        )
+        standalone_res = extract_standalone_solar_phase_events(
+            timestamps=self.load_series.timestamps,
+            solar_production_kw=prod_summary["solar_production_kw"],
+            solar_potential_kw=prod_summary["solar_potential_kw"],
+            installed_kwp=float(sim_res.solar_derivation.installed_kwp),
+            threshold_kw=0.0,
+        )
+        df_s = standalone_res.events_df
+        self.assertFalse(df_s.empty)
+        self.assertAlmostEqual(
+            float(df_s["Solar Production AC (kWh)"].sum()),
+            float(prod_summary["production_kwh"]),
+            delta=max(5.0, 0.005 * float(prod_summary["production_kwh"])),
+        )
+        self.assertAlmostEqual(
+            float(df_s["Unclipped Potential (kWh)"].sum()),
+            float(prod_summary["potential_kwh"]),
+            delta=max(5.0, 0.005 * float(prod_summary["potential_kwh"])),
+        )
+
+        # 3. Deterministic sub-window summary excluding is_gap=True
+        ts_w = pd.date_range("2025-06-01 00:00", periods=8, freq="15min")
+        p_w = np.array([0.0, 40.0, 80.0, 100.0, 60.0, 0.0, 20.0, 0.0], dtype=float)
+        pot_w = np.array([0.0, 40.0, 100.0, 120.0, 60.0, 0.0, 20.0, 0.0], dtype=float)
+        gap_w = np.array([False, False, False, False, False, False, True, False], dtype=bool)
+        win = summarize_solar_window_energy(
+            ts_w, "2025-06-01 00:00", "2025-06-01 01:45",
+            solar_production_kw=p_w, solar_potential_kw=pot_w, is_gap=gap_w,
+        )
+        self.assertAlmostEqual(win["production_kwh"], 70.0, places=2)
+        self.assertAlmostEqual(win["potential_kwh"], 80.0, places=2)
+        self.assertAlmostEqual(win["clipped_kwh"], 10.0, places=2)
+
+        # 4. Integrated dispatch chart Solar hover & legend-toggleable peak labels
+        fig_disp = create_combined_dispatch_soc_figure(sim_res, timeframe="7D")
+        self.assertEqual(fig_disp.data[0].type, "scattergl")
+        self.assertEqual(len(fig_disp.data[0].x), 35040)
+        self.assertEqual(fig_disp.layout.annotations[0].text, "15-Minute Power Dispatch (kW)")
+        self.assertEqual(fig_disp.layout.annotations[1].text, "Battery State of Charge (% and stored kWh)")
+
+        tr_map = {t.name: t for t in fig_disp.data}
+        for s_name in ("Solar Direct (kW)", "Solar Production (kW)", "Solar Total Potential (kW)"):
+            self.assertIn("%{text}", tr_map[s_name].hovertemplate)
+        night_indices = np.where(sim_res.solar_gen_kw == 0.0)[0]
+        peak_solar_idx = int(np.argmax(sim_res.solar_direct_kw))
+        self.assertIn("kWh", tr_map["Solar Direct (kW)"].text[peak_solar_idx])
+        if len(night_indices) > 0:
+            self.assertEqual(tr_map["Solar Production (kW)"].text[int(night_indices[0])], "")
+
+        dir_lbl_traces = [t for t in fig_disp.data if t.name == "Solar Direct Phase (kWh)"]
+        self.assertEqual(len(dir_lbl_traces), 1)
+        self.assertEqual(dir_lbl_traces[0].visible, "legendonly")
+
+        # 5. Standalone create_solar_production_figure hover & legend-toggleable labels
+        fig_prod_def = create_solar_production_figure(
+            timestamps=self.load_series.timestamps,
+            solar_production_kw=prod_summary["solar_production_kw"],
+            solar_potential_kw=prod_summary["solar_potential_kw"],
+            inverter_ac_kw=float(prod_summary["inverter_ac_kw"]),
+        )
+        p_map = {t.name: t for t in fig_prod_def.data}
+        self.assertIn("%{text}", p_map["Solar Production (kW)"].hovertemplate)
+        self.assertIn("%{text}", p_map["Solar Total Potential (kW)"].hovertemplate)
+        pk_p_idx = int(np.argmax(prod_summary["solar_production_kw"]))
+        self.assertIn("kWh", p_map["Solar Production (kW)"].text[pk_p_idx])
+        self.assertEqual(p_map["Solar Phase Energy (kWh)"].visible, "legendonly")
+
+        fig_prod_on = create_solar_production_figure(
+            timestamps=self.load_series.timestamps,
+            solar_production_kw=prod_summary["solar_production_kw"],
+            solar_potential_kw=prod_summary["solar_potential_kw"],
+            inverter_ac_kw=float(prod_summary["inverter_ac_kw"]),
+            show_phase_labels=True,
+        )
+        p_on_map = {t.name: t for t in fig_prod_on.data}
+        self.assertTrue(p_on_map["Solar Phase Energy (kWh)"].visible is True)
+
+        # 6. UI integration source checks
+        code = self._read_combined_ui_source()
+        self.assertIn("_render_solar_phase_log_expander", code)
+        self.assertIn("Daily Solar Production Log (Energy per Day)", code)
+
 
 if __name__ == "__main__":
     unittest.main()

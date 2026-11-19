@@ -15,6 +15,9 @@ from .state_and_helpers import (
     build_combined_verification_excel_bytes,
     extract_bess_phase_events,
     summarize_bess_window_energy,
+    extract_combined_solar_phase_events,
+    summarize_solar_window_energy,
+    normalize_date_range_input,
 )
 
 # ======================================================================================
@@ -102,17 +105,7 @@ def _render_bess_phase_log_expander(sim_res) -> None:
                 key="comb_bess_phase_date_range",
             )
 
-        if isinstance(raw_range, (tuple, list)) and len(raw_range) == 2:
-            d0, d1 = raw_range[0], raw_range[1]
-        elif isinstance(raw_range, (tuple, list)) and len(raw_range) == 1:
-            d0 = d1 = raw_range[0]
-        else:
-            d0 = d1 = raw_range
-        if d0 > d1:
-            d0, d1 = d1, d0
-
-        start_dt = pd.Timestamp(d0)
-        end_dt = pd.Timestamp(d1) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+        start_dt, end_dt, d0, d1 = normalize_date_range_input(raw_range)
 
         phase_res = extract_bess_phase_events(
             sim_res,
@@ -195,6 +188,100 @@ def _render_bess_phase_log_expander(sim_res) -> None:
             "Phase energies represent AC-side energy delivered or absorbed (kWh), which differs from "
             "internal SoC energy change by inverter and round-trip efficiency (RTE). Toggle "
             "**BESS Phase Energy (kWh)** in the chart legend to show peak labels directly on the plot."
+        )
+
+
+def _render_solar_phase_log_expander(sim_res) -> None:
+    """Renders a collapsible Solar Production & Direct Use Phase Event Log with Date-Range Energy Summary."""
+    ts_raw = getattr(sim_res, "timestamps", None)
+    if ts_raw is None or len(ts_raw) == 0:
+        return
+    ts_idx = pd.DatetimeIndex(ts_raw)
+    min_d, max_d = ts_idx.min().date(), ts_idx.max().date()
+
+    with st.expander("Solar Production & Direct Use Phases (Energy per Day)", expanded=False, icon=":material/solar_power:"):
+        raw_range = st.date_input(
+            "Date Range Filter",
+            value=(min_d, max_d),
+            min_value=min_d,
+            max_value=max_d,
+            key="comb_solar_phase_date_range",
+        )
+        start_dt, end_dt, d0, d1 = normalize_date_range_input(raw_range)
+
+        solar_res = extract_combined_solar_phase_events(sim_res)
+        win = summarize_solar_window_energy(
+            timestamps=ts_idx,
+            start_ts=start_dt,
+            end_ts=end_dt,
+            solar_production_kw=sim_res.solar_gen_kw,
+            solar_potential_kw=getattr(sim_res, "solar_potential_kw", None),
+            solar_direct_kw=sim_res.solar_direct_kw,
+            bess_charge_solar_kw=sim_res.bess_charge_solar_kw,
+            solar_export_kw=sim_res.solar_export_kw,
+            is_gap=getattr(sim_res, "is_gap", None),
+        )
+
+        df_ev = solar_res.events_df
+        if not df_ev.empty:
+            s_dt = pd.to_datetime(df_ev["Start"])
+            e_dt = pd.to_datetime(df_ev["End"])
+            df_win = df_ev[(s_dt <= end_dt) & (e_dt >= start_dt)].copy()
+        else:
+            df_win = df_ev.copy()
+
+        if not df_win.empty:
+            top_day = df_win.loc[df_win["Solar Production AC (kWh)"].idxmax()]
+            max_day_kwh = float(top_day["Solar Production AC (kWh)"])
+            max_day_h = float(top_day["Daylight (h)"])
+        else:
+            max_day_kwh, max_day_h = 0.0, 0.0
+
+        prod_tot = max(1e-6, win["production_kwh"])
+        dir_share = (win["direct_kwh"] / prod_tot) * 100.0 if win["production_kwh"] > 0 else 0.0
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric(
+            "Window Solar Production (AC)",
+            f"{win['production_kwh']:,.1f} kWh",
+            delta=f"{len(df_win)} phases | Peak {win['peak_production_kw']:,.1f} kW",
+            delta_color="off",
+        )
+        k2.metric(
+            "Window Direct Load Use",
+            f"{win['direct_kwh']:,.1f} kWh",
+            delta=f"{dir_share:.0f}% direct | Peak {win['peak_direct_kw']:,.1f} kW",
+            delta_color="off",
+        )
+        k3.metric(
+            "To Battery / Grid Export",
+            f"{win['to_battery_kwh']:,.1f} / {win['export_kwh']:,.1f} kWh",
+            delta=f"Clipped: {win['clipped_kwh']:,.1f} kWh",
+            delta_color="off",
+        )
+        k4.metric(
+            "Peak Solar Production Day",
+            f"{max_day_kwh:,.1f} kWh",
+            delta=f"{max_day_h:.2f} h daylight",
+            delta_color="off",
+        )
+
+        if df_win.empty:
+            st.info("No Solar production phases matched the selected date range.")
+        else:
+            st.dataframe(df_win, use_container_width=True, hide_index=True)
+            st.download_button(
+                label="Download Solar Phase Log (.csv)",
+                data=df_win.to_csv(index=False).encode("utf-8"),
+                file_name=f"Solar_Phase_Events_{d0}_{d1}.csv",
+                mime="text/csv",
+                icon=":material/download:",
+                key="comb_solar_phase_csv_dl",
+            )
+        st.caption(
+            "Shows usable AC solar generation per daylight phase, split into direct facility consumption, "
+            "BESS charging, and grid export. Toggle **Solar Direct Phase (kWh)** in the chart legend above "
+            "to show peak energy labels directly on the plot."
         )
 
 
@@ -324,6 +411,8 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
 
         if cfg is not None and cfg.enable_battery:
             _render_bess_phase_log_expander(sim_res)
+        if cfg is not None and cfg.enable_solar:
+            _render_solar_phase_log_expander(sim_res)
 
         with st.expander("Customize Chart Colors", expanded=False, icon=":material/palette:"):
             st.caption("Adjust the line and fill colors of each component in the Power Flow chart.")

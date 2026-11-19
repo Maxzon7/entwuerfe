@@ -93,6 +93,9 @@ from ..combined_sandbox_engine import (
     compute_system_utilization_diagnostics,
     extract_bess_phase_events,
     summarize_bess_window_energy,
+    extract_combined_solar_phase_events,
+    extract_standalone_solar_phase_events,
+    summarize_solar_window_energy,
     evaluate_combined_financials,
     get_dso_preset_options,
     get_supplier_preset_options,
@@ -446,3 +449,16 @@ def _apply_gen_quick_size(p_kw: float) -> None:
     cfg.generator_rated_kw = max(10.0, float(p_kw))
     st.session_state["comb_generator_rated_kw_num"] = cfg.generator_rated_kw
     st.session_state.pop("comb_cached_excel_bytes", None)
+
+
+def normalize_date_range_input(raw_range) -> Tuple[pd.Timestamp, pd.Timestamp, object, object]:
+    """Normalizes single-date, 1-tuple, or 2-tuple returns from `st.date_input` into `(start_ts, end_ts, d0, d1)`."""
+    if isinstance(raw_range, (tuple, list)) and len(raw_range) == 2:
+        d0, d1 = raw_range[0], raw_range[1]
+    elif isinstance(raw_range, (tuple, list)) and len(raw_range) == 1:
+        d0 = d1 = raw_range[0]
+    else:
+        d0 = d1 = raw_range
+    if d0 > d1:
+        d0, d1 = d1, d0
+    return pd.Timestamp(d0), pd.Timestamp(d1) + pd.Timedelta(hours=23, minutes=59, seconds=59), d0, d1

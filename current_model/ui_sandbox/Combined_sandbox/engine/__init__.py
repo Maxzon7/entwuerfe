@@ -59,6 +59,12 @@ from .bess_phase_events import (
     extract_bess_phase_events,
     summarize_bess_window_energy,
 )
+from .solar_phase_events import (
+    SolarPhaseEventsResult,
+    extract_combined_solar_phase_events,
+    extract_standalone_solar_phase_events,
+    summarize_solar_window_energy,
+)
 from .financial_engine import (
     _calculate_irr,
     evaluate_combined_financials,
