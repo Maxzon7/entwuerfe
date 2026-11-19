@@ -13,6 +13,9 @@ from .dispatch_and_mix_charts import (
     create_supply_mix_pie_figure,
     create_component_utilization_bars_figure,
 )
+from .phase_overlay_helpers import (
+    build_bess_phase_label_traces,
+)
 from .financial_overview_charts import (
     create_financial_cost_comparison_figure,
     create_financial_tco_trajectory_figure,

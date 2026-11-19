@@ -5,6 +5,7 @@ on-demand Excel export fragment, and System Comparison table).
 
 from typing import Optional
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 from .state_and_helpers import (
@@ -12,6 +13,8 @@ from .state_and_helpers import (
     render_kpi_card,
     create_combined_dispatch_soc_figure,
     build_combined_verification_excel_bytes,
+    extract_bess_phase_events,
+    summarize_bess_window_energy,
 )
 
 # ======================================================================================
@@ -57,6 +60,141 @@ def _render_excel_export_fragment(sim_res) -> None:
             use_container_width=True,
             type="primary",
             key="comb_btn_dl_excel",
+        )
+
+
+def _render_bess_phase_log_expander(sim_res) -> None:
+    """Renders a collapsible BESS Charge/Discharge Phase Event Log & Date-Range Energy Calculator."""
+    ts_raw = getattr(sim_res, "timestamps", None)
+    if ts_raw is None or len(ts_raw) == 0:
+        return
+    ts_idx = pd.DatetimeIndex(ts_raw)
+    min_d = ts_idx.min().date()
+    max_d = ts_idx.max().date()
+
+    with st.expander("Battery Charge & Discharge Phases (Energy per Event)", expanded=False, icon=":material/bolt:"):
+        c1, c2, c3 = st.columns([1.2, 1.3, 1.5])
+        with c1:
+            phase_filter = st.radio(
+                "Phase Type",
+                options=["All", "Discharge", "Charge"],
+                index=0,
+                horizontal=True,
+                key="comb_bess_phase_type_filter",
+            )
+        with c2:
+            st.write("")
+            merge_pauses = st.checkbox(
+                "Merge pauses <= 30 min",
+                value=False,
+                key="comb_bess_phase_merge_pauses",
+                help=(
+                    "Combines adjacent phases separated by up to two 15-minute idle intervals "
+                    "(never across data gaps or opposite BESS activity)."
+                ),
+            )
+        with c3:
+            raw_range = st.date_input(
+                "Date Range Filter",
+                value=(min_d, max_d),
+                min_value=min_d,
+                max_value=max_d,
+                key="comb_bess_phase_date_range",
+            )
+
+        if isinstance(raw_range, (tuple, list)) and len(raw_range) == 2:
+            d0, d1 = raw_range[0], raw_range[1]
+        elif isinstance(raw_range, (tuple, list)) and len(raw_range) == 1:
+            d0 = d1 = raw_range[0]
+        else:
+            d0 = d1 = raw_range
+        if d0 > d1:
+            d0, d1 = d1, d0
+
+        start_dt = pd.Timestamp(d0)
+        end_dt = pd.Timestamp(d1) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+
+        phase_res = extract_bess_phase_events(
+            sim_res,
+            merge_gap_steps=2 if merge_pauses else 0,
+        )
+        win = summarize_bess_window_energy(sim_res, start_dt, end_dt)
+
+        df_ev = phase_res.events_df
+        if not df_ev.empty:
+            s_dt = pd.to_datetime(df_ev["Start"])
+            e_dt = pd.to_datetime(df_ev["End"])
+            df_win = df_ev[(s_dt <= end_dt) & (e_dt >= start_dt)].copy()
+        else:
+            df_win = df_ev.copy()
+
+        if phase_filter != "All" and not df_win.empty:
+            df_show = df_win[df_win["Type"] == phase_filter].copy()
+        else:
+            df_show = df_win
+
+        dis_df = df_win[df_win["Type"] == "Discharge"] if not df_win.empty else df_win
+        chg_df = df_win[df_win["Type"] == "Charge"] if not df_win.empty else df_win
+
+        if not dis_df.empty:
+            top_dis = dis_df.loc[dis_df["Energy AC (kWh)"].idxmax()]
+            max_dis_kwh = float(top_dis["Energy AC (kWh)"])
+            max_dis_h = float(top_dis["Duration (h)"])
+        else:
+            max_dis_kwh, max_dis_h = 0.0, 0.0
+
+        if not chg_df.empty:
+            top_chg = chg_df.loc[chg_df["Energy AC (kWh)"].idxmax()]
+            max_chg_kwh = float(top_chg["Energy AC (kWh)"])
+            max_chg_h = float(top_chg["Duration (h)"])
+        else:
+            max_chg_kwh, max_chg_h = 0.0, 0.0
+
+        chg_tot = max(1e-6, win["charge_total_kwh"])
+        solar_pct = (win["charge_solar_kwh"] / chg_tot) * 100.0 if win["charge_total_kwh"] > 0 else 0.0
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric(
+            "Window Discharge (AC)",
+            f"{win['discharge_kwh']:,.1f} kWh",
+            delta=f"{len(dis_df)} phases | Peak {win['peak_discharge_kw']:,.1f} kW",
+            delta_color="off",
+        )
+        k2.metric(
+            "Largest Single Discharge",
+            f"{max_dis_kwh:,.1f} kWh",
+            delta=f"{max_dis_h:.2f} h event",
+            delta_color="off",
+        )
+        k3.metric(
+            "Window Charge (AC)",
+            f"{win['charge_total_kwh']:,.1f} kWh",
+            delta=f"{len(chg_df)} phases | Solar {solar_pct:.0f}%",
+            delta_color="off",
+        )
+        k4.metric(
+            "Largest Single Charge",
+            f"{max_chg_kwh:,.1f} kWh",
+            delta=f"{max_chg_h:.2f} h event",
+            delta_color="off",
+        )
+
+        if df_show.empty:
+            st.info("No Charge/Discharge phases matched the selected date range and filter.")
+        else:
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
+            st.download_button(
+                label="Download Phase Log (.csv)",
+                data=df_show.to_csv(index=False).encode("utf-8"),
+                file_name=f"BESS_Phase_Events_{d0}_{d1}.csv",
+                mime="text/csv",
+                icon=":material/download:",
+                key="comb_bess_phase_csv_dl",
+            )
+        st.caption(
+            "Phase energies represent AC-side energy delivered or absorbed (kWh), which differs from "
+            "internal SoC energy change by inverter and round-trip efficiency (RTE). Toggle "
+            "**BESS Phase Energy (kWh)** in the chart legend to show peak labels directly on the plot."
         )
 
 
@@ -167,9 +305,11 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
             _render_excel_export_fragment(sim_res)
 
         color_overrides = dict(st.session_state.get("comb_powerflow_colors") or DEFAULT_POWERFLOW_COLORS)
+        merge_pauses = bool(st.session_state.get("comb_bess_phase_merge_pauses", False))
         fig_master = create_combined_dispatch_soc_figure(
             sim_res=sim_res,
             color_overrides=color_overrides,
+            merge_phase_gap_steps=2 if merge_pauses else 0,
         )
         st.plotly_chart(
             fig_master,
@@ -181,6 +321,9 @@ def _render_master_dispatch_chart_fragment(sim_res) -> None:
             },
             key="comb_master_dispatch_chart",
         )
+
+        if cfg is not None and cfg.enable_battery:
+            _render_bess_phase_log_expander(sim_res)
 
         with st.expander("Customize Chart Colors", expanded=False, icon=":material/palette:"):
             st.caption("Adjust the line and fill colors of each component in the Power Flow chart.")

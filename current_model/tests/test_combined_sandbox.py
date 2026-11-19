@@ -2637,6 +2637,120 @@ class TestCombinedSandbox(unittest.TestCase):
         self.assertIn("comb_btn_dl_pdf", code)
         self.assertIn("build_combined_system_pdf_bytes", code)
 
+    def test_bess_phase_events_hover_labels_and_log(self):
+        """Verifies BESS phase segmentation, energy conservation, pause merging, gap splitting, and chart overlays."""
+        import copy
+        from current_model.ui_sandbox.Combined_sandbox.combined_sandbox_engine import (
+            CombinedSystemConfig,
+            InteractionRulesConfig,
+            extract_bess_phase_events,
+            simulate_combined_system_dispatch,
+            summarize_bess_window_energy,
+        )
+
+        # 1. Energy conservation across full 35,040-step simulation
+        cfg = CombinedSystemConfig(
+            enable_grid=True,
+            grid_limit_kw=180.0,
+            enable_solar=True,
+            target_consumption_share_pct=35.0,
+            enable_battery=True,
+            battery_capacity_kwh=250.0,
+            battery_power_kw=125.0,
+            enable_generator=False,
+        )
+        sim_res = simulate_combined_system_dispatch(
+            load_kw=self.load_series.power_kw,
+            timestamps=self.load_series.timestamps,
+            system_cfg=cfg,
+            rules_cfg=InteractionRulesConfig(),
+        )
+        phase_res = extract_bess_phase_events(sim_res, threshold_kw=0.0, merge_gap_steps=0)
+        df = phase_res.events_df
+        self.assertFalse(df.empty)
+        dis_sum = float(df.loc[df["Type"] == "Discharge", "Energy AC (kWh)"].sum())
+        chg_sum = float(df.loc[df["Type"] == "Charge", "Energy AC (kWh)"].sum())
+        expected_dis = float(np.sum(np.maximum(0.0, sim_res.bess_discharge_kw)) * 0.25)
+        expected_chg = float(
+            np.sum(
+                np.maximum(0.0, sim_res.bess_charge_solar_kw)
+                + np.maximum(0.0, sim_res.bess_charge_grid_kw)
+                + np.maximum(0.0, sim_res.bess_charge_gen_kw)
+            )
+            * 0.25
+        )
+        self.assertAlmostEqual(dis_sum, expected_dis, delta=max(2.0, 0.005 * expected_dis))
+        self.assertAlmostEqual(chg_sum, expected_chg, delta=max(2.0, 0.005 * expected_chg))
+
+        # 2. Pause merging vs. is_gap and opposite-direction safety (deterministic synthetic slice)
+        syn = copy.deepcopy(sim_res)
+        n_syn = 16
+        syn.timestamps = pd.date_range("2025-06-01 00:00", periods=n_syn, freq="15min")
+        syn.is_gap = np.zeros(n_syn, dtype=bool)
+        syn.bess_discharge_kw = np.zeros(n_syn, dtype=float)
+        syn.bess_charge_solar_kw = np.zeros(n_syn, dtype=float)
+        syn.bess_charge_grid_kw = np.zeros(n_syn, dtype=float)
+        syn.bess_charge_gen_kw = np.zeros(n_syn, dtype=float)
+        syn.bess_soc_pct = np.full(n_syn, 50.0, dtype=float)
+
+        # Case A: 2-step idle gap between Discharge [1..3) and [5..7)
+        syn.bess_discharge_kw[1:3] = 40.0  # 20.0 kWh
+        syn.bess_discharge_kw[5:7] = 60.0  # 30.0 kWh
+        # Case B: opposite Charge pulse at step 8 between [7..8) idle and [9..11) Discharge
+        syn.bess_charge_grid_kw[8] = 50.0  # 12.5 kWh
+        syn.bess_discharge_kw[9:11] = 20.0  # 10.0 kWh
+        # Case C: is_gap=True at step 12 between [9..11) Discharge and [13..15) Discharge
+        syn.is_gap[12] = True
+        syn.bess_discharge_kw[13:15] = 80.0  # 40.0 kWh
+
+        res_strict = extract_bess_phase_events(syn, threshold_kw=0.1, merge_gap_steps=0)
+        self.assertEqual(int((res_strict.events_df["Type"] == "Discharge").sum()), 4)
+        self.assertEqual(int((res_strict.events_df["Type"] == "Charge").sum()), 1)
+
+        res_merged = extract_bess_phase_events(syn, threshold_kw=0.1, merge_gap_steps=2)
+        dis_merged = res_merged.events_df[res_merged.events_df["Type"] == "Discharge"].reset_index(drop=True)
+        # Case A merged into 50.0 kWh, Case B split by Charge at idx 8, Case C split by is_gap at idx 12
+        self.assertEqual(len(dis_merged), 3)
+        self.assertAlmostEqual(float(dis_merged.loc[0, "Energy AC (kWh)"]), 50.0, places=1)
+        self.assertAlmostEqual(float(dis_merged.loc[1, "Energy AC (kWh)"]), 10.0, places=1)
+        self.assertAlmostEqual(float(dis_merged.loc[2, "Energy AC (kWh)"]), 40.0, places=1)
+
+        # Window summary accuracy over indices [0..6] (00:00 .. 01:30)
+        win = summarize_bess_window_energy(syn, "2025-06-01 00:00", "2025-06-01 01:30")
+        self.assertAlmostEqual(win["discharge_kwh"], 50.0, places=2)
+        self.assertAlmostEqual(win["peak_discharge_kw"], 60.0, places=2)
+
+        # 3. Chart integration & invariant checks
+        fig_default = create_combined_dispatch_soc_figure(sim_res, timeframe="7D")
+        self.assertEqual(fig_default.data[0].type, "scattergl")
+        self.assertEqual(len(fig_default.data[0].x), 35040)
+        self.assertEqual(fig_default.layout.annotations[0].text, "15-Minute Power Dispatch (kW)")
+        self.assertEqual(fig_default.layout.annotations[1].text, "Battery State of Charge (% and stored kWh)")
+
+        tr_map = {t.name: t for t in fig_default.data}
+        dis_tr = tr_map["BESS Discharge (kW)"]
+        chg_tr = tr_map["BESS Charge (kW, shown negative)"]
+        self.assertIn("%{text}", dis_tr.hovertemplate)
+        self.assertIn("%{text}", chg_tr.hovertemplate)
+        active_dis_idx = int(np.argmax(sim_res.bess_discharge_kw))
+        idle_dis_indices = np.where(sim_res.bess_discharge_kw == 0.0)[0]
+        self.assertIn("kWh", dis_tr.text[active_dis_idx])
+        if len(idle_dis_indices) > 0:
+            self.assertEqual(dis_tr.text[int(idle_dis_indices[0])], "")
+
+        lbl_traces = [t for t in fig_default.data if t.name == "BESS Phase Energy (kWh)"]
+        self.assertGreaterEqual(len(lbl_traces), 1)
+        self.assertEqual(lbl_traces[0].visible, "legendonly")
+
+        fig_labels_on = create_combined_dispatch_soc_figure(sim_res, timeframe="7D", show_phase_labels=True)
+        lbl_on_traces = [t for t in fig_labels_on.data if t.name == "BESS Phase Energy (kWh)"]
+        self.assertTrue(all(t.visible is True for t in lbl_on_traces))
+
+        # 4. Level 3 UI fragment integration
+        code = self._read_combined_ui_source()
+        self.assertIn("_render_bess_phase_log_expander", code)
+        self.assertIn("comb_bess_phase_merge_pauses", code)
+
 
 if __name__ == "__main__":
     unittest.main()

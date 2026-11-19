@@ -91,6 +91,8 @@ from ..combined_sandbox_engine import (
     compute_coordinated_mix_sizing,
     simulate_combined_system_dispatch,
     compute_system_utilization_diagnostics,
+    extract_bess_phase_events,
+    summarize_bess_window_energy,
     evaluate_combined_financials,
     get_dso_preset_options,
     get_supplier_preset_options,

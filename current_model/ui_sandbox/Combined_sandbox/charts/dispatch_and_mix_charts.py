@@ -12,7 +12,9 @@ from plotly.subplots import make_subplots
 from ..combined_sandbox_engine import (
     CombinedSimulationResult,
     SystemUtilizationDiagnostics,
+    extract_bess_phase_events,
 )
+from .phase_overlay_helpers import build_bess_phase_label_traces
 
 DEFAULT_POWERFLOW_COLORS: Dict[str, str] = {
     "facility_load": "#94A3B8",
@@ -219,6 +221,8 @@ def create_combined_dispatch_soc_figure(
     timeframe: Optional[str] = None,
     height: int = 780,
     color_overrides: Optional[Dict[str, str]] = None,
+    show_phase_labels: bool = False,
+    merge_phase_gap_steps: int = 0,
 ) -> go.Figure:
     """
     Creates the Synchronized 2-in-1 15-Minute Master Chart matching BESS Sandbox Standard:
@@ -381,17 +385,19 @@ def create_combined_dispatch_soc_figure(
 
     # 4. Battery Discharge & Recharge (when enabled)
     if cfg.enable_battery:
+        phase_res = extract_bess_phase_events(sim_res, merge_gap_steps=merge_phase_gap_steps)
         fig.add_trace(
             go.Scattergl(
                 x=ts,
                 y=p_bess_dis,
+                text=phase_res.dis_hover_suffix,
                 mode="lines",
                 name="BESS Discharge (kW)",
                 connectgaps=False,
                 line=dict(color=c["bess_discharge"], width=1.0),
                 fill="tozeroy",
                 fillcolor=_hex_to_rgba(c["bess_discharge"], 0.25),
-                hovertemplate="Discharge: <b>%{y:,.1f} kW</b><extra></extra>",
+                hovertemplate="Discharge: <b>%{y:,.1f} kW</b>%{text}<extra></extra>",
             ),
             row=1,
             col=1,
@@ -401,17 +407,20 @@ def create_combined_dispatch_soc_figure(
             go.Scattergl(
                 x=ts,
                 y=-p_bess_chg,
+                text=phase_res.chg_hover_suffix,
                 mode="lines",
                 name="BESS Charge (kW, shown negative)",
                 connectgaps=False,
                 line=dict(color=c["bess_charge"], width=1.0, dash="dot"),
                 fill="tozeroy",
                 fillcolor=_hex_to_rgba(c["bess_charge"], 0.18),
-                hovertemplate="Charge: <b>%{y:,.1f} kW</b><extra></extra>",
+                hovertemplate="Charge: <b>%{y:,.1f} kW</b>%{text}<extra></extra>",
             ),
             row=1,
             col=1,
         )
+        for lbl_tr in build_bess_phase_label_traces(phase_res, show_phase_labels=show_phase_labels):
+            fig.add_trace(lbl_tr, row=1, col=1)
 
     # 5. Generator Output (when enabled)
     if cfg.enable_generator:
